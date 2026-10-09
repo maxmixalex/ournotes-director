@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+artifacts/
+archive/
+output/
+.ournotes-temp/
+CubismSdkForNative*/
+CubismSdkMotionSyncPluginForNative*/
+*.zip
+*.tar.gz
+.venv/
+references/
