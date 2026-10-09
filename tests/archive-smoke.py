@@ -40,6 +40,9 @@ class Origin:
         self.responses = Counter()
         self.fail_once = set()
         self.gate = threading.Lock()
+        self.manifest_overlap = None
+        self.active_manifests = 0
+        self.maximum_manifest_requests = 0
 
     def put(self, path, value):
         self.files[path] = encode(value)
@@ -63,6 +66,29 @@ class Origin:
     def asset_requests(self):
         with self.gate:
             return Counter({path: count for path, count in self.requests.items() if "/assets/" in path})
+
+    @contextmanager
+    def observe_manifest_requests(self, path):
+        overlap = None
+        if path.endswith(".json") and ("/stories/" in path or "/models/" in path):
+            with self.gate:
+                overlap = self.manifest_overlap
+                if overlap is not None:
+                    self.active_manifests += 1
+                    self.maximum_manifest_requests = max(self.maximum_manifest_requests, self.active_manifests)
+                    if self.active_manifests > 1:
+                        overlap.set()
+        try:
+            if overlap is not None:
+                # Hold the first response until another metadata request arrives.
+                # The timeout lets a serial implementation finish and fail the
+                # overlap assertion; elapsed wall time is never the assertion.
+                overlap.wait(timeout=5)
+            yield
+        finally:
+            if overlap is not None:
+                with self.gate:
+                    self.active_manifests -= 1
 
     def fixture(self):
         self.put("/metadata/current_version.json", {"regions": {"hk-tw-mo": {"version": "v1"}, "jp": {"version": "v1"}}})
@@ -174,13 +200,14 @@ def serve(origin):
                 if status == 200 and self.headers.get("If-None-Match") == tag:
                     status = 304
                 origin.responses[status] += 1
-            self.send_response(status)
-            self.send_header("ETag", tag)
-            self.send_header("Content-Length", "0" if status == 304 else str(len(body)))
-            self.send_header("Content-Type", "application/json" if path.endswith(".json") else "application/octet-stream")
-            self.end_headers()
-            if status != 304:
-                self.wfile.write(body)
+            with origin.observe_manifest_requests(path):
+                self.send_response(status)
+                self.send_header("ETag", tag)
+                self.send_header("Content-Length", "0" if status == 304 else str(len(body)))
+                self.send_header("Content-Type", "application/json" if path.endswith(".json") else "application/octet-stream")
+                self.end_headers()
+                if status != 304:
+                    self.wfile.write(body)
 
         def log_message(self, *_):
             pass
@@ -342,7 +369,15 @@ def main():
 
         filtered = root / "ja-only"
         before = origin.asset_requests()
-        run("archive", "--out", filtered, "--sites", "intl", "--languages", "ja", "--no-deep")
+        with origin.gate:
+            origin.manifest_overlap = threading.Event()
+            origin.maximum_manifest_requests = 0
+        try:
+            run("archive", "--out", filtered, "--sites", "intl", "--languages", "ja", "--no-deep")
+        finally:
+            with origin.gate:
+                origin.manifest_overlap = None
+        check(origin.maximum_manifest_requests > 1, "Selected manifests are requested concurrently even without a deep scan.")
         check(not filtered.joinpath("sites/jp").exists(), "Single-site selection does not create another regional archive.")
         check(not filtered.joinpath("sites/intl", origin.chinese["asset"]).exists(), "Language filter avoids unrelated language payloads.")
         check(not filtered.joinpath("sites/intl/stories/8.json").exists(), "--no-deep excludes the model-only cameo.")

@@ -31,22 +31,26 @@ public sealed partial class ArchiveDownloader
                 var root = Text(siteInfo["root"]);
                 ValidateRoot(root);
                 var selectedEntries = new JsonArray();
-                var siteStories = stories.OfType<JsonObject>().Where(story => story["sites"]?[site] is JsonObject).OrderBy(x => Number(x["advId"])).ToArray();
+                var siteStories = stories.OfType<JsonObject>().Where(story => story["sites"]?[site] is JsonObject).OrderBy(x => Number(x["advId"])).Select(story =>
+                {
+                    var id = Number(story["advId"]) ?? throw new InvalidDataException("Discovery story has no numeric advId.");
+                    var selection = Object(story["sites"]?[site], $"story {id} site selection");
+                    var path = ValidateManifest(Text(selection["manifest"], "stories/" + id.ToString(CultureInfo.InvariantCulture) + ".json"));
+                    if (!path.StartsWith("stories/", StringComparison.Ordinal)) throw new InvalidDataException($"Expected a story manifest: {path}");
+                    return (Path: path, Entry: Object(selection["entry"], $"story {id} site entry"));
+                }).ToArray();
+                await PrefetchManifestsAsync(site, root, siteStories.Select(story => story.Path));
                 var collected = 0;
                 Report("manifests", site, processed: 0, total: siteStories.Length);
                 foreach (var story in siteStories)
                 {
                     _cancellation.ThrowIfCancellationRequested();
-                    if (story["sites"]?[site] is not JsonObject selection) continue;
-                    var id = Number(story["advId"]) ?? throw new InvalidDataException("Discovery story has no numeric advId.");
-                    var path = ValidateManifest(Text(selection["manifest"], "stories/" + id.ToString(CultureInfo.InvariantCulture) + ".json"));
-                    if (!path.StartsWith("stories/", StringComparison.Ordinal)) throw new InvalidDataException($"Expected a story manifest: {path}");
-                    await CollectManifestAsync(site, root, path, manifests, jobs);
-                    var entry = (JsonObject)Object(selection["entry"], $"story {id} site entry").DeepClone();
-                    entry["manifest"] = path;
+                    await CollectManifestAsync(site, root, story.Path, manifests, jobs);
+                    var entry = (JsonObject)story.Entry.DeepClone();
+                    entry["manifest"] = story.Path;
                     selectedEntries.Add((JsonNode)entry);
                     Interlocked.Increment(ref _stories);
-                    Report("manifests", site, path, ++collected, siteStories.Length);
+                    Report("manifests", site, story.Path, ++collected, siteStories.Length);
                 }
                 var source = siteInfo["index"] as JsonObject;
                 var selectedIndex = source is null ? new JsonObject { ["format"] = "ournotes.stories/1" } : (JsonObject)source.DeepClone();
@@ -99,6 +103,39 @@ public sealed partial class ArchiveDownloader
             };
             Report("complete");
             return result;
+        }
+
+        private async Task PrefetchManifestsAsync(string site, string root, IEnumerable<string> storyPaths)
+        {
+            // Revalidate independent metadata concurrently before the ordered asset
+            // collection. Only the HTTP cache is changed here: the live manifests,
+            // selection and conflicting-size checks remain in the sequential pass.
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var pending = storyPaths.Where(visited.Add).ToArray();
+            var completed = 0;
+            while (pending.Length > 0)
+            {
+                var next = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+                var total = visited.Count;
+                Report("prefetch", site, processed: completed, total: total);
+                await Parallel.ForEachAsync(pending, new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = _options.Concurrency,
+                    CancellationToken = _cancellation,
+                }, async (path, token) =>
+                {
+                    var url = JoinUrl(root, path);
+                    var document = await FetchJsonAsync(url);
+                    foreach (var modelPath in ModelPaths(Object(document.Value, path))) next.TryAdd(modelPath, 0);
+                    // Keep only validated hashes and on-disk bytes between passes;
+                    // large parsed manifests need not all remain resident at once.
+                    _documents.TryRemove(url, out _);
+                    token.ThrowIfCancellationRequested();
+                    Report("prefetch", site, path, Interlocked.Increment(ref completed), total);
+                });
+                // Deduplication bounds both shared dependencies and model cycles.
+                pending = next.Keys.Order(StringComparer.Ordinal).Where(visited.Add).ToArray();
+            }
         }
 
         private async Task CollectManifestAsync(string site, string root, string path, Dictionary<string, ManifestCopy> manifests, Dictionary<string, AssetJob> jobs)

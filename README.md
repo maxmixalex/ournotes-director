@@ -44,7 +44,7 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 ./advkit.exe archive --out D:/OurNotes/archive --sites intl --concurrency 8
 ```
 
-默认所有语言、两个站点、并发 8、开启客串深扫；`--no-deep` 可明确限定到 MasterData / 目录关联范围。`--retries` 控制单次请求的最大尝试次数（默认 4）。筛选不会删除已经保存的旧素材；索引依据本次选择生成。归档器按完整文件复用，尚未下载完的单个文件会重新下载，不是 HTTP 字节范围续传。
+默认所有语言、两个站点、并发 8、开启客串深扫；`--no-deep` 可明确限定到 MasterData / 目录关联范围。已选剧情和模型清单也按该并发数预取，验证后按顺序汇总；即使素材完全复用，更新仍需等待上游确认清单版本。`--retries` 控制单次请求的最大尝试次数（默认 4）。筛选不会删除已经保存的旧素材；索引依据本次选择生成。归档器按完整文件复用，尚未下载完的单个文件会重新下载，不是 HTTP 字节范围续传。
 
 原始 manifest 保留上游字节，gzip / Brotli / split JSON 仍可由已有 C# 解包逻辑读取，包括 `1e999` 这样的合法 JSON 数值。主要输出保持兼容：
 
