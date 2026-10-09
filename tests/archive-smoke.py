@@ -300,7 +300,16 @@ def main():
         legacy.joinpath("discovery.json").write_bytes(encode(discovery))
         before = origin.asset_requests()
         migrated = run("archive", cwd=root / "legacy-project")
-        check(Path(migrated["result"]["archive"]) == legacy, "Existing legacy archive is found automatically.")
+        migrated_archive = Path(migrated["result"]["archive"])
+        # Windows TEMP can contain an 8.3 alias such as RUNNER~1 while .NET
+        # reports the long directory name. Verify the actual directory identity,
+        # not its spelling; a different existing directory must still fail.
+        path_details = f"CLI reported {str(migrated_archive)!r}; expected {str(legacy)!r}"
+        try:
+            same_archive = migrated_archive.samefile(legacy)
+        except OSError as error:
+            raise AssertionError(f"Cannot verify legacy archive directory identity: {path_details}: {error}") from error
+        check(same_archive, f"Existing legacy archive is found automatically: {path_details}.")
         check(origin.asset_requests() == before, "Legacy assets are reused without re-downloading.")
 
         # The entire update must roll back if downloaded JSON passes hashes but cannot

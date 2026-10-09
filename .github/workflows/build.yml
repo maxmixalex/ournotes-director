@@ -23,6 +23,8 @@ jobs:
   native:
     name: ${{ matrix.rid }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -36,6 +38,8 @@ jobs:
             executable: advkit.exe
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
@@ -69,7 +73,7 @@ jobs:
         run: |
           $rid = '${{ matrix.rid }}'
           $folder = "artifacts/$rid"
-          Copy-Item README.md, USER_GUIDE.md, UNIFIED_INTERFACE.md, THIRD-PARTY.md, LICENSE $folder
+          Copy-Item README.md, USER_GUIDE.md, UNIFIED_INTERFACE.md, SOURCE_REFERENCES.md, THIRD-PARTY.md, LICENSE $folder
           Copy-Item samples "$folder/samples" -Recurse
           New-Item -ItemType Directory -Path packages -Force | Out-Null
           if ($IsWindows) {
@@ -78,13 +82,63 @@ jobs:
             tar -czf "packages/ournotes-director-$rid.tar.gz" -C $folder .
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          Get-ChildItem packages -File | ForEach-Object {
+          @(Get-ChildItem packages -File) | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)" | Set-Content "$($_.FullName).sha256" -Encoding ascii
           }
       - uses: actions/upload-artifact@v7
+        id: artifact
+        continue-on-error: >-
+          ${{ (github.event_name == 'push' &&
+               (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
+              (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
         with:
           name: ournotes-director-${{ matrix.rid }}
           path: packages/*
           if-no-files-found: error
           retention-days: 30
+      - name: Preserve packages in an unpublished draft if artifact upload fails
+        if: >-
+          ${{ steps.artifact.outcome == 'failure' &&
+              ((github.event_name == 'push' &&
+                (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
+               (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RID: ${{ matrix.rid }}
+        run: |
+          $rid = $env:RID
+          $tag = "ci-artifacts-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$rid"
+          $assets = @(Get-ChildItem packages -File | Sort-Object Name | ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 2) { throw 'Expected one package and its SHA-256 checksum.' }
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $notes = Join-Path $env:RUNNER_TEMP 'artifact-fallback.md'
+          @(
+            'GitHub Actions artifact upload failed. This unpublished draft preserves the verified native package and SHA-256 checksum.'
+            ''
+            "Commit: $env:GITHUB_SHA"
+            "Target: $rid"
+            "Workflow run: $runUrl"
+          ) | Set-Content -LiteralPath $notes -Encoding utf8
+          $arguments = @(
+            'release', 'create', $tag,
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--draft', '--latest=false',
+            '--target', $env:GITHUB_SHA,
+            '--title', "CI artifacts $env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT ($rid)",
+            '--notes-file', $notes
+          ) + $assets
+          $releaseUrl = & gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Draft artifact upload failed (gh exit $LASTEXITCODE)." }
+          $releaseUrl = ($releaseUrl | Out-String).Trim()
+          Write-Output "::warning::Actions artifact upload failed; packages were preserved in an unpublished draft Release."
+          @(
+            '### Native package delivery'
+            ''
+            'Actions artifact upload failed. The package and SHA-256 checksum are available in an unpublished draft Release.'
+            ''
+            "[Download $rid package (repository write access required)]($releaseUrl)"
+            ''
+            "Commit: $env:GITHUB_SHA"
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8

@@ -31,6 +31,8 @@
 
 ## 1. 从哪里运行
 
+发布包默认从 GitHub Actions artifacts 下载。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会将各平台测试通过的包分别保存为独立草稿 Release，链接见对应 job 的 Summary；草稿仅对具有仓库写权限的人可见。
+
 以下命令均在解压后的发布目录执行，示例采用 Windows 文件名；Linux 把 `./advkit.exe` 换成 `./advkit`。开发构建的程序位于 `artifacts/win-x64` 或 `artifacts/linux-x64`：
 
 ```powershell
@@ -47,7 +49,7 @@ Native AOT 发布支持 Windows x64 和 Linux x64，归档、检索和素材解�
 
 只执行一个命令：`./advkit.exe archive`。没有归档时下载到当前目录的 `archive/`；已有归档时重新确认上游版本，校验后复用已有文件，补齐新增或损坏内容，更新检索索引和 Director Pack。中断后重复同一命令即可，单个未完成文件会重下。旧 Node 归档可以直接指定路径复用，不需要转换，也不需要继续保留 Node 项目。
 
-默认下载两个站点的 millsage 关联及模型客串剧情、全部语言和公共模型资源。`--out PATH` 指定目录；`--languages zh-Hans,ja` 选择语言；`--sites intl` 只更新一个站点；`--no-deep` 关闭额外客串扫描。后续每次沿用所需的相同选项；省略语言／站点选项会回到全部语言／两个站点。筛选只改变本次索引范围，不主动删除旧素材。
+默认下载两个站点的 millsage 关联及模型客串剧情、全部语言和公共模型资源。`--out PATH` 指定目录；`--languages zh-Hans,ja` 选择语言；`--sites intl` 只更新一个站点；`--no-deep` 关闭额外客串扫描。后续每次沿用所需的相同选项；省略语言／站点选项会回到全部语言／两个站点。筛选限定本次下载、索引和 Director Pack 的范围，不主动删除旧素材。
 
 ```powershell
 ./advkit.exe archive --out D:/OurNotes/archive

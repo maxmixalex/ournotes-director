@@ -10,6 +10,8 @@
 
 GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `ubuntu-24.04` 与 `windows-2022` 上分别构建、测试和发布。完成后下载 `ournotes-director-linux-x64` / `ournotes-director-win-x64` artifact，解开其中的平台压缩包；包内包含原生程序、使用指南、许可证和示例剧本。
 
+默认交付位置是 Actions artifacts。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会把各平台测试通过的包分别保存为独立的**草稿 Release**，下载链接见对应 job 的 Summary。草稿只有具有仓库写权限的人能查看；其他情况仍使用 artifacts。
+
 ```powershell
 # Windows：在解压后的目录中运行
 ./advkit.exe archive
@@ -50,7 +52,7 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 |---|---|
 | `discovery.json` | 本次成员、剧情来源、站点和筛选范围 |
 | `store/` | 跨剧情、跨站点共享的哈希素材 |
-| `sites/intl`、`sites/jp` | 原始目录、story/model manifest、素材和 Director Pack |
+| `sites/intl`、`sites/jp` | 筛选后的剧情目录、原始 story/model manifest、素材和 Director Pack |
 | `index/catalog.json`、`models.json`、`stats.json` | 剧情、模型和统计目录 |
 | `index/*.jsonl` | commands、texts、dialogue、voices、sounds、files 检索索引 |
 
