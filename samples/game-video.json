@@ -1,0 +1,14 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Clip","VideoID":4100000031,"Parameter1":"0.5"},
+    {"cmd":"Delay","Duration":1},
+    {"cmd":"Subtitles","AdvTextID":"adv_script_millsage_004_1_11_2","IsNoWait":1},
+    {"cmd":"Delay","Duration":2.3},
+    {"cmd":"Subtitles","AdvTextID":"adv_script_millsage_004_1_11_3","IsNoWait":1},
+    {"cmd":"Delay","Duration":2},
+    {"cmd":"Clip","Parameter1":"0.5"},
+    {"cmd":"Delay","Duration":1}
+  ]
+}

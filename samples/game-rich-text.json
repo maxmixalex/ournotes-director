@@ -1,0 +1,47 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "cmd": "Character",
+      "TargetName": "hotaru",
+      "TargetAssetName": "016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01"
+    },
+    {
+      "cmd": "Stage",
+      "TargetAssetName": "adv_bkg_stage_000248/adv_bkg_stage_000248"
+    },
+    {
+      "cmd": "In",
+      "TargetName": "hotaru",
+      "PositionType": 5
+    },
+    {
+      "cmd": "Focus",
+      "PositionType": 5,
+      "CameraDistance": 0
+    },
+    {
+      "cmd": "Talk",
+      "TargetName": "hotaru",
+      "TargetTextIDs": [
+        "adv_hotaru"
+      ],
+      "AdvTextID": "mad_text_layout",
+      "IsNoWait": 1
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 30
+    }
+  ],
+  "text": {
+    "mad_text_layout": {
+      "japanese": "<color=#ff80c0><b>誰ひと</b></color><size=125%>り、泣</size>いたり悲しんだりしていないみんな",
+      "english": "<color=#ff80c0><b>A h</b></color><size=125%>app</size>y ending with no",
+      "traditionalChinese": "<color=#ff80c0><b>沒有人</b></color><size=125%>會哭泣</size>、感到悲傷，大家都帶著笑容的幸福",
+      "simplifiedChinese": "<color=#ff80c0><b>再无一</b></color><size=125%>人落泪</size>哀伤，唯有笑颜绽放的幸福结局再无",
+      "korean": "<color=#ff80c0><b>아무도</b></color><size=125%> 울거</size>나 슬퍼하지 않고모두가 웃음을"
+    }
+  }
+}

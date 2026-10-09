@@ -1,0 +1,24 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "i": 358,
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "TargetName": "advchat_hotaru_kanata_01",
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "TargetChatID": 10069,
+      "Parameter1": "90",
+      "Parameter2": "1",
+      "Parameter3": "1"
+    },
+    {
+      "i": 9000,
+      "Duration": "20",
+      "cmd": "Delay"
+    }
+  ]
+}

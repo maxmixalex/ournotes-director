@@ -1,0 +1,12 @@
+{
+  "initialize": [], "finalize": [],
+  "commands": [
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000248/adv_bkg_stage_000248"},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_kirakira_1/adv_frame_kirakira_1","Duration":0.2},
+    {"cmd":"Delay","Duration":2},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_kirakira_1/adv_frame_kirakira_1","Duration":0.2},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_comic_speedline/adv_frame_comic_speedline_white"},
+    {"cmd":"Delay","Duration":2},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_comic_speedline/adv_frame_comic_speedline_white","Duration":0.2}
+  ]
+}

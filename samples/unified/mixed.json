@@ -1,0 +1,19 @@
+{
+  "format": "ournotes-director/project",
+  "version": 1,
+  "source": { "adv": "10060", "site": "intl", "language": "zh-Hans" },
+  "output": { "width": 640, "height": 360, "supersample": 2, "codec": "h264", "letterbox": "game" },
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    { "cmd": "Character", "TargetName": "hotaru", "TargetAssetName": "016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01" },
+    { "cmd": "Stage", "TargetAssetName": "adv_bkg_stage_000248/adv_bkg_stage_000248" },
+    { "cmd": "In", "TargetName": "hotaru", "PositionType": 5 },
+    { "cmd": "Focus", "TargetName": "hotaru", "PositionType": 5, "CameraDistance": 0 },
+    { "cmd": "Director.Parameter", "TargetName": "hotaru", "Parameter": "ParamAngleX", "Operation": "set", "Value": 10, "Duration": 1, "Ease": "InOutSine", "IsNoWait": 1 },
+    { "cmd": "Zoom", "Parameter1": "1.2", "Duration": 1 },
+    { "cmd": "Director.Parameter", "TargetName": "hotaru", "Parameter": "ParamAngleX", "Operation": "release" },
+    { "cmd": "Director.Actor", "TargetName": "hotaru", "Space": "screen", "Values": { "position": [0.65, 0.5], "height": 0.95, "visible": true } },
+    { "cmd": "Delay", "Duration": 2 }
+  ]
+}

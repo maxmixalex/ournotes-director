@@ -1,0 +1,17 @@
+{
+  "format": "ournotes-director/project",
+  "version": 1,
+  "source": { "adv": "10060", "site": "intl", "language": "zh-Hans" },
+  "output": { "width": 640, "height": 360, "supersample": 2, "codec": "prores", "clean": true, "letterbox": "none" },
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    { "cmd": "Character", "TargetName": "hotaru", "TargetAssetName": "016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01" },
+    { "cmd": "Director.Scene", "Values": { "background": [0, 0, 0, 0], "stageVisible": false } },
+    { "cmd": "Director.Actor", "TargetName": "hotaru", "Space": "screen", "Values": { "visible": true, "position": [0.5, 0.5], "height": 0.95 } },
+    { "cmd": "Director.Parameter", "TargetName": "hotaru", "Parameter": "ParamAngleX", "Operation": "set", "Value": -15 },
+    { "cmd": "Director.Parameter", "TargetName": "hotaru", "Parameter": "ParamAngleX", "Operation": "set", "Value": 15, "Duration": 2, "Ease": "InOutSine" },
+    { "cmd": "Director.Parameter", "TargetName": "hotaru", "Parameter": "ParamAngleX", "Operation": "release" },
+    { "cmd": "Delay", "Duration": 1 }
+  ]
+}

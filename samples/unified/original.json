@@ -1,0 +1,6 @@
+{
+  "format": "ournotes-director/project",
+  "version": 1,
+  "source": { "adv": "10060", "site": "intl", "language": "zh-Hans" },
+  "output": { "width": 640, "height": 360, "supersample": 2, "codec": "h264", "letterbox": "game" }
+}

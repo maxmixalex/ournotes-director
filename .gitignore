@@ -1,12 +1,15 @@
 **/bin/
 **/obj/
 artifacts/
+packages/
 archive/
-output/
 .ournotes-temp/
 CubismSdkForNative*/
 CubismSdkMotionSyncPluginForNative*/
 *.zip
 *.tar.gz
-.venv/
+__pycache__/
+*.pyc
+output/
 references/
+.venv/

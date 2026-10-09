@@ -1,0 +1,14 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Character","TargetName":"hotaru","TargetAssetName":"016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01"},
+    {"cmd":"Character","TargetName":"nagi","TargetAssetName":"018_adv/adv_live2d_nagi_018_casual_spring_01/model/adv_live2d_nagi_018_casual_spring_01"},
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000241/adv_bkg_stage_000241"},
+    {"cmd":"In","TargetName":"hotaru","PositionType":3},
+    {"cmd":"In","TargetName":"nagi","PositionType":7},
+    {"cmd":"Focus","PositionType":5,"CameraDistance":0},
+    {"cmd":"Talk","TargetName":"hotaru","TargetTextIDs":["adv_hotaru"],"AdvTextID":"adv_script_millsage_004_1_03_3","VoiceIDs":[3101040103001],"Parameter1":"EveryoneLipSync"},
+    {"cmd":"Delay","Duration":2}
+  ]
+}

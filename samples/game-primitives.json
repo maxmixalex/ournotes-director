@@ -1,0 +1,21 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Character","TargetName":"hotaru","TargetAssetName":"016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01"},
+    {"cmd":"Character","TargetName":"kanata","TargetAssetName":"sub_kanata/adv_live2d_sub_kanata_casual_spring_01/model/adv_live2d_sub_kanata_casual_spring_01"},
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000217/adv_bkg_stage_000217"},
+    {"cmd":"In","TargetName":"hotaru","PositionType":3},
+    {"cmd":"In","TargetName":"kanata","PositionType":7},
+    {"cmd":"Focus","PositionType":5,"CameraDistance":0},
+    {"cmd":"Delay","Duration":1},
+    {"cmd":"PanV2","Parameter1":"12","Parameter2":"InOutSine","Duration":2,"IsNoWait":1},
+    {"cmd":"Zoom","Parameter1":"1.2","Parameter2":"InOutSine","Duration":2},
+    {"cmd":"Focus","PositionType":3,"TargetName":"hotaru","CameraDistance":3,"Duration":1},
+    {"cmd":"Delay","Duration":1},
+    {"cmd":"Focus","PositionType":5,"CameraDistance":0,"Duration":1},
+    {"cmd":"Out","TargetName":"kanata","Duration":1},
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000248/adv_bkg_stage_000248","Duration":1},
+    {"cmd":"Delay","Duration":2}
+  ]
+}

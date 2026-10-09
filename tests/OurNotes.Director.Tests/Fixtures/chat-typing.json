@@ -1,0 +1,101 @@
+[
+  {
+    "frame": 1,
+    "row": -1,
+    "visible": false,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": null,
+    "y": 0
+  },
+  {
+    "frame": 12,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -4.9212646484375
+  },
+  {
+    "frame": 18,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 24,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 30,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 36,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 42,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 48,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 60,
+    "row": 0,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0
+  },
+  {
+    "frame": 90,
+    "row": 1,
+    "visible": true,
+    "text": "我这边稍微出了点状况\n可能暂时见不了面了🥺",
+    "maxVisible": 13,
+    "boxHeight": 73.94000244140625,
+    "y": 0
+  },
+  {
+    "frame": 180,
+    "row": 2,
+    "visible": true,
+    "text": "我这边稍微出了点状况\n可能暂时见不了面了🥺",
+    "maxVisible": 21,
+    "boxHeight": 73.94000244140625,
+    "y": 0
+  }
+]

@@ -1,0 +1,69 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "cmd": "Stage",
+      "TargetAssetName": "adv_bkg_stage_000130/adv_bkg_stage_000130"
+    },
+    {
+      "cmd": "Focus",
+      "CameraDistance": 3,
+      "PositionType": 5
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 0.5
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "TargetAssetName": "adv_effect_spotlight/adv_effect_spotlight",
+      "PositionType": 5,
+      "CanvasLayers": [
+        0
+      ]
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 2
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "PositionType": 5,
+      "CanvasLayers": [
+        0
+      ]
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 0.5
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "PositionType": 5,
+      "Parameter2": "edv_effect_spotlight_loop",
+      "CanvasLayers": [
+        0
+      ]
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 2
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "Parameter1": "atonce",
+      "CanvasLayers": [
+        0
+      ]
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 0.5
+    }
+  ]
+}

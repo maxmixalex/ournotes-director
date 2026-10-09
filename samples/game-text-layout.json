@@ -1,0 +1,47 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "cmd": "Character",
+      "TargetName": "hotaru",
+      "TargetAssetName": "016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01"
+    },
+    {
+      "cmd": "Stage",
+      "TargetAssetName": "adv_bkg_stage_000248/adv_bkg_stage_000248"
+    },
+    {
+      "cmd": "In",
+      "TargetName": "hotaru",
+      "PositionType": 5
+    },
+    {
+      "cmd": "Focus",
+      "PositionType": 5,
+      "CameraDistance": 0
+    },
+    {
+      "cmd": "Talk",
+      "TargetName": "hotaru",
+      "TargetTextIDs": [
+        "adv_hotaru"
+      ],
+      "AdvTextID": "mad_text_layout",
+      "IsNoWait": 1
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 30
+    }
+  ],
+  "text": {
+    "mad_text_layout": {
+      "japanese": "誰ひとり、泣いたり悲しんだりしていないみんなが笑っている幸せな結末誰ひとり、泣いたり悲しんだりしていないみんなが笑っている幸せな結末誰ひとり、泣いたり悲しんだりしていないみんなが笑っている幸せな結末",
+      "english": "A happy ending with no tears, no sorrow,and smiles blooming on every face.A happy ending with no tears, no sorrow,and smiles blooming on every face.A happy ending with no tears, no sorrow,and smiles blooming on every face.",
+      "traditionalChinese": "沒有人會哭泣、感到悲傷，大家都帶著笑容的幸福結局。沒有人會哭泣、感到悲傷，大家都帶著笑容的幸福結局。沒有人會哭泣、感到悲傷，大家都帶著笑容的幸福結局。",
+      "simplifiedChinese": "再无一人落泪哀伤，唯有笑颜绽放的幸福结局再无一人落泪哀伤，唯有笑颜绽放的幸福结局再无一人落泪哀伤，唯有笑颜绽放的幸福结局",
+      "korean": "아무도 울거나 슬퍼하지 않고모두가 웃음을 짓는 행복한 결말아무도 울거나 슬퍼하지 않고모두가 웃음을 짓는 행복한 결말아무도 울거나 슬퍼하지 않고모두가 웃음을 짓는 행복한 결말"
+    }
+  }
+}

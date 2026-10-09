@@ -1,0 +1,9 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    { "cmd": "Stage", "TargetAssetName": "adv_bkg_stage_000195/adv_bkg_stage_000195" },
+    { "cmd": "Talk", "TargetStatus": 2, "AdvTextID": "adv_script_millsage_004_1_18_19", "IsNoWait": 1 },
+    { "cmd": "Delay", "Duration": 10 }
+  ]
+}

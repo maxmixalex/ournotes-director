@@ -1,0 +1,14 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000248/adv_bkg_stage_000248"},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_lensflare_1/adv_frame_lensflare_1","Duration":1},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_letterbox/adv_frame_letterbox_black","Parameter2":"Show_anime","IsNoWait":1},
+    {"cmd":"Delay","Duration":2},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_letterbox/adv_frame_letterbox_black","Parameter2":"Hide_anime"},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_lensflare_1/adv_frame_lensflare_1","Duration":1},
+    {"cmd":"Frame","TargetAssetName":"adv_frame_eyeblink/adv_frame_eyeblink_blink"},
+    {"cmd":"Delay","Duration":1}
+  ]
+}

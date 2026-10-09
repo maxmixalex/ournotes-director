@@ -1,0 +1,81 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "i": 357,
+      "cmd": "ChatTalk",
+      "raw": 37,
+      "TargetName": "advchat_kanata_01",
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "TargetChatID": 10109,
+      "AdvTextID": "adv_script_millsage_004_1_02_63",
+      "Parameter3": "1",
+      "lines": {
+        "japanese": "蛍",
+        "english": "Hotaru",
+        "traditionalChinese": "螢",
+        "simplifiedChinese": "萤",
+        "korean": "호타루"
+      }
+    },
+    {
+      "i": 358,
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "TargetName": "advchat_hotaru_kanata_01",
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "TargetChatID": 10069,
+      "Parameter1": "90",
+      "Parameter2": "2",
+      "Parameter3": "1"
+    },
+    {
+      "i": 359,
+      "cmd": "ChatTalk",
+      "raw": 37,
+      "TargetName": "advchat_kanata_01",
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "TargetChatID": 10109,
+      "AdvTextID": "adv_script_millsage_004_1_02_64",
+      "Parameter3": "1",
+      "lines": {
+        "japanese": "約束すっぽかしてごめん🙇‍♀️",
+        "english": "Sorry I flaked on our promise🙇‍♀️",
+        "traditionalChinese": "抱歉爽約了🙇‍♀️",
+        "simplifiedChinese": "抱歉放你鸽子啦🙇‍♀️",
+        "korean": "약속 펑크 내서 미안🙇‍♀️"
+      }
+    },
+    {
+      "i": 360,
+      "cmd": "ChatTalk",
+      "raw": 37,
+      "TargetName": "advchat_kanata_01",
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "TargetChatID": 10109,
+      "AdvTextID": "adv_script_millsage_004_1_02_65",
+      "Parameter3": "1",
+      "lines": {
+        "japanese": "ちょっといろいろあって\nしばらく会えねーかも🥺",
+        "english": "Some stuff came up,\nso I might not be able to see you for a while🥺",
+        "traditionalChinese": "我最近有點忙，\n可能有陣子無法見面🥺",
+        "simplifiedChinese": "我这边稍微出了点状况\n可能暂时见不了面了🥺",
+        "korean": "이런저런 일이 좀 있어서\n당분간 못 만날지도🥺"
+      }
+    },
+    {
+      "i": 9990,
+      "cmd": "Delay",
+      "Duration": "20"
+    }
+  ]
+}

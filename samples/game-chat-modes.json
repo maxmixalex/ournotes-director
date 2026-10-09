@@ -1,0 +1,144 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "i": 357,
+      "cmd": "ChatTalk",
+      "raw": 37,
+      "TargetName": "advchat_kanata_01",
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "TargetChatID": 10109,
+      "AdvTextID": "adv_script_millsage_004_1_02_63",
+      "Parameter3": "1",
+      "lines": {
+        "japanese": "蛍",
+        "english": "Hotaru",
+        "traditionalChinese": "螢",
+        "simplifiedChinese": "萤",
+        "korean": "호타루"
+      }
+    },
+    {
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "Parameter3": "1",
+      "Parameter2": "0",
+      "TargetName": "advchat_hotaru_kanata_01",
+      "IsNoWait": true,
+      "TargetChatID": 10069,
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "Parameter1": "90",
+      "i": 9100
+    },
+    {
+      "Duration": "0.6",
+      "i": 9101,
+      "cmd": "Delay"
+    },
+    {
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "Parameter3": "1",
+      "Parameter2": "1",
+      "TargetName": "advchat_hotaru_kanata_01",
+      "IsNoWait": true,
+      "TargetChatID": 10069,
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "Parameter1": "90",
+      "i": 9102
+    },
+    {
+      "Duration": "0.6",
+      "i": 9103,
+      "cmd": "Delay"
+    },
+    {
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "Parameter3": "1",
+      "Parameter2": "2",
+      "TargetName": "advchat_hotaru_kanata_01",
+      "IsNoWait": true,
+      "TargetChatID": 10069,
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "Parameter1": "90",
+      "i": 9104
+    },
+    {
+      "Duration": "0.6",
+      "i": 9105,
+      "cmd": "Delay"
+    },
+    {
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "Parameter3": "1",
+      "Parameter2": "0",
+      "TargetName": "advchat_hotaru_kanata_01",
+      "IsNoWait": true,
+      "TargetChatID": 10069,
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "Parameter1": "90",
+      "i": 9106
+    },
+    {
+      "Duration": "0.6",
+      "i": 9107,
+      "cmd": "Delay"
+    },
+    {
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "Parameter3": "1",
+      "Parameter2": "0",
+      "TargetName": "advchat_hotaru_kanata_01",
+      "IsNoWait": true,
+      "TargetChatID": 10069,
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "Parameter1": "90",
+      "i": 9108
+    },
+    {
+      "Duration": "0.6",
+      "i": 9109,
+      "cmd": "Delay"
+    },
+    {
+      "cmd": "ChatWindow",
+      "raw": 36,
+      "Parameter3": "1",
+      "Parameter2": "0",
+      "TargetName": "advchat_hotaru_kanata_01",
+      "IsNoWait": true,
+      "TargetChatID": 10069,
+      "TargetTextIDs": [
+        "advchat_kanata_01"
+      ],
+      "Parameter1": "90",
+      "i": 9110
+    },
+    {
+      "Duration": "0.6",
+      "i": 9111,
+      "cmd": "Delay"
+    },
+    {
+      "Duration": "20",
+      "i": 9112,
+      "cmd": "Delay"
+    }
+  ]
+}

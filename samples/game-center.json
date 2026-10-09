@@ -1,0 +1,13 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000248/adv_bkg_stage_000248"},
+    {"cmd":"TalkWindow","TargetAssetName":"UICenterTalkWindow"},
+    {"cmd":"Talk","AdvTextID":"adv_script_millsage_004_1_01_1","TargetStatus":2},
+    {"cmd":"Flash","Duration":0.5,"IsNoWait":1},
+    {"cmd":"Talk","AdvTextID":"adv_script_millsage_004_1_01_2","TargetStatus":2},
+    {"cmd":"Talk","AdvTextID":"0"},
+    {"cmd":"Delay","Duration":1}
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "duration": 10,
+  "fps": 30,
+  "seed": 722,
+  "warmupFrames": 30,
+  "output": { "width": 1920, "height": 1080, "renderScale": 2 },
+  "background": [0.06, 0.07, 0.1, 1],
+  "camera": { "zoom": 2.2, "y": -0.22 },
+  "actors": [
+    {
+      "name": "hotaru",
+      "model": "adv_live2d_hotaru_016_casual_spring_01",
+      "motion": "mtn_sad01_C",
+      "expression": "exp_anxiety01"
+    }
+  ],
+  "tracks": [
+    { "target": "camera", "property": "zoom", "interpolation": "smoothstep", "keys": [{"t":0,"value":2.2},{"t":10,"value":2.6}] },
+    { "target": "hotaru", "property": "param:ParamAngleX", "interpolation": "smoothstep", "keys": [{"t":0,"value":-15},{"t":5,"value":15},{"t":10,"value":-5}] }
+  ],
+  "events": [
+    { "t": 5, "actor": "hotaru", "expression": "exp_smile07", "fade": 0.8 }
+  ]
+}

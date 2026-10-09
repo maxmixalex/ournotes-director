@@ -1,0 +1,19 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Character","TargetName":"hotaru","TargetAssetName":"016_adv/adv_live2d_hotaru_016_casual_spring_01/model/adv_live2d_hotaru_016_casual_spring_01"},
+    {"cmd":"Stage","TargetAssetName":"adv_bkg_stage_000248/adv_bkg_stage_000248"},
+    {"cmd":"In","TargetName":"hotaru","PositionType":5},
+    {"cmd":"Focus","PositionType":5,"CameraDistance":0},
+    {"cmd":"Location","AdvTextID":"adv_script_millsage_004_1_01_75"},
+    {"cmd":"PostEffect","TargetAssetName":"adv_effect_posteffect_reminiscence2","Duration":1},
+    {"cmd":"Delay","Duration":2},
+    {"cmd":"PostEffect","TargetAssetName":"adv_effect_posteffect_reminiscence2","Duration":1},
+    {"cmd":"CameraShake","Parameter1":"0.3","Parameter2":"0.025"},
+    {"cmd":"Delay","Duration":1},
+    {"cmd":"CameraShake","Parameter1":"0.3"},
+    {"cmd":"Shake","Parameter1":"0.3","Duration":0.5},
+    {"cmd":"Delay","Duration":1}
+  ]
+}

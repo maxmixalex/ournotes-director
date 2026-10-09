@@ -1,0 +1,10 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Still","TargetAssetName":"charaillust/adv_still_charaillust_000012/adv_still_charaillust_000012","Parameter1":"0.5","Parameter3":"0"},
+    {"cmd":"Delay","Duration":4},
+    {"cmd":"Still","TargetAssetName":"charaillust/adv_still_charaillust_000012/adv_still_charaillust_000012","Parameter1":"0.5"},
+    {"cmd":"Delay","Duration":1}
+  ]
+}

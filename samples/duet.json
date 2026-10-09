@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "duration": 3,
+  "fps": 30,
+  "seed": 722,
+  "output": { "width": 1920, "height": 1080, "renderScale": 2 },
+  "stage": "adv_bkg_stage_000243/adv_bkg_stage_000243",
+  "background": [0,0,0,1],
+  "grade": { "exposure": -0.2, "contrast": 1.1, "saturation": 0.8, "vignette": 0.3 },
+  "actors": [
+    { "name": "hotaru", "model": "adv_live2d_hotaru_016_casual_spring_01", "x": 0.35 },
+    { "name": "natsume", "model": "adv_live2d_natsume_017_casual_spring_01", "x": 0.65 }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {"cmd":"Still","TargetAssetName":"charaillust/adv_still_charaillust_000012/adv_still_charaillust_000012","Parameter1":"0","Parameter3":"-1"},
+    {"cmd":"Delay","Duration":1},
+    {"cmd":"Shake","CanvasLayers":[7],"Parameter1":"1","Duration":2},
+    {"cmd":"Delay","Duration":1}
+  ]
+}

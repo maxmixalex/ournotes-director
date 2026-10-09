@@ -1,0 +1,68 @@
+{
+  "initialize": [],
+  "finalize": [],
+  "commands": [
+    {
+      "cmd": "Character",
+      "TargetName": "storyteller",
+      "TargetAssetName": "006_adv/adv_live2d_uika_006_live_01_mask_silhouette/model/adv_live2d_uika_006_live_01_mask_silhouette"
+    },
+    {
+      "cmd": "Stage",
+      "TargetAssetName": "adv_bkg_stage_000130/adv_bkg_stage_000130"
+    },
+    {
+      "cmd": "Focus",
+      "CameraDistance": 3,
+      "PositionType": 5
+    },
+    {
+      "cmd": "In",
+      "TargetName": "storyteller",
+      "PositionType": 5,
+      "Duration": 0.01
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 0.5
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "TargetAssetName": "adv_effect_spotlight/adv_effect_spotlight",
+      "PositionType": 5
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 2
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "PositionType": 5
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 0.5
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "PositionType": 5,
+      "Parameter2": "edv_effect_spotlight_loop"
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 2
+    },
+    {
+      "cmd": "Effect",
+      "TargetName": "storyteller",
+      "Parameter1": "atonce"
+    },
+    {
+      "cmd": "Delay",
+      "Duration": 0.5
+    }
+  ]
+}

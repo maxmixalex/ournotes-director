@@ -1,0 +1,444 @@
+[
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 1,
+    "row": -1,
+    "visible": false,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": null,
+    "y": 0,
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "main": 0,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 6,
+    "row": 2,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 12,
+    "row": 2,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 18,
+    "row": 2,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 24,
+    "row": 4,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 0.9479721784591675,
+      "y": 0.9479721784591675,
+      "z": 0.6144263744354248
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 27,
+    "row": 4,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 0.7021035552024841,
+      "y": 0.7021035552024841,
+      "z": 0.45506709814071655
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 30,
+    "row": 4,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 0.7018481492996216,
+      "y": 0.7018481492996216,
+      "z": 0.4549015760421753
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 36,
+    "row": 4,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 0.7018481492996216,
+      "y": 0.7018481492996216,
+      "z": 0.4549015760421753
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 42,
+    "row": 6,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.2967331409454346,
+      "y": 1.2967331409454346,
+      "z": 0.8404752016067505
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 45,
+    "row": 6,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5426018238067627,
+      "y": 1.5426018238067627,
+      "z": 0.9998344779014587
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 48,
+    "row": 6,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 54,
+    "row": 6,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 60,
+    "row": 8,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 63,
+    "row": 8,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 66,
+    "row": 8,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 72,
+    "row": 8,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 78,
+    "row": 10,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -739.8212890625,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 81,
+    "row": 10,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -1069.369384765625,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 84,
+    "row": 10,
+    "visible": false,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -1080,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 90,
+    "row": 10,
+    "visible": false,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -1080,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 96,
+    "row": 12,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -1080,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 99,
+    "row": 12,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -107.1495361328125,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 102,
+    "row": 12,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": -10.630615234375,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 108,
+    "row": 12,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 120,
+    "row": 13,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  },
+  {
+    "script": "ournotes-director/samples/game-chat-modes.json",
+    "frame": 150,
+    "row": 13,
+    "visible": true,
+    "text": "",
+    "maxVisible": 2147483647,
+    "boxHeight": 63,
+    "y": 0,
+    "scale": {
+      "x": 1.5428571701049805,
+      "y": 1.5428571701049805,
+      "z": 1
+    },
+    "main": 1,
+    "lock": 0
+  }
+]
