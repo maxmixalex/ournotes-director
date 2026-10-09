@@ -110,9 +110,9 @@ public sealed partial class ArchiveDownloader : IDisposable
             Directory.CreateDirectory(_cache);
         }
 
-        private void Report(string stage, string? site = null, string? path = null) => _progress?.Invoke(new(
+        private void Report(string stage, string? site = null, string? path = null, int? processed = null, int? total = null) => _progress?.Invoke(new(
             stage, Volatile.Read(ref _stories), Volatile.Read(ref _models), Volatile.Read(ref _assets),
-            Interlocked.Read(ref _downloadedBytes), Interlocked.Read(ref _reusedBytes), site, path));
+            Interlocked.Read(ref _downloadedBytes), Interlocked.Read(ref _reusedBytes), site, path, processed, total));
 
         private static void ValidateSite(string site)
         {

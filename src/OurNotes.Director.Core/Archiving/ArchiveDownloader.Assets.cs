@@ -31,7 +31,10 @@ public sealed partial class ArchiveDownloader
                 var root = Text(siteInfo["root"]);
                 ValidateRoot(root);
                 var selectedEntries = new JsonArray();
-                foreach (var story in stories.OfType<JsonObject>().OrderBy(x => Number(x["advId"])))
+                var siteStories = stories.OfType<JsonObject>().Where(story => story["sites"]?[site] is JsonObject).OrderBy(x => Number(x["advId"])).ToArray();
+                var collected = 0;
+                Report("manifests", site, processed: 0, total: siteStories.Length);
+                foreach (var story in siteStories)
                 {
                     _cancellation.ThrowIfCancellationRequested();
                     if (story["sites"]?[site] is not JsonObject selection) continue;
@@ -43,7 +46,7 @@ public sealed partial class ArchiveDownloader
                     entry["manifest"] = path;
                     selectedEntries.Add((JsonNode)entry);
                     Interlocked.Increment(ref _stories);
-                    Report("manifests", site, path);
+                    Report("manifests", site, path, ++collected, siteStories.Length);
                 }
                 var source = siteInfo["index"] as JsonObject;
                 var selectedIndex = source is null ? new JsonObject { ["format"] = "ournotes.stories/1" } : (JsonObject)source.DeepClone();
@@ -54,6 +57,7 @@ public sealed partial class ArchiveDownloader
             // Finish all asset work before replacing any live manifest or selection.
             // A failed/cancelled run leaves its verified assets reusable and the previous
             // selection intact. No old material is deleted as part of an update.
+            Report("assets", processed: 0, total: jobs.Count);
             await Parallel.ForEachAsync(jobs.Values, new ParallelOptions
             {
                 MaxDegreeOfParallelism = _options.Concurrency,
@@ -62,10 +66,11 @@ public sealed partial class ArchiveDownloader
             {
                 await FetchAssetAsync(job);
                 token.ThrowIfCancellationRequested();
-                Interlocked.Increment(ref _assets);
-                Report("assets", job.Site, job.Asset);
+                var completed = Interlocked.Increment(ref _assets);
+                Report("assets", job.Site, job.Asset, completed, jobs.Count);
             });
 
+            Report("publishing");
             foreach (var copy in manifests.Values.OrderBy(x => x.Path.StartsWith("models/", StringComparison.Ordinal) ? 0 : 1))
             {
                 var bytes = await File.ReadAllBytesAsync(copy.CacheFile, _cancellation);

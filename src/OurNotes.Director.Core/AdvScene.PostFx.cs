@@ -50,7 +50,7 @@ public sealed partial class AdvScene
     public void DrawMedia(Action draw,bool suppressVolumes)
     {
         mediaPost??=new(gl,shaders){GrainTextures=post.GrainTextures,LoadTexture=post.LoadTexture};
-        if(mediaCamera is null){var ui=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"ui"),"zh-Hans"))!;var c=ui["videoAndStillCamera"]!["camera"]!;mediaCamera=new(loop,tweens,Actor.N(c["field of view"]),Actor.N(c["near clip plane"]),Actor.N(c["far clip plane"]));}
+        if(mediaCamera is null){var ui=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"ui"),language))!;var c=ui["videoAndStillCamera"]!["camera"]!;mediaCamera=new(loop,tweens,Actor.N(c["field of view"]),Actor.N(c["near clip plane"]),Actor.N(c["far clip plane"]));}
         mediaPost.GrainIntensity=post.GrainIntensity;mediaPost.GrainScale=post.GrainScale;
         gl.BeginLayer();draw();mediaPost.Render(AdvVolume.Evaluate(suppressVolumes?[]:volumes),mediaCamera,loop.Frame);gl.EndLayer();
     }

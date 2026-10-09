@@ -7,7 +7,7 @@ using static OurNotes.Director.Core.Archiving.ArchiveIndexStorage;
 namespace OurNotes.Director.Core.Archiving;
 
 /// <summary>Merges archived normal ADV resources into the resource pack consumed by the native Director.</summary>
-public static class DirectorPackBuilder
+public static partial class DirectorPackBuilder
 {
     private const long DirectorAdvId = 9990001;
     private const string DirectorAsset = "adv_director_millsage";
@@ -100,6 +100,11 @@ public static class DirectorPackBuilder
         var shaderNames = new SortedSet<string>(Items(scene["shaders"]?["names"]).Select(Text), StringComparer.Ordinal);
         var shaderLists = new List<JsonNode>();
         var media = MediaDocuments.ToDictionary(item => item.Key, _ => new JsonObject(), StringComparer.Ordinal);
+        var effectInstances = new JsonObject();
+        var episodeText = new JsonObject();
+        var chatSounds = new JsonObject();
+        var chatCueSheets = new JsonObject();
+        var chatAudio = new JsonObject();
         var storyModels = new JsonObject();
         var manifestModels = new JsonObject();
         var videoMaster = new JsonObject();
@@ -121,6 +126,7 @@ public static class DirectorPackBuilder
             MergeFirst(manifestModels, manifest["models"]);
             var sourceEpisode = await LogicalAsync(siteDirectory, manifest, "episode.json", cancellationToken).ConfigureAwait(false);
             MergeFirst(videoMaster, sourceEpisode?["videos"]);
+            MergeFirst(episodeText, sourceEpisode?["text"]);
             foreach (var commandNode in Items(sourceEpisode?["commands"]))
             {
                 if (commandNode is not JsonObject command || Truthy(command["IgnoreData"])) continue;
@@ -131,7 +137,13 @@ public static class DirectorPackBuilder
             foreach (var (path, key) in MediaDocuments)
             {
                 var document = await LogicalAsync(siteDirectory, manifest, path, cancellationToken).ConfigureAwait(false);
-                MergeFirst(media[key], document?[key]);
+                if (key == "chat")
+                {
+                    MergeChatDocument(media[key], document);
+                    MergeChatAudio(document, sourceEpisode, sourceStory, chatSounds, chatCueSheets, chatAudio);
+                }
+                else MergeFirst(media[key], document?[key]);
+                if (key == "effects") MergeFirst(effectInstances, document?["instances"]);
             }
         }
         if (shaderNames.Count > 0 || scene["shaders"] is JsonObject)
@@ -139,6 +151,7 @@ public static class DirectorPackBuilder
             scene["shaders"] ??= new JsonObject();
             scene["shaders"]!["names"] = Strings(shaderNames);
         }
+        await MergeUiAsync(siteDirectory, baseManifest, manifests, files, languages, cancellationToken).ConfigureAwait(false);
 
         var actors = new JsonArray();
         foreach (var (address, idNode) in storyModels.OrderBy(pair => Text(pair.Value), StringComparer.Ordinal).ThenBy(pair => pair.Key, StringComparer.Ordinal))
@@ -154,26 +167,28 @@ public static class DirectorPackBuilder
         foreach (var (path, key) in MediaDocuments)
         {
             if (media[key].Count == 0) continue;
-            var document = new JsonObject { [key] = Clone(media[key]) };
+            var document = key == "chat" ? (JsonObject)media[key].DeepClone() : new JsonObject { [key] = Clone(media[key]) };
+            if (key == "effects") document["instances"] = Clone(effectInstances);
             if (key == "videos") document["format"] = 1;
             files[path] = await PutJsonAssetAsync(siteDirectory, document, cancellationToken).ConfigureAwait(false);
         }
 
         story["advId"] = DirectorAdvId;
         story["models"] = Clone(storyModels);
-        story["audio"] = new JsonObject();
+        story["audio"] = chatAudio;
         foreach (var (path, key) in MediaDocuments) story[key] = media[key].Count > 0 ? JsonValue.Create(path) : null;
         story["episode"] = "episode.json";
         story["scene"] = "scene.json";
         files["story.json"] = await PutJsonAssetAsync(siteDirectory, story, cancellationToken).ConfigureAwait(false);
 
-        var commands = SyntheticCommands(media, actors);
+        var commands = SyntheticCommands(media, effectInstances, actors);
         episode["advId"] = DirectorAdvId;
         episode["asset"] = DirectorAsset;
         episode["commandCount"] = commands.Count;
         episode["commands"] = Clone(commands);
-        episode["sounds"] = new JsonObject();
-        episode["cuesheets"] = new JsonObject();
+        episode["text"] = episodeText;
+        episode["sounds"] = chatSounds;
+        episode["cuesheets"] = chatCueSheets;
         episode["videos"] = videoMaster;
         episode["resources"] = new JsonArray();
         episode["master"] ??= new JsonObject();
@@ -189,7 +204,8 @@ public static class DirectorPackBuilder
         var outputManifest = new JsonObject
         {
             ["format"] = "ournotes.story-manifest/2", ["advId"] = DirectorAdvId, ["root"] = "../", ["language"] = Clone(baseLanguage),
-            ["audio"] = false, ["audioFormat"] = null, ["fonts"] = Clone(baseManifest["fonts"]) ?? JsonValue.Create("open"),
+            ["audio"] = chatSounds.Count > 0, ["audioFormat"] = chatSounds.Count > 0 ? Clone(baseManifest["audioFormat"]) : null,
+            ["fonts"] = Clone(baseManifest["fonts"]) ?? JsonValue.Create("open"),
             ["requires"] = new JsonObject { ["commands"] = Clone(commandNames), ["cubismCore"] = true, ["motionSync"] = false },
             ["story"] = new JsonObject
             {
@@ -317,6 +333,49 @@ public static class DirectorPackBuilder
             if (!target.ContainsKey(key)) target[key] = Clone(value);
     }
 
+    private static void MergeChatDocument(JsonObject target, JsonNode? source)
+    {
+        // Chat exports have several sibling registries, not a single `chat` registry.
+        // Master-data arrays use stable IDs; preserve complete rows and their raw values.
+        foreach (var (key, value) in Properties(source))
+        {
+            if (!target.TryGetPropertyValue(key, out var previous)) target[key] = Clone(value);
+            else if (previous is JsonObject objects && value is JsonObject) MergeFirst(objects, value);
+            else if (previous is JsonArray rows && value is JsonArray additions)
+            {
+                static string Identity(JsonNode? row) => row is JsonObject obj && obj["_id"] is not null
+                    ? "id:" + Text(obj["_id"]) : "value:" + (row?.ToJsonString() ?? "null");
+                var seen = new HashSet<string>(rows.Select(Identity), StringComparer.Ordinal);
+                foreach (var row in additions)
+                    if (seen.Add(Identity(row))) rows.Add(Clone(row));
+            }
+        }
+    }
+
+    private static void MergeChatAudio(JsonNode? chat, JsonNode? episode, JsonNode? story,
+        JsonObject sounds, JsonObject cueSheets, JsonObject audio)
+    {
+        // The exported chat masters can refer to episode-specific 64-bit sound IDs,
+        // which differ from the legacy common sound rows also included in chat.json.
+        foreach (var (_, master) in Properties(chat?["chats"]))
+        {
+            foreach (var field in new[] { "_chatSoundId", "_inOutSoundId" })
+            {
+                var id = Text(master?[field]);
+                if (id is "" or "0" || sounds.ContainsKey(id)) continue;
+                var sound = episode?["sounds"]?[id] ?? Items(chat?["sounds"]).FirstOrDefault(row => Text(row?["_id"]) == id)
+                    ?? throw new InvalidDataException($"Chat sound absent from source episode: {id}");
+                var sheetId = Text(sound["_soundCueSheetID"]);
+                var sheet = episode?["cuesheets"]?[sheetId] ?? Items(chat?["cueSheets"]).FirstOrDefault(row => Text(row?["_id"]) == sheetId)
+                    ?? throw new InvalidDataException($"Chat cue sheet absent from source episode: {sheetId}");
+                var sheetName = Text(sheet["_cueSheetName"]);
+                sounds[id] = Clone(sound);
+                if (!cueSheets.ContainsKey(sheetId)) cueSheets[sheetId] = Clone(sheet);
+                if (!audio.ContainsKey(sheetName)) audio[sheetName] = Clone(story?["audio"]?[sheetName]) ?? JsonValue.Create("audio/" + sheetName);
+            }
+        }
+    }
+
     private static JsonArray MergeShaderIndexes(IEnumerable<JsonNode> indexes)
     {
         var shaders = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -419,7 +478,7 @@ public static class DirectorPackBuilder
 
     private static string FirstText(params JsonNode?[] values) => values.Select(Text).FirstOrDefault(value => value.Length > 0) ?? "";
 
-    private static JsonArray SyntheticCommands(Dictionary<string, JsonObject> media, JsonArray actors)
+    private static JsonArray SyntheticCommands(Dictionary<string, JsonObject> media, JsonObject effectInstances, JsonArray actors)
     {
         var commands = new JsonArray();
         void Push(string name, int raw, JsonObject values)
@@ -431,7 +490,11 @@ public static class DirectorPackBuilder
         foreach (var actor in actors)
             Push("Character", 23, new JsonObject { ["TargetName"] = Clone(actor?["targetName"]), ["TargetAssetName"] = Clone(actor?["targetAssetName"]), ["TargetAssetIndex"] = 0 });
         foreach (var (name, _) in media["frames"]) Push("Frame", 44, new JsonObject { ["TargetAssetName"] = name });
-        foreach (var (name, _) in media["effects"]) Push("Effect", 55, new JsonObject { ["TargetName"] = name });
+        foreach (var (name, asset) in effectInstances)
+        {
+            if (!media["effects"].ContainsKey(Text(asset))) throw new InvalidDataException($"Effect instance {name} references an absent prefab: {asset}");
+            Push("Effect", 54, new JsonObject { ["TargetName"] = name });
+        }
         foreach (var (name, _) in media["postEffects"]) Push("PostEffect", 43, new JsonObject { ["TargetAssetName"] = name });
         foreach (var (name, _) in media["stills"]) Push("Still", 30, new JsonObject { ["TargetAssetName"] = name });
         foreach (var (id, _) in media["videos"]) Push("Movie", 26, new JsonObject { ["VideoID"] = VideoId(id) });

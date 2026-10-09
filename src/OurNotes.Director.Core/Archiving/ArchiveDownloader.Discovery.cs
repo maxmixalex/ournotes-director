@@ -27,7 +27,8 @@ public sealed partial class ArchiveDownloader
             foreach (var site in _options.Sites)
             {
                 _cancellation.ThrowIfCancellationRequested();
-                Report("masterdata", site);
+                var tablesRead = 0;
+                Report("masterdata", site, processed: 0, total: MasterFiles.Length);
                 var region = _options.MasterRegions[site];
                 var versionNumber = Text(version["regions"]?[region.Region]?["version"]);
                 var suffix = versionNumber.Length == 0 ? "" : "?v=" + Uri.EscapeDataString(versionNumber);
@@ -36,6 +37,7 @@ public sealed partial class ArchiveDownloader
                     var document = await FetchJsonAsync(JoinUrl(_options.MetadataBase, region.Path.Trim('/') + "/" + file) + suffix);
                     var rows = document.Value as JsonArray ?? document.Value["_allData"] as JsonArray;
                     if (rows is null) throw new InvalidDataException($"Expected an array or _allData array in {site}/{file}.");
+                    Report("masterdata", site, file, Interlocked.Increment(ref tablesRead), MasterFiles.Length);
                     return (File: file, Rows: rows);
                 }));
                 var data = tables.ToDictionary(x => x.File, x => x.Rows, StringComparer.Ordinal);
@@ -61,9 +63,11 @@ public sealed partial class ArchiveDownloader
                     foreach (var field in new[] { "categories", "reasons", "characterIds" }) MergeArray(merged, field, story[field] as JsonArray);
                 }
                 var root = _options.SiteRoots[site].TrimEnd('/');
+                Report("story-index", site, processed: 0, total: 1);
                 var index = Object((await FetchJsonAsync(JoinUrl(root, "stories.json"))).Value, $"{site}/stories.json");
                 if (index["stories"] is not JsonArray) throw new InvalidDataException($"No stories array in {site}/stories.json.");
                 indexes[site] = new JsonObject { ["root"] = root, ["index"] = index.DeepClone() };
+                Report("story-index", site, processed: 1, total: 1);
                 foreach (var file in MasterFiles)
                     _documents.TryRemove(JoinUrl(_options.MetadataBase, region.Path.Trim('/') + "/" + file) + suffix, out _);
             }
@@ -96,7 +100,9 @@ public sealed partial class ArchiveDownloader
                 {
                     var root = Text(indexes[site]?["root"]);
                     var hits = new ConcurrentBag<JsonObject>();
-                    var candidates = IndexEntries(indexes, site).Where(entry => !selected.ContainsKey(Number(entry["advId"]) ?? -1)).ToArray();
+                    var candidates = IndexEntries(indexes, site).Where(entry => Number(entry["advId"]) is long id && id > 0 && !selected.ContainsKey(id)).ToArray();
+                    var scanned = 0;
+                    Report("deep-scan", site, processed: 0, total: candidates.Length);
                     await Parallel.ForEachAsync(candidates, new ParallelOptions { MaxDegreeOfParallelism = _options.Concurrency, CancellationToken = _cancellation }, async (entry, token) =>
                     {
                         var id = Number(entry["advId"]);
@@ -106,7 +112,7 @@ public sealed partial class ArchiveDownloader
                         if (await HasBandModelAsync(root, manifest, bands[site].CharacterIds, new HashSet<string>(StringComparer.Ordinal))) hits.Add(entry);
                         _documents.TryRemove(JoinUrl(root, path), out _);
                         token.ThrowIfCancellationRequested();
-                        Report("deep-scan", site, path);
+                        Report("deep-scan", site, path, Interlocked.Increment(ref scanned), candidates.Length);
                     });
                     foreach (var entry in hits.OrderBy(x => Number(x["advId"])))
                     {

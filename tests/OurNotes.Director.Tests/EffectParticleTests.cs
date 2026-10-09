@@ -114,7 +114,7 @@ static class EffectParticleTests
         Rebase(sample);
         var collection=sample["nodes"]![0]!["components"]![0]!["_particleEffectGroupCollection"]!.DeepClone();prefab.Find("AdvStage").Component["_particleEffectGroupCollection"]=collection;
         foreach(var node in sample["nodes"]!.AsArray().Skip(1))exported["nodes"]!.AsArray().Add(node!.DeepClone());
-        var loop=new AdvLoop();using var gl=new OffscreenGl(320,180);using var native=new AdvScene(archive,"intl","",manifest,definition,scene,gl,loop,new(loop));
+        var loop=new AdvLoop();using var gl=new OffscreenGl(320,180);using var native=new AdvScene(archive,"intl","",manifest,definition,scene,"zh-Hans",gl,loop,new(loop));
         var groups=native.StageEffectGroups[stage.Key];native.SetStage(stage.Key);if(!groups.Instances[0].Playing||groups.Instances[1].Playing)throw new Exception("Stage initial group not played");
         void Change(int index){var row=new AdvRow("0","StageEnv",new JsonObject{["Parameter1"]="Effect",["Parameter2"]=index.ToString()});var player=new AdvPlayback(loop,new AdvProgram{Rows=[row]});native.Bind(player);player.Register("TalkWindow",(r,p)=>[]);player.Prepare=p=>[];player.Start();loop.Drain();player.ThrowIfFailed();}
         Change(1);if(groups.Instances.Any(e=>!e.Playing))throw new Exception("StageEnv did not play shared group");

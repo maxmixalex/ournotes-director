@@ -57,7 +57,7 @@ Native AOT 发布支持 Windows x64 和 Linux x64，归档、检索和素材解�
 ./advkit.exe archive --out D:/OurNotes/archive
 ```
 
-下载阶段在 stderr 显示进度，结束在 stdout 输出 JSON；Ctrl+C 取消返回 130。资源目录、manifest 和素材经过校验后才提交；失败的临时索引不会替换上一份完整索引。
+下载阶段在 stderr 显示当前阶段、完成数／总数及耗时；较长请求期间会定期刷新状态，结束在 stdout 输出 JSON。Ctrl+C 取消返回 130，强制中断留下的下载临时文件会在下一次取得归档锁后清理。资源目录、manifest 和素材经过校验后才提交；失败的临时索引不会替换上一份完整索引。
 
 ## 2. 导出原剧情
 

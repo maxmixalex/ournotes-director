@@ -52,6 +52,16 @@ internal static class ArchiveIndexTests
                     ["audio/main/voice.m4a"] = voice,
                 } },
             };
+            var englishFiles = languageGroups["en"]!["files"]!.AsObject();
+            englishFiles["ui/ui.json"] = intl.Put("""{"layout":"base","chatWidget":{"nodes":[]},"nodes":[]}""", "gz");
+            englishFiles["ui/fonts.json"] = intl.Put(FontSubset('A', false).ToJsonString(), "gz");
+            englishFiles["ui/fonts/shared.png"] = intl.Put(Png.Encode(new Pixels(64, 32, Enumerable.Repeat((byte)255, 64 * 32 * 4).ToArray())), "", "png");
+            var otherLanguages = (JsonObject)languageGroups.DeepClone();
+            var otherEnglishFiles = otherLanguages["en"]!["files"]!.AsObject();
+            otherEnglishFiles["ui/ui.json"] = intl.Put("""{"layout":"other","chatWidget":{"nodes":[]},"nodes":[],"chatStatusTexts":{"incoming":"Incoming call"}}""", "gz");
+            otherEnglishFiles["ui/fonts.json"] = intl.Put(FontSubset('B', true).ToJsonString(), "gz");
+            otherEnglishFiles["ui/fonts/shared.png"] = intl.Put(Png.Encode(new Pixels(64, 32, Enumerable.Repeat((byte)200, 64 * 32 * 4).ToArray())), "", "png");
+            otherEnglishFiles["ui/fonts/fallback.png"] = intl.Put(Png.Encode(new Pixels(32, 32, Enumerable.Repeat((byte)100, 32 * 32 * 4).ToArray())), "", "png");
             var episodeEntry = intl.Put("""
                 {"advId":42,"master":{},"text":{"t1":{"japanese":"原文","english":"Hello\nworld","simplifiedChinese":"你好"}},
                  "commands":[
@@ -68,6 +78,13 @@ internal static class ArchiveIndexTests
                 ["scene.json"] = sceneEntry,
                 ["shaders/shaders.json"] = intl.Put("""[{"name":"Shader/A","variants":[{"pass":0,"file":"shaders/a.glsl"}]}]""", "gz"),
                 ["frames.json"] = intl.Put("""{"frames":{"frame_a":{"value":1e999}}}""", "br"),
+                ["effects.json"] = intl.Put("""{"effects":{"effect_b":{"nodes":[]}},"instances":{"spark_left":"effect_b"}}""", "gz"),
+                ["chat.json"] = intl.Put("""
+                    {"chats":{"1001":{"_id":1001,"_chatSoundId":0,"_inOutSoundId":0,"_chatWindowAssetName":"phone_a","_chatIconAssetName":"icon_a"}},
+                     "windows":{"phone_a":{"nodes":[]}},"icons":{"icon_a":{"texture":{"texture":"textures/icon_a.png"}}},"stamps":{},
+                     "text":[{"_id":"60001","_english":"Read"}],"sounds":[{"_id":40005,"_cueName":"legacy_chat"}],"cueSheets":[{"_id":2000,"_cueSheetName":"AdvSe_Common"}]}
+                    """, "gz"),
+                ["textures/icon_a.png"] = intl.Put("icon-a", "", "png"),
                 ["shaders/a.glsl"] = intl.Put("shader", "", "glsl"),
                 ["ui/shared.png"] = intl.Put("base-ui", "", "png"),
             };
@@ -75,13 +92,26 @@ internal static class ArchiveIndexTests
 
             var files2 = new JsonObject
             {
-                ["story.json"] = intl.Put(new JsonObject { ["advId"] = 43, ["models"] = modelMap.DeepClone(), ["audio"] = new JsonObject() }.ToJsonString(), ""),
+                ["story.json"] = intl.Put(new JsonObject { ["advId"] = 43, ["models"] = modelMap.DeepClone(), ["audio"] = new JsonObject { ["chat_pick"] = "audio/chat_pick" } }.ToJsonString(), ""),
                 ["episode.json"] = intl.Put("""
-                    {"advId":43,"commands":[{"i":1,"cmd":"Focus","raw":7,"Parameter1":1e999,"TargetName":"hotaru"},{"i":2,"cmd":"Still","raw":30,"TargetAssetName":"still_b"}],"videos":{"18":{"_id":18}}}
+                    {"advId":43,"commands":[{"i":1,"cmd":"Focus","raw":7,"Parameter1":1e999,"TargetName":"hotaru"},{"i":2,"cmd":"Still","raw":30,"TargetAssetName":"still_b"}],"videos":{"18":{"_id":18}},
+                     "text":{"60001":{"english":"Read"},"chat_line":{"english":"Message from the second story"}},
+                     "sounds":{"2100000000053":{"_id":2100000000053,"_category":1,"_soundCueSheetID":2100000000053,"_cueName":"chat_pick"}},
+                     "cuesheets":{"2100000000053":{"_id":2100000000053,"_cueSheetName":"chat_pick"}}}
                     """, ""),
                 ["scene.json"] = intl.Put("""{"stages":{"stage_b":{"nodes":[]}},"shaders":{"names":["Shader/A","Shader/B"]}}""", ""),
                 ["shaders/shaders.json"] = intl.Put("""[{"name":"Shader/A","variants":[{"pass":0,"file":"shaders/a.glsl"},{"pass":1,"file":"shaders/a.glsl"}]}]""", ""),
-                ["effects.json"] = intl.Put("""{"effects":{"effect_b":{}}}""", ""),
+                ["effects.json"] = intl.Put("""{"effects":{"effect_b":{"nodes":[]}},"instances":{"spark_right":"effect_b"}}""", ""),
+                ["chat.json"] = intl.Put("""
+                    {"chats":{"1001":{"_id":1001},"1002":{"_id":1002,"_chatSoundId":2100000000053,"_inOutSoundId":2100000000053,"_chatWindowAssetName":"phone_b","_chatIconAssetName":"icon_b"}},
+                     "windows":{"phone_b":{"nodes":[]}},"icons":{"icon_b":{"texture":{"texture":"textures/icon_b.png"}}},"stamps":{"stamp_b":{"texture":{"texture":"textures/stamp_b.png"}}},
+                     "text":[{"_id":"60001","_english":"Read"},{"_id":"chat_line","_english":"Message from the second story","rawValue":1e999}],
+                     "sounds":[{"_id":40005,"_cueName":"legacy_chat"},{"_id":40006,"_cueName":"legacy_chat_other"}],"cueSheets":[{"_id":2000,"_cueSheetName":"AdvSe_Common"}]}
+                    """, "br"),
+                ["textures/icon_b.png"] = intl.Put("icon-b", "", "png"),
+                ["textures/stamp_b.png"] = intl.Put("stamp-b", "", "png"),
+                ["audio/chat_pick/cues.json"] = intl.Put("""{"chat_pick":{"file":"chat_pick.m4a","sampleRate":48000,"channels":1,"samples":4800}}""", "gz"),
+                ["audio/chat_pick/chat_pick.m4a"] = intl.Put("chat-audio", "", "m4a"),
                 ["stills.json"] = intl.Put("""{"stills":{"still_b":{}}}""", ""),
                 ["posteffects.json"] = intl.Put("""{"postEffects":{"post_b":{}}}""", ""),
                 ["videos/videos.json"] = intl.Put("""{"format":1,"videos":{"18":{"file":"videos/video.webm","key":"video","master":{"_id":18}}}}""", ""),
@@ -89,7 +119,7 @@ internal static class ArchiveIndexTests
                 ["shaders/a.glsl"] = files["shaders/a.glsl"]!.DeepClone(),
                 ["ui/shared.png"] = intl.Put("other-ui", "", "png"),
             };
-            intl.Write("stories/43.json", Manifest(43, files2, modelManifests.DeepClone(), languageGroups.DeepClone()));
+            intl.Write("stories/43.json", Manifest(43, files2, modelManifests.DeepClone(), otherLanguages.DeepClone()));
             intl.Write("stories.json", JsonNode.Parse("""{"stories":[{"advId":43,"manifest":"stories/43.json","languages":["en","zh-Hans"]},{"advId":42,"manifest":"stories/42.json","languages":["en","zh-Hans"]}]}""")!);
             // An old manifest outside the current selected index must not enter the generated resource pack.
             intl.Write("stories/999.json", JsonNode.Parse("""{"advId":999,"story":{"playbackMode":0},"files":{}}""")!);
@@ -137,7 +167,47 @@ internal static class ArchiveIndexTests
             var shaders = JsonNode.Parse(archive.Logical("intl", manifest, "shaders/shaders.json"))!;
             assert(shaders[0]!["variants"]!.AsArray().Count == 2, "director shader registry merges distinct shader variants");
             var synthetic = JsonNode.Parse(archive.Logical("intl", manifest, "episode.json"))!;
-            assert(synthetic["commands"]!.AsArray().Count == 6 && synthetic["commands"]![0]!["cmd"]!.GetValue<string>() == "Character" && synthetic["sounds"]!.AsObject().Count == 0, "director episode synthesizes preload commands without retaining source audio");
+            assert(synthetic["commands"]!.AsArray().Count == 7 && synthetic["commands"]![0]!["cmd"]!.GetValue<string>() == "Character" && synthetic["sounds"]!.AsObject().Count == 1 && synthetic["sounds"]!["301"] is null, "director episode synthesizes resource preloads and retains only referenced chat audio");
+            var nativeProgram = AdvProgram.From(synthetic, new JsonObject
+            {
+                ["_initializeEpisodes"] = new JsonArray(), ["_finalizeEpisodes"] = new JsonArray(),
+                ["_waitCommandLingeringTimeOnAutoPlay"] = 0.5f,
+            });
+            assert(nativeProgram.Rows.Select(row => row.Command).SequenceEqual(new[] { "Character", "Frame", "Effect", "Effect", "PostEffect", "Still", "Movie" }),
+                "every synthesized director command passes the native program parser with consistent command IDs and names");
+            var effects = JsonNode.Parse(archive.Logical("intl", manifest, "effects.json"))!;
+            assert(nativeProgram.Rows.Where(row => row.Command == "Effect").Select(row => row.Text("TargetName")).SequenceEqual(new[] { "spark_left", "spark_right" }) &&
+                nativeProgram.Rows.Where(row => row.Command == "Effect").All(row => effects["effects"]?[effects["instances"]![row.Text("TargetName")]!.GetValue<string>()] is JsonObject) &&
+                resources["effects"]![0]!.GetValue<string>() == "effect_b",
+                "effect preloads resolve native instance names to merged prefabs while effect show retains prefab IDs");
+            var mergedStory = JsonNode.Parse(archive.Logical("intl", manifest, "story.json"))!;
+            var chat = JsonNode.Parse(archive.Logical("intl", manifest, mergedStory["chat"]!.GetValue<string>()))!;
+            assert(chat["chats"]!.AsObject().Count == 2 && chat["windows"]!.AsObject().Count == 2 && chat["icons"]!.AsObject().Count == 2 && chat["stamps"]!.AsObject().Count == 1 &&
+                chat["text"]!.AsArray().Count == 2 && chat["sounds"]!.AsArray().Count == 2 && chat["cueSheets"]!.AsArray().Count == 1 && chat["text"]![1]!["rawValue"]!.ToJsonString() == "1e999",
+                "chat merge preserves each native document domain and deduplicates complete master-data rows by ID");
+            assert(chat["chats"]!.AsObject().All(pair => chat["windows"]?[pair.Value!["_chatWindowAssetName"]!.GetValue<string>()] is not null && chat["icons"]?[pair.Value["_chatIconAssetName"]!.GetValue<string>()] is not null) &&
+                chat["icons"]!.AsObject().All(pair => archive.Logical("intl", manifest, pair.Value!["texture"]!["texture"]!.GetValue<string>()).Length > 0) &&
+                synthetic["text"]!["t1"]!["english"]!.GetValue<string>() == "Hello\nworld" && synthetic["text"]!["chat_line"]!["english"]!.GetValue<string>() == "Message from the second story",
+                "merged chat masters resolve their windows, icon assets and localized text across source episodes");
+            var chatSoundId = chat["chats"]!["1002"]!["_chatSoundId"]!.GetValue<long>().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var chatSound = synthetic["sounds"]![chatSoundId]!;
+            var chatSheet = synthetic["cuesheets"]![chatSound["_soundCueSheetID"]!.ToString()]!;
+            var chatPrefix = "audio/" + chatSheet["_cueSheetName"]!.GetValue<string>() + "/";
+            var chatCue = JsonNode.Parse(archive.Logical("intl", manifest, chatPrefix + "cues.json"))![chatSound["_cueName"]!.GetValue<string>()]!;
+            assert(chatSoundId == "2100000000053" && chatSound["_category"]!.GetValue<int>() == 1 && manifest["audio"]!.GetValue<bool>() &&
+                mergedStory["audio"]!["chat_pick"]!.GetValue<string>() == "audio/chat_pick" && archive.Logical("intl", manifest, chatPrefix + chatCue["file"]!.GetValue<string>()).Length > 0,
+                "chat audio follows the native 64-bit sound, cue-sheet, cue-metadata and encoded-asset lookup chain");
+            var mergedUi = JsonNode.Parse(archive.Logical("intl", manifest, "ui/ui.json", "en"))!;
+            var mergedFonts = JsonNode.Parse(archive.Logical("intl", manifest, "ui/fonts.json", "en"))!;
+            var sharedBinding = mergedFonts["chatTexts"]!["phone_a"]!["phone_a/text"]!;
+            var mergedText = new AdvTmpText(mergedFonts, sharedBinding) { Text = "ABC" };
+            var glyphs = mergedText.Generate(100, 40, new(0, 1));
+            assert(mergedUi["layout"]!.GetValue<string>() == "base" && mergedUi["chatStatusTexts"]!["incoming"]!.GetValue<string>() == "Incoming call" &&
+                glyphs.Select(glyph => glyph.Character).SequenceEqual(new[] { 65, 66, 67 }) && mergedFonts["chatTexts"]!["phone_b"] is not null,
+                "a shared chat binding generates glyphs from both source subsets and an added fallback without replacing the base UI");
+            assert(glyphs[0].Texture != glyphs[1].Texture && Math.Abs(glyphs[0].Uv.X - 5f / 64) < 0.0001f && Math.Abs(glyphs[1].Uv.X - 14f / 64) < 0.0001f &&
+                glyphs.Select(glyph => Png.Decode(archive.Logical("intl", manifest, "ui/" + mergedFonts["textures"]![glyph.Texture]!["texture"]!.GetValue<string>(), "en")).Rgba[0]).SequenceEqual(new byte[] { 255, 200, 100 }),
+                "merged native glyph output preserves per-source atlas pixels and packed UVs despite duplicate atlas file names");
             assert(manifest["files"]!["ui/shared.png"]!["asset"]!.GetValue<string>() == files["ui/shared.png"]!["asset"]!.GetValue<string>(), "director retains chosen base UI while merging shared resources");
             var firstManifest = File.ReadAllBytes(intl.PathFor("director/manifest.json"));
             var assetCount = Directory.EnumerateFiles(intl.PathFor("assets")).Count();
@@ -179,6 +249,41 @@ internal static class ArchiveIndexTests
 
     private static JsonArray Part(string key, JsonObject asset) => new(key, asset["asset"]!.DeepClone(), asset["size"]!.DeepClone(), asset["stored"]!.DeepClone());
 
+    private static JsonObject FontSubset(char character, bool fallback)
+    {
+        var document = JsonNode.Parse("""
+            {"format":"fixture-fonts","source":"fixture","fonts":{},"materials":{
+              "Chat Material":{"floats":{"_GradientScale":1,"_ScaleRatioA":1},"keywords":[],"colors":{}},
+              "Chat Material + Fallback":{"floats":{"_GradientScale":1,"_ScaleRatioA":1},"keywords":[],"colors":{}}},
+             "textures":{"atlas":{"name":"atlas","texture":"fonts/shared.png","width":64,"height":32}},
+             "chatTexts":{"phone_a":{"phone_a/text":{
+               "enabled":1,"fontAsset":"Test Font","material":"Chat Material","m_fontSize":10,"m_fontSizeBase":10,"m_fontStyle":0,
+               "m_HorizontalAlignment":1,"m_VerticalAlignment":256,"m_TextWrappingMode":0,"m_fontColor":{"r":1,"g":1,"b":1,"a":1}}}}}
+            """)!.AsObject();
+        JsonObject Face(char value, string texture, int rectX, int dx) => new()
+        {
+            ["faceInfo"] = JsonNode.Parse("""{"m_PointSize":10,"m_Scale":1,"m_LineHeight":12,"m_AscentLine":8,"m_DescentLine":-2,"m_Baseline":0}"""),
+            ["atlases"] = new JsonArray(texture), ["characters"] = new JsonObject { [((int)value).ToString()] = new JsonObject { ["glyph"] = (int)value, ["scale"] = 1 } },
+            ["glyphs"] = new JsonObject { [((int)value).ToString()] = new JsonObject
+            {
+                ["atlasIndex"] = 0, ["scale"] = 1,
+                ["metrics"] = JsonNode.Parse("""{"m_Width":6,"m_Height":8,"m_HorizontalAdvance":7,"m_HorizontalBearingX":0,"m_HorizontalBearingY":8}"""),
+                ["rect"] = new JsonObject { ["m_X"] = rectX, ["m_Y"] = 4, ["m_Width"] = 6, ["m_Height"] = 8 },
+                ["packed"] = new JsonObject { ["texture"] = texture, ["dx"] = dx, ["dy"] = 0 },
+            } },
+            ["fallbacks"] = new JsonArray(), ["normalStyle"] = 0, ["normalSpacingOffset"] = 0, ["boldSpacing"] = 0,
+        };
+        document["fonts"]!["Test Font"] = Face(character, "atlas", character == 'A' ? 4 : 8, character == 'A' ? 2 : 7);
+        if (fallback)
+        {
+            document["fonts"]!["Test Font"]!["fallbacks"] = new JsonArray("Fallback");
+            document["fonts"]!["Fallback"] = Face('C', "fallback", 12, 0);
+            document["textures"]!["fallback"] = new JsonObject { ["name"] = "fallback", ["texture"] = "fonts/fallback.png", ["width"] = 32, ["height"] = 32 };
+            document["chatTexts"]!["phone_b"] = new JsonObject { ["phone_b/text"] = document["chatTexts"]!["phone_a"]!["phone_a/text"]!.DeepClone() };
+        }
+        return document;
+    }
+
     private sealed class FixtureSite(string root, string site)
     {
         public string PathFor(string relative) => Path.Combine(root, "sites", site, relative.Replace('/', Path.DirectorySeparatorChar));
@@ -190,9 +295,10 @@ internal static class ArchiveIndexTests
             File.WriteAllText(path, value.ToJsonString());
         }
 
-        public JsonObject Put(string content, string encoding, string extension = "json")
+        public JsonObject Put(string content, string encoding, string extension = "json") => Put(Encoding.UTF8.GetBytes(content), encoding, extension);
+
+        public JsonObject Put(byte[] bytes, string encoding, string extension = "json")
         {
-            var bytes = Encoding.UTF8.GetBytes(content);
             var relative = "assets/" + Archive.Hash(bytes) + "." + extension + (encoding.Length == 0 ? "" : "." + encoding);
             using var output = new MemoryStream();
             if (encoding.Length == 0) output.Write(bytes);

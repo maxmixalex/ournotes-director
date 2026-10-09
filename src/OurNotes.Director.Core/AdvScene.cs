@@ -7,7 +7,7 @@ namespace OurNotes.Director.Core;
 
 public sealed partial class AdvScene : IDisposable
 {
-    readonly Archive archive;readonly string site,dll;readonly JsonNode manifest,definition,settings;
+    readonly Archive archive;readonly string site,dll,language;readonly JsonNode manifest,definition,settings;
     readonly OffscreenGl gl;readonly AdvLoop loop;readonly AdvTweens tweens;
     readonly UnityShaderLibrary shaders;
     readonly AdvPrefab fieldPrefab,backgroundPrefab;
@@ -37,9 +37,9 @@ public sealed partial class AdvScene : IDisposable
     public AdvCamera Camera{get;}
     public IReadOnlyDictionary<int,Actor> Shown=>shown;
     public string StageName{get;private set;}="";
-    public AdvScene(Archive archive,string site,string dll,JsonNode manifest,JsonNode definition,JsonNode scene,OffscreenGl gl,AdvLoop loop,AdvTweens tweens)
+    public AdvScene(Archive archive,string site,string dll,JsonNode manifest,JsonNode definition,JsonNode scene,string language,OffscreenGl gl,AdvLoop loop,AdvTweens tweens)
     {
-        this.archive=archive;this.site=site;this.dll=dll;this.manifest=manifest;this.definition=definition;this.gl=gl;this.loop=loop;this.tweens=tweens;
+        this.archive=archive;this.site=site;this.dll=dll;this.manifest=manifest;this.definition=definition;this.language=language;this.gl=gl;this.loop=loop;this.tweens=tweens;
         shaders=new(archive,site,manifest);
         InitializePost(scene);
         settings=scene["settings"]!["playerSettings"]!;Camera=AdvCamera.FromScene(loop,tweens,scene);

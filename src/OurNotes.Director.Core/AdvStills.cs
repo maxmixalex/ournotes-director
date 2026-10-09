@@ -23,12 +23,12 @@ public sealed class AdvStills : IDisposable
     float overlay;AdvTween? overlayFade;
     public bool Visible=>ordered.Any(s=>s.Root.Active)||overlay>0;
     public bool PostEffectSuppressed{get;private set;}
-    public AdvStills(Archive archive,string site,JsonNode manifest,JsonNode definition,AdvLoop loop,AdvTweens tweens,OffscreenGl gl,IEnumerable<AdvRow> rows)
+    public AdvStills(Archive archive,string site,JsonNode manifest,JsonNode definition,string language,AdvLoop loop,AdvTweens tweens,OffscreenGl gl,IEnumerable<AdvRow> rows)
     {
         this.loop=loop;this.tweens=tweens;this.gl=gl;images=new(archive,site,manifest,gl);white=gl.Upload(new(1,1,[255,255,255,255]));
         loop.On(AdvPhase.Tweens,()=>{foreach(var s in ordered)s.Animation.Step((float)loop.DeltaTime);});
         width=1920;height=width*gl.Height/gl.Width;
-        var ui=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"ui"),"zh-Hans"))!;
+        var ui=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"ui"),language))!;
         var canvas=ui["nodes"]!.AsArray().First(n=>Archive.S(n!,"path")=="UIAdvWidget/StillCanvas")!;
         planeDistance=Actor.N(canvas["canvas"]?["m_PlaneDistance"]);
         float fov=Actor.N(ui["videoAndStillCamera"]?["camera"]?["field of view"]);

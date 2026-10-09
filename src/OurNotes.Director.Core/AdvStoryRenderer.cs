@@ -44,7 +44,7 @@ public sealed class AdvStoryRenderer : IDisposable
         var program=AdvProgram.From(episode,settings);Player=new(Loop,program);var tweens=new AdvTweens(Loop);
         gl=new(checked(width*supersample),checked(viewportHeight*supersample));
         try{
-            Scene=new(archive,site,dll,manifest,definition,scene,gl,Loop,tweens);Scene.Bind(Player);
+            Scene=new(archive,site,dll,manifest,definition,scene,language,gl,Loop,tweens);Scene.Bind(Player);
             if(script is not null)Scene.ProjectDirectory=Path.GetDirectoryName(Path.GetFullPath(script))!;
             var rows=program.Initialize.Concat(program.Rows).Concat(program.Finalize).Where(r=>!r.Ignored).ToArray();
             foreach(var row in rows)DirectorValidation.Check(row);
@@ -54,7 +54,7 @@ public sealed class AdvStoryRenderer : IDisposable
             Ui.ShowingCharacters=()=>Scene.VisibleActors;
             Scene.ForegroundItem=()=>Ui.Chat is {Visible:true} chat?new(chat.SortingOrder,chat.PlaneDistance*chat.PlaneDistance,()=>chat.Draw(Scene.Camera)):null;
             Frames=new(archive,site,manifest,definition,language,Loop,tweens,gl,supersample){Localize=Ui.Localize};Frames.Bind(Player);Frames.Preload(rows);
-            Stills=new(archive,site,manifest,definition,Loop,tweens,gl,rows);Stills.Bind(Player);
+            Stills=new(archive,site,manifest,definition,language,Loop,tweens,gl,rows);Stills.Bind(Player);
             Video=new(archive,site,manifest,definition,settings,Loop,tweens,Audio,Ui,gl,ffmpeg);Video.Bind(Player);
             AdvAlphaCommands.Bind(Player,Loop,Stills.SetAlpha,Video.SetAlpha);
             Scene.TalkShakeGet=()=>Ui.ShakeOffset;Scene.TalkShakeSet=v=>Ui.ShakeOffset=v;

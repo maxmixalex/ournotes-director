@@ -56,7 +56,9 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 | `index/catalog.json`、`models.json`、`stats.json` | 剧情、模型和统计目录 |
 | `index/*.jsonl` | commands、texts、dialogue、voices、sounds、files 检索索引 |
 
-高级镜像／测试可使用 `OURNOTES_METADATA_BASE`、`OURNOTES_STORY_SITE_INTL`、`OURNOTES_STORY_SITE_JP` 覆盖源地址，普通使用不需要设置。所有进度写 stderr，stdout 始终返回一个 JSON 结果；Ctrl+C 返回 130，下次执行同一命令恢复。
+高级镜像／测试可使用 `OURNOTES_METADATA_BASE`、`OURNOTES_STORY_SITE_INTL`、`OURNOTES_STORY_SITE_JP` 覆盖源地址，普通使用不需要设置。所有进度写 stderr，stdout 始终返回一个 JSON 结果；Ctrl+C 返回 130，下次执行同一命令恢复。进度包含当前阶段、完成数／总数和耗时；大型文件或请求重试期间也会定期显示状态。再次运行时，会在取得归档锁后清理 `store/` 中符合下载器命名规则的未完成临时文件。
+
+Director Pack 保留各剧情的聊天窗口、图标、贴图、文本和音效引用，并合并所选语言的字体子集。同名但内容不同的字体图片会分别保留，字形继续使用原始图片坐标。只下载日语等单一语言后，剧情与媒体渲染也使用该语言的 UI 资源。
 
 ## 使用流程
 

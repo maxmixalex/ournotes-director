@@ -257,8 +257,16 @@ def main():
         check(run("stage", "show", "fixture_stage")["result"]["definition"] is not None, "Director Pack assets are readable.")
         check(run("commands", "list", "--adv", "7")["result"]["total"] == 2, "Original command index remains compatible.")
 
+        # Simulate an interrupted download alongside a similarly named user file.
+        # Only the downloader's exact hash/extension/tmp/GUID name may be removed.
+        incomplete = archive / "store" / (Path(origin.wave["asset"]).name + ".tmp-" + "a" * 32)
+        preserved = archive / "store" / (Path(origin.wave["asset"]).name + ".tmp-" + "a" * 31)
+        incomplete.write_bytes(b"incomplete download")
+        preserved.write_bytes(b"user file must remain")
         before = origin.asset_requests()
         check(run("archive")["ok"], "Rerun succeeds.")
+        check(not incomplete.exists(), "Rerun removes an abandoned download with the exact owned temporary name.")
+        check(preserved.read_bytes() == b"user file must remain", "Rerun preserves similarly named files outside the owned temporary pattern.")
         check(origin.asset_requests() == before, "Rerun sends zero asset download requests.")
         check(origin.responses[304] > 0, "Mutable metadata is conditionally revalidated with ETags.")
         archive.joinpath("sites/intl", origin.wave["asset"]).unlink()

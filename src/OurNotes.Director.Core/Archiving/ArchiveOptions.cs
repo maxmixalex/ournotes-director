@@ -37,4 +37,6 @@ public sealed record ArchiveProgress(
     long DownloadedBytes,
     long ReusedBytes,
     string? Site = null,
-    string? Path = null);
+    string? Path = null,
+    int? Processed = null,
+    int? Total = null);

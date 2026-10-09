@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using OurNotes.Director.Core.Archiving;
 
 internal static class ArchiveCommand
@@ -72,22 +74,14 @@ internal static class ArchiveCommand
             // the operating system releases the lock, so the next invocation resumes normally.
             using var archiveLock = new FileStream(Path.Combine(destination, ".archive.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             using var transaction = new ArchiveTransaction(destination);
+            RemoveInterruptedDownloads(destination);
             Console.Error.WriteLine($"Archive: {destination}");
-            var lastStage = "";
-            var lastAssets = 0;
-            var progressGate = new object();
-            using var downloader = new ArchiveDownloader(progress: progress =>
+            JsonObject downloaded;
+            using (var progress = new ArchiveProgressReporter())
             {
-                lock (progressGate)
-                {
-                    if (progress.Stage == lastStage && progress.Assets < lastAssets + 50) return;
-                    lastStage = progress.Stage;
-                    lastAssets = progress.Assets;
-                    Console.Error.WriteLine(FormattableString.Invariant(
-                        $"[{progress.Stage}] stories={progress.Stories} models={progress.Models} assets={progress.Assets}; downloaded={progress.DownloadedBytes / 1048576d:F1} MiB, reused={progress.ReusedBytes / 1048576d:F1} MiB"));
-                }
-            });
-            var downloaded = await downloader.RunAsync(settings, cancellation.Token);
+                using var downloader = new ArchiveDownloader(progress: progress.Report);
+                downloaded = await downloader.RunAsync(settings, cancellation.Token);
+            }
             Console.Error.WriteLine("[index] Building searchable story, dialogue, voice and asset indexes.");
             var indexed = await ArchiveIndexer.BuildAsync(destination, cancellation.Token);
             var packs = new JsonArray();
@@ -117,6 +111,109 @@ internal static class ArchiveCommand
         finally
         {
             Console.CancelKeyPress -= cancel;
+        }
+    }
+
+    private static readonly Regex IncompleteAssetName = new(
+        @"\A[0-9a-f]{64}\.[a-z0-9]+(?:\.(?:gz|br))?\.tmp-[0-9a-f]{32}\z", RegexOptions.CultureInvariant);
+
+    private static void RemoveInterruptedDownloads(string archiveDirectory)
+    {
+        // Called only while holding the archive lock, after transaction recovery.
+        // Never follow a redirected store or descend into arbitrary subdirectories.
+        var store = Path.Combine(archiveDirectory, "store");
+        if (!Directory.Exists(store)) return;
+        var removed = 0;
+        long bytes = 0;
+        try
+        {
+            if ((File.GetAttributes(store) & FileAttributes.ReparsePoint) != 0) return;
+            foreach (var file in Directory.EnumerateFiles(store, "*.tmp-*", SearchOption.TopDirectoryOnly))
+            {
+                if (!IncompleteAssetName.IsMatch(Path.GetFileName(file))) continue;
+                try
+                {
+                    if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
+                    var size = new FileInfo(file).Length;
+                    File.Delete(file);
+                    removed++;
+                    bytes += size;
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    Console.Error.WriteLine($"[cleanup] Could not remove incomplete download '{file}': {error.Message}");
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"[cleanup] Could not inspect incomplete downloads in '{store}': {error.Message}");
+        }
+        if (removed > 0)
+            Console.Error.WriteLine(FormattableString.Invariant($"[cleanup] Removed {removed} incomplete download(s), {bytes} bytes."));
+    }
+
+    private sealed class ArchiveProgressReporter : IDisposable
+    {
+        private readonly object _gate = new();
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private readonly Timer _heartbeat;
+        private ArchiveProgress? _latest;
+        private ArchiveProgress? _printed;
+        private TimeSpan _lastPrint;
+        private bool _disposed;
+
+        public ArchiveProgressReporter()
+        {
+            // A large request or network retry may not finish an item for a while.
+            // A sparse heartbeat retains the current counts and shows elapsed time.
+            _heartbeat = new Timer(_ => Heartbeat(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+        }
+
+        public void Report(ArchiveProgress progress)
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                var phaseChanged = _latest is null || Phase(_latest) != Phase(progress);
+                if (!phaseChanged && progress.Processed < _latest!.Processed) return;
+                _latest = progress;
+                var finished = progress.Processed is { } done && progress.Total == done &&
+                    (_printed is null || Phase(_printed) != Phase(progress) || _printed.Processed != done);
+                if (phaseChanged || finished || _clock.Elapsed - _lastPrint >= TimeSpan.FromSeconds(2)) WriteProgress(progress);
+            }
+        }
+
+        private static string Phase(ArchiveProgress progress) =>
+            progress.Stage is "assets" or "complete" ? progress.Stage : progress.Stage + ":" + progress.Site;
+
+        private void Heartbeat()
+        {
+            lock (_gate)
+            {
+                if (!_disposed && _latest is { } progress && _clock.Elapsed - _lastPrint >= TimeSpan.FromSeconds(10))
+                    WriteProgress(progress);
+            }
+        }
+
+        private void WriteProgress(ArchiveProgress progress)
+        {
+            var site = progress.Site is not null && progress.Stage is not ("assets" or "complete") ? " " + progress.Site : "";
+            var count = progress.Processed is { } processed && progress.Total is { } total ? FormattableString.Invariant($" {processed}/{total}") : "";
+            var details = progress.Stage is "assets" or "complete"
+                ? FormattableString.Invariant($"; downloaded={progress.DownloadedBytes / 1048576d:F1} MiB, reused={progress.ReusedBytes / 1048576d:F1} MiB")
+                : progress.Stage == "manifests" ? FormattableString.Invariant($"; models={progress.Models}") : "";
+            if (progress.Stage == "complete")
+                details = FormattableString.Invariant($" stories={progress.Stories} models={progress.Models} assets={progress.Assets}") + details;
+            Console.Error.WriteLine(FormattableString.Invariant($"[{progress.Stage}{site}]{count}{details}; elapsed={_clock.Elapsed.TotalSeconds:F1}s"));
+            _printed = progress;
+            _lastPrint = _clock.Elapsed;
+        }
+
+        public void Dispose()
+        {
+            lock (_gate) _disposed = true;
+            _heartbeat.Dispose();
         }
     }
 
