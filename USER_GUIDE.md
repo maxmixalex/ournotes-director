@@ -248,7 +248,7 @@ ProRes 不会自动去掉原剧情背景；透明镜头参照上面的统一项�
 
 `stage/postfx/still/frame/effect/media list|show` 是素材目录，条目存在不等于任意剧情都能引用。跨剧情拼素材目前不能仅靠换一个 ID 自动补齐依赖。
 
-旧 Shot 文件仍可输入 `render`，内部转换为统一游戏指令与 Director 扩展，不再分流到旧渲染器。适配器以归档剧情 10060 为资源基础；动画和材质已采用统一实现，不保证与旧版逐像素相同：
+旧 Shot 文件仍可输入 `render`，内部转换为统一游戏指令与 Director 扩展，共用原生剧情执行器。新生成的 Shot 在 `source` 中记录剧情、站点和语言，`render` 默认按该来源加载资源。只有没有 `source` 的旧文件才回退到剧情 `10060`、站点 `intl`、语言 `zh-Hans`。动画和材质已采用统一实现，不保证与旧版逐像素相同：
 
 ```powershell
 ./advkit.exe shot init --template portrait -o output/shot.json

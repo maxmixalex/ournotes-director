@@ -229,15 +229,15 @@ stdout 为 UTF-8 JSON，进度在 stderr。列表默认 50 项，可用 limit/of
 
 支持 raw/gzip/brotli/split JSON；manifest 提供时检查 stored/decoded size，并校验 decoded SHA-256。split 保留原始数值含 1e999。语音快捷导出校验 SHA-256。probe archive 只读统计，不是全盘完整性扫描。
 
-## 独立 Shot 渲染器的边界（`render`）
+## 渲染范围（`render` / `story`）
 
-以下限制仅指较早的 `shot` / `render` 路径。`story` 已有原生剧情相机、景深、粒子、原始材质及后处理实现，其支持范围与未完成项见 [使用指南](USER_GUIDE.md#4-支持范围与限制)。两者都不以通用 Unity 引擎为目标。
+`render` 将统一项目和旧 Shot 交给 `story` 使用的同一原生剧情执行器。Shot 输入保留自身的二维构图与数值轨道语义；原生指令的支持范围与未完成项见 [使用指南](USER_GUIDE.md#4-支持范围与限制)。当前实现不以通用 Unity 引擎为目标。
 
 - 真实 Cubism 网格、纹理、裁剪/反向遮罩、混合模式、prefab 动作/表情、眨眼/呼吸/物理已接通。
-- stage 以 cover 方式使用真实背景 sprite；未复现游戏 3D field、Focus 预设、DoF、粒子、Lit-URP、rim light、shadow 或原版 PostEffect。grade 为独立调色。
-- stage/postfx/still/frame/effect/media list/show 复用已有 Director Pack；能列出 postfx 不表示能应用它。media list 只含剧情视频，额外 MV 用本地路径 probe/clip。
+- 舞台、剧情相机、景深、粒子、原始材质与后处理按原生剧情指令执行；Shot 的 `grade` 是独立导演调色。现有实现不保证与游戏逐帧一致。
+- stage/postfx/still/frame/effect/media list/show 查询 Director Pack 素材目录；跨剧情引用仍需确保当前来源具备完整依赖。media list 只含剧情视频，额外 MV 用本地路径 probe/clip。
 - Windows x64 使用不可见窗口创建 WGL 上下文；Linux x64 使用 EGL surfaceless 上下文。像素在离屏 FBO 中渲染；完整剧情效果仍需结合实际 SDK、驱动和素材验证。
-- 整曲剪辑、字幕/转场/混音交给独立后期流程。
+- 原剧情音效、语音和转场由原生时间线处理；自定义整曲剪辑与字幕编排可继续衔接后期流程。
 
 ## 构建与验收
 

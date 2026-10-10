@@ -52,7 +52,7 @@ try
             "stage|postfx|still|frame|effect|media list", "stage|postfx|still|frame|effect|media show <id>",
             "asset search <text> [--kind image]", "asset extract <logical-path> --adv ID|--model ID -o FILE",
             "asset verify|show <logical-path> --adv ID|--model ID", "commands list --adv ID"
-            ,"shot init -o shot.json [--model ID]", "shot validate <shot.json>", "model parameters <id>",
+            ,"shot init -o shot.json [--archive PATH] [--site intl] [--lang LANGUAGE] [--template fullbody|portrait|duet] [--model ID]", "shot validate <shot.json>", "model parameters <id>",
             "render frame <shot.json> --time 0 -o frame.png", "render contact <shot.json> -o contact.png",
             "render sequence <shot.json> -o frames [--resume]", "render clip <shot.json> -o shot.mov --codec prores|ffv1|h264"
             ,"model gallery <id> --kind expression|motion --limit 12 --time 1 -o gallery.png", "asset gallery [substring] --limit 12 -o assets.png",
