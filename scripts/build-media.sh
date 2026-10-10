@@ -91,7 +91,7 @@ else
         ./configure --prefix="$prefix" --disable-autodetect --disable-debug --disable-doc \
             --disable-ffplay --disable-shared --enable-static --enable-gpl --enable-libx264 --enable-zlib \
             --disable-network --disable-devices --disable-encoders \
-            --enable-encoder=libx264,prores_ks,ffv1,png,rawvideo,wrapped_avframe,aac,pcm_s16le,pcm_s24le,pcm_f32le,mov_text,srt,subrip \
+            --enable-encoder=libx264,prores_ks,ffv1,png,rawvideo,wrapped_avframe,aac,pcm_s16le,pcm_s24le,pcm_f32le,movtext,srt,subrip \
             --pkg-config-flags=--static --extra-cflags="-I$prefix/include" \
             --extra-ldflags="-L$prefix/lib $linker_flags"
         # Preserve assembler objects until linking; FFmpeg strips the final

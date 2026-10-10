@@ -21,21 +21,19 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def verify(path, expected):
+def verify(path, expected, size):
+    if path.stat().st_size != size:
+        raise ValueError(f"SDK archive size mismatch for {path}: expected {size}, got {path.stat().st_size}")
     actual = digest(path)
     if actual != expected:
         raise ValueError(f"SHA-256 mismatch for {path}: expected {expected}, got {actual}")
 
 
 def obtain(source, cache):
-    if "file" in source:
-        path = REPOSITORY / source["file"]
-        verify(path, source["sha256"])
-        return path
     cache.mkdir(parents=True, exist_ok=True)
     path = cache / (source["sha256"] + ".zip")
     if path.exists():
-        verify(path, source["sha256"])
+        verify(path, source["sha256"], source["size"])
         return path
     print(f"Downloading pinned SDK archive: {source['url']}", flush=True)
     for attempt in range(3):
@@ -46,9 +44,7 @@ def obtain(source, cache):
                 request = Request(source["url"], headers={"User-Agent": "ournotes-director-build/1"})
                 with urlopen(request, timeout=60) as response:
                     shutil.copyfileobj(response, output)
-            if temporary.stat().st_size != source["size"]:
-                raise ValueError(f"SDK archive size mismatch: {source['url']}")
-            verify(temporary, source["sha256"])
+            verify(temporary, source["sha256"], source["size"])
             temporary.replace(path)
             return path
         except Exception:

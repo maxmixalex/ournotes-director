@@ -265,6 +265,6 @@ bash scripts/build-media.sh linux-x64 artifacts/linux-x64
 
 `tests/*smoke.ps1` 是保留的真实素材验收脚本，部分断言针对 2026-10-07 的固定归档快照；需要该素材、Cubism SDK 和 FFmpeg 才能运行，不作为当前上游内容数量的断言，也不加入默认托管 CI。可设置 `OURNOTES_CLI` 指定待验收的原生程序。
 
-正式包在发布后按目标 RID 提取并校验 Cubism Core 和 Windows MotionSync，只附带运行所需的库与许可证。FFmpeg/FFprobe 从锁定版本的 FFmpeg、x264、zlib 源码静态构建，不依赖系统安装的媒体库；`media-sources/` 随包提供完整源码压缩包、SHA-256 和构建脚本。包内版本与文件清单见 `native-dependencies.json`、`media-dependencies.json`。CI 在陌生工作目录中运行依赖探测及媒体回归，再对最终压缩包解压后的副本做验收，避免只验证构建工作区里碰巧存在的 SDK。
+正式包在发布后按目标 RID 提取并校验 Cubism Core 和 Windows MotionSync，只附带运行所需的库与许可证。两个 SDK 均从 `scripts/native-sources.lock.json` 固定的官方版本 URL 下载，验证 ZIP 大小与 SHA-256 后再校验每个运行库和许可文件；干净检出无需预放 SDK ZIP。FFmpeg/FFprobe 从锁定版本的 FFmpeg、x264、zlib 源码静态构建，不依赖系统安装的媒体库；`media-sources/` 随包提供完整源码压缩包、SHA-256 和构建脚本。包内版本与文件清单见 `native-dependencies.json`、`media-dependencies.json`。CI 在陌生工作目录中运行依赖探测及媒体回归，再对最终压缩包解压后的副本做验收，避免只验证构建工作区里碰巧存在的 SDK。
 
 附件保留的历史验收记录（使用当时的固定素材快照，并非本次托管 CI 结果）：119 项底层/镜头/PNG/剧情/原生内核检查（含阶段顺序、并发取消、分支、变速、缓动、PCM 混音与相机矩阵）；9 项原生归档检查；55 项归档集成；45 项渲染检查，包含全部 31 个模型真实输出、随机访问/连续对照、容差重复性、损坏帧修复、ProRes alpha、FFV1 精确像素往返、双角色+舞台背景。18 项剧情包/封装检查覆盖真实原声、字幕、帧时长、视频像素不变、长音轨裁切、短音轨补静音和失败清理。10 秒 1080p / 2× supersampling 经 ffprobe 核实 300 帧。报告见 output/reports/ 下各 smoke JSON。测试临时目录在 finally 中自动清理，失败时也保留已完成检查的报告。
