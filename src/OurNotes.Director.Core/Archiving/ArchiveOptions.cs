@@ -5,6 +5,9 @@ public sealed class ArchiveOptions
 {
     public string OutputDirectory { get; init; } = "archive";
     public string MetadataBase { get; init; } = "https://metadata.bdon.moe";
+    /// <summary>One MasterBand ID, name token, text ID or available display name. Null uses BandTextId.</summary>
+    public string? Band { get; init; }
+    /// <summary>Compatible default for callers that already select a full MasterBand text ID.</summary>
     public string BandTextId { get; init; } = "Band_Name_millsage";
     public IReadOnlyList<string> Sites { get; init; } = ["intl", "jp"];
     public IReadOnlyDictionary<string, string> SiteRoots { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal)

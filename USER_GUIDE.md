@@ -37,11 +37,14 @@
 
 ```powershell
 ./advkit.exe help
+./advkit.exe probe runtime
 ./advkit.exe archive
 ./advkit.exe probe archive
 ```
 
-Native AOT 发布支持 Windows x64 和 Linux x64，归档、检索和素材解包不需要 .NET / Node.js / Python。Linux 包以 Ubuntu 24.04 为基线，需要兼容或更新的 glibc 系统。渲染需要 Cubism Native Core 与 OpenGL；Linux 通过 EGL 创建无窗口上下文，可以使用 Mesa 软件渲染。视频及音频解码需要 FFmpeg，媒体检查需要 FFprobe。游戏素材和 SDK 单独保存，发布包不包含这些资源。
+Native AOT 发布支持 Windows x64 和 Linux x64，不需要安装 .NET / Node.js / Python。完整发布包已经包含 Cubism Core、Windows MotionSync 口型 DLL、FFmpeg 和 FFprobe；Linux 的 CRI Lips 分析器编译在原生程序中，模型权重来自素材归档。保留包内的 `native/`、`tools/` 等目录即可，无需另找 SDK 或设置媒体工具的 `PATH`。`probe runtime` 无需归档，会实际加载运行库、检查版本并列出使用路径。需要覆盖默认安装时，可用 `--dll`、`--cubism-sdk`、`--ffmpeg`、`--ffprobe`；也支持 `CUBISM_NATIVE_SDK` 和 Windows 的 `CUBISM_MOTIONSYNC_DLL`。
+
+游戏素材由 `archive` 下载。OpenGL／EGL 及显卡驱动仍由操作系统提供；Linux 可使用 Mesa 软件渲染（Ubuntu 安装 `libegl1 libgl1 libgl1-mesa-dri`）。Linux 包以 Ubuntu 24.04 为基线，需要兼容或更新的 glibc 系统。Live2D 官方没有 Linux 桌面 MotionSync 库，Linux 使用 C# CRI Lips，不保证与 Windows 原生 MotionSync 产生完全相同的音素嘴型。
 
 默认向上查找已有 `archive`，也兼容旧 `legacy/millsage-story-archive/archive`。查询站点默认 `intl`、剧情渲染语言默认 `zh-Hans`。也可显式指定 `--archive PATH --site intl --lang zh-Hans`。跨目录运行时，输入脚本和输出路径仍相对于当前工作目录。
 
@@ -49,15 +52,33 @@ Native AOT 发布支持 Windows x64 和 Linux x64，归档、检索和素材解�
 
 只执行一个命令：`./advkit.exe archive`。没有归档时下载到当前目录的 `archive/`；已有归档时重新确认上游版本，校验后复用已有文件，补齐新增或损坏内容，更新检索索引和 Director Pack。中断后重复同一命令即可，单个未完成文件会重下。旧 Node 归档可以直接指定路径复用，不需要转换，也不需要继续保留 Node 项目。
 
-默认下载两个站点的 millsage 关联及模型客串剧情、全部语言和公共模型资源。`--out PATH` 指定目录；`--languages zh-Hans,ja` 选择语言；`--sites intl` 只更新一个站点；`--no-deep` 关闭额外客串扫描。后续每次沿用所需的相同选项；省略语言／站点选项会回到全部语言／两个站点。筛选限定本次下载、索引和 Director Pack 的范围，不主动删除旧素材。
+默认下载两个站点的 millsage 关联及模型客串剧情、全部语言和公共模型资源。`--band` 可选择其他乐队，接受 MasterBand 的数值 ID、名称 token（例如 `mygo`、`mujica`、`yumemita`、`kadan`）或完整 text ID；`MyGO!!!!!` 等仅大小写／标点不同的写法也能识别。不存在或含糊的名称会列出当前可用 ID/token，不会默默改回 millsage。成员和关联剧情始终按上游数据解析。
+
+`--out PATH` 指定目录；`--languages zh-Hans,ja` 选择语言；`--sites intl` 只更新一个站点；`--no-deep` 关闭额外客串扫描。后续每次沿用所需的相同选项；省略乐队／语言／站点选项会回到 millsage／全部语言／两个站点。筛选限定本次下载、索引和 Director Pack 的范围，不主动删除旧素材。
 
 ```powershell
 ./advkit.exe archive --out D:/OurNotes/archive
 # 今后更新仍使用这条命令
 ./advkit.exe archive --out D:/OurNotes/archive
+
+# 其他乐队仍用一个 archive 命令；更新时重复同一条即可
+./advkit.exe archive --band mygo --out D:/OurNotes/mygo --languages ja --sites intl
+./advkit.exe archive --band mujica --out D:/OurNotes/mujica --languages zh-Hans,ja
 ```
 
 下载阶段在 stderr 显示当前阶段、完成数／总数及耗时；较长请求期间会定期刷新状态，结束在 stdout 输出 JSON。Ctrl+C 取消返回 130，强制中断留下的下载临时文件会在下一次取得归档锁后清理。资源目录、manifest 和素材经过校验后才提交；失败的临时索引不会替换上一份完整索引。
+
+同一目录切换乐队时，已下载且校验通过的公共素材会复用，当前检索目录与 Director Pack 更新为新选择。如果要同时保留多套乐队检索范围，使用不同归档目录。检索和场景命令直接读取对应目录，无需再传 `--band`：
+
+```powershell
+./advkit.exe story list --archive D:/OurNotes/mygo
+./advkit.exe model list --archive D:/OurNotes/mygo
+./advkit.exe stage list --archive D:/OurNotes/mygo
+./advkit.exe shot init --archive D:/OurNotes/mygo --template portrait -o output/mygo-shot.json
+./advkit.exe render frame output/mygo-shot.json --archive D:/OurNotes/mygo --time 1 -o output/mygo.png
+```
+
+`shot init` 默认从当前归档选择本乐队可用模型与普通剧情，并记录站点和已下载语言；`--model` 可明确指定模型。`--template duet` 选择两个不同模型，不足两个时会报错。原有 millsage 示例仍引用原来的剧情、模型和台词，不能直接套用到只含其他乐队的归档；可从新生成的场景开始编排。
 
 ## 2. 导出原剧情
 

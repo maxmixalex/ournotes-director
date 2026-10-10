@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace OurNotes.Director.Core;
 
@@ -13,6 +14,7 @@ public sealed class Shot
     public OutputSpec Output {get;set;}=new();
     public float[] Background {get;set;}=[0,0,0,0];
     public ImageSpec? BackgroundImage {get;set;}
+    public ShotSource? Source {get;set;}
     public string? Stage {get;set;}
     public GradeSpec Grade {get;set;}=new();
     public CameraSpec Camera {get;set;}=new();
@@ -22,8 +24,91 @@ public sealed class Shot
     public static readonly JsonSerializerOptions JsonOptions=new(){PropertyNamingPolicy=JsonNamingPolicy.CamelCase,WriteIndented=true,UnmappedMemberHandling=JsonUnmappedMemberHandling.Disallow};
     static readonly DirectorJsonContext JsonContext = new(new JsonSerializerOptions(JsonOptions));
     public static Shot Read(string path)=>JsonSerializer.Deserialize(File.ReadAllText(path),JsonContext.Shot)??throw new InvalidDataException("Empty shot");
+    public static Shot CreateTemplate(Archive archive,string site,string template="fullbody",string? model=null,string? language=null)
+    {
+        if(template is not ("fullbody" or "portrait" or "duet"))throw new ArgumentException("--template: fullbody, portrait, duet");
+        // The published index is the current archive selection. Leftover model files from
+        // an earlier band are reusable storage, but must not become a new template's defaults.
+        var modelIndex=archive.Index("models");
+        var models=modelIndex["models"]!.AsArray().OfType<JsonObject>()
+            .Where(row=>Archive.S(row,"site")==site&&File.Exists(archive.SitePath(site,Archive.S(row,"manifest"))))
+            .DistinctBy(row=>Archive.S(row,"id")).OrderBy(row=>Archive.S(row,"id"),StringComparer.Ordinal).ToArray();
+        if(models.Length==0)throw new ArgumentException($"No downloaded models are selected for site '{site}'. Run archive for this site before shot init.");
+        var band=modelIndex["band"];
+        var discoveryPath=Path.Combine(archive.Root,"discovery.json");
+        if(File.Exists(discoveryPath))
+        {
+            var discovery=Archive.ReadJson(discoveryPath);
+            band=discovery["regions"]?[site]?["band"]??discovery["band"]??band;
+        }
+        var members=band?["characters"]?.AsArray().OfType<JsonObject>().Select(row=>Archive.S(row,"id")).ToHashSet(StringComparer.Ordinal)??[];
+        JsonObject[] PreferMembers(JsonObject[] candidates)
+        {
+            var owned=candidates.Where(row=>members.Contains(Archive.S(row,"character"))).ToArray();
+            return owned.Length>0?owned:candidates;
+        }
+        var defaults=PreferMembers(models);
+        JsonObject First(string preferred)=>defaults.FirstOrDefault(row=>Archive.S(row,"id")==preferred)??defaults[0];
+        var first=string.IsNullOrWhiteSpace(model)?First("adv_live2d_hotaru_016_casual_spring_01"):
+            models.FirstOrDefault(row=>Archive.S(row,"id")==model)??throw new ArgumentException($"Model '{model}' is not in the selected archive for site '{site}'. Use model list to choose a downloaded model.");
+        var selected=new List<JsonObject>{first};
+        if(template=="duet")
+        {
+            var remaining=models.Where(row=>Archive.S(row,"id")!=Archive.S(first,"id")).ToArray();
+            if(remaining.Length==0)throw new ArgumentException($"The duet template requires two different downloaded models in site '{site}'; only one is selected.");
+            string Character(JsonObject row)=>Archive.S(row,"character",ActorName(Archive.S(row,"id")));
+            var preferred=PreferMembers(remaining);
+            var otherCharacter=preferred.Where(row=>Character(row)!=Character(first)).ToArray();
+            var candidates=otherCharacter.Length>0?otherCharacter:preferred;
+            selected.Add(candidates.FirstOrDefault(row=>Archive.S(row,"id")=="adv_live2d_natsume_017_casual_spring_01")??candidates[0]);
+        }
+
+        var sources=new List<(string Id,JsonObject Manifest,string[] Languages)>();
+        foreach(var row in archive.Index("catalog")["stories"]!.AsArray().OfType<JsonObject>().Where(row=>Archive.S(row,"site")==site))
+        {
+            string path=archive.SitePath(site,Archive.S(row,"manifest"));if(!File.Exists(path))continue;
+            var manifest=Archive.ReadJson(path).AsObject();
+            if(Archive.S(manifest["story"]??new JsonObject(),"playbackMode","0") is not ("0" or "false" or ""))continue;
+            if(manifest["files"] is not JsonObject files||new[]{"story.json","episode.json","scene.json"}.Any(key=>files[key] is null))continue;
+            var languages=row["languages"]?.AsArray().OfType<JsonValue>().Select(value=>value.ToString()).ToArray()??[];
+            // A language-filtered archive still stores common geometry, but cannot
+            // render a source whose language-specific UI/fonts were all excluded.
+            if(languages.Length==0&&manifest["languages"] is JsonObject {Count:>0})continue;
+            if(!string.IsNullOrWhiteSpace(language)&&languages.Length>0&&!languages.Contains(language,StringComparer.Ordinal))continue;
+            sources.Add((Archive.S(row,"advId"),manifest,languages));
+        }
+        if(sources.Count==0)throw new ArgumentException($"No downloaded normal ADV scene is available for site '{site}'"+
+            (string.IsNullOrWhiteSpace(language)?".":$" in language '{language}'.")+" A shot template requires a normal ADV source.");
+        string preferredSource="10060";
+        var registryPath=archive.SitePath(site,"director/resources.json");
+        if(File.Exists(registryPath)&&Archive.ReadJson(registryPath)["baseAdvId"] is JsonNode baseId)preferredSource=baseId.ToString();
+        var source=sources.OrderBy(row=>row.Id==preferredSource?0:1)
+            .ThenBy(row=>long.TryParse(row.Id,out long id)?id:long.MaxValue).ThenBy(row=>row.Id,StringComparer.Ordinal).First();
+        var sourceLanguage=language;
+        if(string.IsNullOrWhiteSpace(sourceLanguage))
+            sourceLanguage=source.Languages.Contains("zh-Hans",StringComparer.Ordinal)?"zh-Hans":
+                source.Languages.Contains(Archive.S(source.Manifest,"language"),StringComparer.Ordinal)?Archive.S(source.Manifest,"language"):
+                source.Languages.FirstOrDefault()??Archive.S(source.Manifest,"language","zh-Hans");
+        var shot=new Shot{Source=new(){Adv=source.Id,Site=site,Language=sourceLanguage}};
+        foreach(var row in selected)
+        {
+            string id=Archive.S(row,"id"),name=ActorName(id),unique=name;int suffix=2;
+            while(shot.Actors.Any(actor=>actor.Name==unique))unique=name+suffix++;
+            shot.Actors.Add(new(){Name=unique,Model=id});
+        }
+        if(template=="portrait")shot.Camera=new(){Zoom=2.5f,Y=-.24f};
+        if(template=="duet"){shot.Actors[0].X=.35f;shot.Actors[1].X=.65f;}
+        shot.Validate();return shot;
+    }
+    static string ActorName(string model)
+    {
+        const string prefix="adv_live2d_";
+        string name=model.StartsWith(prefix,StringComparison.Ordinal)?model[prefix.Length..].Split('_')[0]:"actor";
+        return string.IsNullOrWhiteSpace(name)||name=="camera"?"actor":name;
+    }
     public void Validate()
     {
+        if(Source is not null&&(string.IsNullOrWhiteSpace(Source.Adv)||string.IsNullOrWhiteSpace(Source.Site)||string.IsNullOrWhiteSpace(Source.Language)))throw new ArgumentException("Shot source requires adv, site and language");
         if(Version!=1||Fps!=30||!double.IsFinite(Duration)||Duration<=0||Duration>600||Math.Abs(Duration*Fps-Math.Round(Duration*Fps))>1e-5)throw new ArgumentException("Shot requires version 1, fps 30, duration 0..600 with an integral frame count");
         if(Output.Width<16||Output.Height<16||Output.Width>7680||Output.Height>4320||Output.RenderScale is <1 or >4||WarmupFrames is <0 or >300)throw new ArgumentException("Invalid resolution/renderScale/warmupFrames");
         if(Background.Length!=4||Background.Any(v=>!float.IsFinite(v)||v<0||v>1))throw new ArgumentException("background must be RGBA 0..1");
@@ -44,6 +129,7 @@ public sealed class Shot
         var keys=track.Keys;if(time<=keys[0].T)return keys[0].Value;for(int i=1;i<keys.Count;i++)if(time<keys[i].T){var a=keys[i-1];var b=keys[i];float t=(float)((time-a.T)/(b.T-a.T));if(track.Interpolation=="step")t=0;else if(track.Interpolation=="smoothstep")t=t*t*(3-2*t);return a.Value+(b.Value-a.Value)*t;}return keys[^1].Value;
     }
 }
+public sealed class ShotSource {public string Adv{get;set;}="10060";public string Site{get;set;}="intl";public string Language{get;set;}="zh-Hans";}
 public sealed class OutputSpec {public int Width{get;set;}=1920;public int Height{get;set;}=1080;public int RenderScale{get;set;}=2;}
 public sealed class CameraSpec {public float X{get;set;}public float Y{get;set;}public float Zoom{get;set;}=1;public float Roll{get;set;}}
 public sealed class GradeSpec {public float Exposure{get;set;}public float Contrast{get;set;}=1;public float Saturation{get;set;}=1;public float Vignette{get;set;}}

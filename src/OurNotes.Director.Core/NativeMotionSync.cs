@@ -17,17 +17,23 @@ public sealed unsafe class NativeMotionSync : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]delegate int Analyze(nint context,nint pcm,uint count,ref Result result,ref Config config);
     sealed class Engine
     {
-        public readonly nint Library;public readonly Create Create;public readonly Delete Delete;public readonly Require Require;public readonly Analyze Analyze;
+        public readonly nint Library;public readonly uint EngineVersion;public readonly Create Create;public readonly Delete Delete;public readonly Require Require;public readonly Analyze Analyze;
         public Engine(string path){Library=NativeLibrary.Load(path);T Fn<T>(string name)where T:Delegate=>Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(Library,"csmMotionSync_"+name));
-            uint version=Fn<Version>("GetEngineVersion")();if(version!=0x05000004)throw new InvalidDataException("Expected MotionSync 5.0.4, got "+version.ToString("x"));
+            EngineVersion=Fn<Version>("GetEngineVersion")();if(EngineVersion!=0x05000004)throw new InvalidDataException("Expected MotionSync 5.0.4, got "+EngineVersion.ToString("x"));
             if(Fn<Initialize>("InitializeEngine")(0)!=1)throw new InvalidOperationException("MotionSync initialization failed");Create=Fn<Create>("CreateContext");Delete=Fn<Delete>("DeleteContext");Require=Fn<Require>("GetRequireSampleCount");Analyze=Fn<Analyze>("Analyze");}
     }
     static readonly Dictionary<string,Engine> engines=[];
+    static Engine GetEngine(string dll)
+    {
+        dll=Path.GetFullPath(dll);
+        lock(engines){if(!engines.TryGetValue(dll,out var engine))engines[dll]=engine=new(dll);return engine;}
+    }
+    public static uint ProbeVersion(string dll)=>GetEngine(dll).EngineVersion;
     readonly Engine engine;readonly List<nint> allocations=[];nint context;
     Config config;readonly float[] result;float[] pending=new float[8192];int pendingCount;
     public NativeMotionSync(string dll,JsonNode setting)
     {
-        lock(engines){if(!engines.TryGetValue(dll,out engine!))engines[dll]=engine=new(dll);}
+        engine=GetEngine(dll);
         try{
             var maps=setting["Mappings"]!.AsArray();var native=new Mapping[maps.Count];
             for(int k=0;k<maps.Count;k++){var m=maps[k]!;var targets=m["Targets"]!.AsArray();var names=new nint[targets.Count];var values=new float[targets.Count];

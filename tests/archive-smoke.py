@@ -93,10 +93,10 @@ class Origin:
     def fixture(self):
         self.put("/metadata/current_version.json", {"regions": {"hk-tw-mo": {"version": "v1"}, "jp": {"version": "v1"}}})
         self.tables = {
-            "MasterBand.json": [{"_id": 4, "_nameTextID": "Band_Name_millsage"}],
-            "MasterCharacter.json": [{"_id": 16, "_bandID": 4, "_nameTextID": "Character_Name_hotaru"}],
-            "MasterStoryChapter.json": [{"_id": 4, "_bandId": 4, "_mainCharacterIds": [16]}],
-            "MasterStoryEpisode.json": [{"_id": 1, "_advId": 7, "_chapterId": 4, "_episodeNumber": 1}],
+            "MasterBand.json": [{"_id": 4, "_nameTextID": "Band_Name_millsage"}, {"_id": 99, "_nameTextID": "Band_Name_other_band", "_name": "Other Band"}],
+            "MasterCharacter.json": [{"_id": 16, "_bandID": 4, "_nameTextID": "Character_Name_hotaru"}, {"_id": 99, "_bandID": 99, "_nameTextID": "Character_Name_other"}],
+            "MasterStoryChapter.json": [{"_id": 4, "_bandId": 4, "_mainCharacterIds": [16]}, {"_id": 99, "_bandId": 99, "_mainCharacterIds": [99]}],
+            "MasterStoryEpisode.json": [{"_id": 1, "_advId": 7, "_chapterId": 4, "_episodeNumber": 1}, {"_id": 99, "_advId": 9, "_chapterId": 99}],
             "MasterStoryFriendshipEpisode.json": [],
             "MasterCharacterFriendship.json": [],
             "MasterStoryLiveResultEpisode.json": [],
@@ -126,11 +126,16 @@ class Origin:
             },
         }
         self.unselected = self.asset(b"must-not-download", "moc3")
+        self.other_model_id = "adv_live2d_other_099_fixture"
+        other_model = json.loads(encode(self.model_manifest))
+        other_model["model"] = {"id": self.other_model_id, "character": 99, "label": "other fixture"}
+        other_model["files"]["model.moc3"] = self.unselected
         for site in ("intl", "jp"):
             self.put(f"/{site}/models/{self.model_id}.json", self.model_manifest)
-            self.put(f"/{site}/models/unrelated.json", {"model": {"character": 99}, "files": {"unused.moc3": self.unselected}})
-        self.manifests = {number: self.story(number) for number in (7, 8, 9)}
-        self.manifests[9]["models"] = {"unrelated": "models/unrelated.json"}
+            self.put(f"/{site}/models/{self.other_model_id}.json", other_model)
+        self.manifests = {number: self.story(number) for number in (7, 8)}
+        for number in (9, 11):
+            self.manifests[number] = self.story(number, model_id=self.other_model_id, character="other")
         self.publish_stories()
         self.fail_once.add("/intl/" + self.raw["asset"])
 
@@ -139,11 +144,12 @@ class Origin:
             for name, rows in self.tables.items():
                 self.put(f"/metadata/{region}/master/{name}", rows)
 
-    def story(self, number):
+    def story(self, number, model_id=None, character="hotaru"):
+        model_id = model_id or self.model_id
         episode = {
             "advId": number, "asset": f"adv_{number}", "commandCount": 2,
             "commands": [
-                {"i": 1, "cmd": "Talk", "raw": 2, "TargetName": "hotaru", "AdvTextID": "t1", "VoiceIDs": [2], "voiceCues": ["voice_a"], "MotionName": "idle", "ExpressionName": "smile", "lines": texts("hello archive")},
+                {"i": 1, "cmd": "Talk", "raw": 2, "TargetName": character, "AdvTextID": "t1", "VoiceIDs": [2], "voiceCues": ["voice_a"], "MotionName": "idle", "ExpressionName": "smile", "lines": texts("hello archive")},
                 {"i": 2, "cmd": "Zoom", "raw": 11, "Parameter1": 1.2, "IsNoWait": 1},
             ],
             "text": {"t1": texts("hello archive")},
@@ -153,7 +159,7 @@ class Origin:
             "master": {"_id": number, "_advEpisodeAsset": f"adv_{number}", "_playbackMode": 0},
             "title": texts(f"Fixture {number}"),
         }
-        story = {"advId": number, "episode": "episode.json", "scene": "scene.json", "models": {"Character/Live2D/hotaru": self.model_id}, "audio": {"sheet_a": "audio/sheet_a"}}
+        story = {"advId": number, "episode": "episode.json", "scene": "scene.json", "models": {f"Character/Live2D/{character}": model_id}, "audio": {"sheet_a": "audio/sheet_a"}}
         return {
             "format": "ournotes.story-manifest/2", "advId": number, "root": "../", "language": "ja", "audio": True, "fonts": "open",
             "story": {"advId": number, "playbackMode": 0, "titles": {"ja": f"Fixture {number}"}, "commands": ["Talk", "Zoom"], "commandCount": 2},
@@ -165,7 +171,7 @@ class Origin:
                 "audio/sheet_a/voice_a.m4a": self.wave,
                 "raw.json": self.raw, "brotli.json": self.brotli, "split.json": self.split,
             },
-            "models": {self.model_id: f"models/{self.model_id}.json"},
+            "models": {model_id: f"models/{model_id}.json"},
             "languages": {"ja": {"files": {}}, "zh-Hans": {"files": {"lang-only.json": self.chinese}}},
             "producerNumber": "__RAW_INFINITY__",
         }
@@ -266,6 +272,8 @@ def main():
 
         check(any(command.startswith("archive ") for command in run("help")["commands"]), "Help advertises one archive command.")
         run("archive", "sync", code=2)
+        run("archive", "--band", code=2)
+        run("story", "list", "--band", "99", code=2)
         run("archive", "--concurrency", "0", code=2)
         run("archive", "--out", "one", "--archive", "two", code=2)
         initial = run("archive")
@@ -405,6 +413,34 @@ def main():
         check(not interrupted.joinpath("index/stats.json").exists(), "Failed acquisition does not publish a successful index.")
         run("archive", "--out", interrupted, "--sites", "intl", "--no-deep")
         check(interrupted.joinpath("index/stats.json").exists(), "Rerun completes an interrupted archive.")
+
+        # Changing one band's active selection reuses shared content while rebuilding
+        # the searchable story/model scope. Old immutable files remain available.
+        before = origin.asset_requests()
+        switched = run("archive", "--band", "OTHER-BAND!!!", "--sites", "intl", "--no-deep")
+        selected_band = switched["result"]["download"]["band"]
+        check(selected_band["bandId"] == 99 and selected_band["bandTextId"] == "Band_Name_other_band", "Named band selection reports its canonical MasterData identity.")
+        check({int(item["advId"]) for item in run("story", "list")["result"]["items"]} == {9}, "Story queries follow the new band rather than retained old manifests.")
+        check({item["id"] for item in run("model", "list")["result"]["items"]} == {origin.other_model_id}, "Model queries use the selected band's indexed resources.")
+        check(run("model", "show", origin.other_model_id)["result"]["motions"] == ["idle"], "A model outside Millsage works through the existing model consumer.")
+        check(run("story", "commands", "9")["result"]["items"][0]["TargetName"] == "other", "Story command queries preserve the selected band's actual speaker.")
+        check(all(json.loads(archive.joinpath("index", name + ".json").read_text(encoding="utf-8"))["band"]["bandId"] == 99 for name in ("catalog", "models", "stats")), "All index metadata identifies the current band selection.")
+        check(all(origin.asset_requests()[path] == count for path, count in before.items()), "Switching bands reuses already verified shared assets without download requests.")
+        check(archive.joinpath("sites/intl/stories/7.json").exists(), "Changing bands preserves previous manifests and their reusable assets.")
+
+        before = origin.asset_requests()
+        run("archive", "--band", "99", "--sites", "intl", "--no-deep")
+        check(origin.asset_requests() == before, "Numeric band selection repeats the same archive with zero asset requests.")
+        previous_catalog = archive.joinpath("index/catalog.json").read_bytes()
+        invalid = run("archive", "--band", "not-a-band", "--sites", "intl", code=2)
+        check("4 (millsage)" in invalid["error"]["message"] and "99 (other_band)" in invalid["error"]["message"], "Unknown band errors list IDs and names supplied by MasterData.")
+        check(archive.joinpath("index/catalog.json").read_bytes() == previous_catalog, "An unknown band leaves the previous archive selection intact.")
+
+        run("archive", "--band", "Band_Name_other_band", "--sites", "intl")
+        check({int(item["advId"]) for item in run("story", "list")["result"]["items"]} == {9, 11}, "Deep scanning includes the other band's model-only cameo.")
+        before = origin.asset_requests()
+        run("archive", "--band", "4")
+        check(origin.asset_requests() == before and run("story", "list")["result"]["total"] == 3, "Switching back restores the default band's index without downloading its retained assets again.")
 
     print(json.dumps({"ok": True, "checks": passed, "binary": str(binary), "nativeAot": not args.managed}))
     return 0

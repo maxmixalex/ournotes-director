@@ -71,6 +71,7 @@ public sealed partial class ArchiveDownloader : IDisposable
         private readonly SemaphoreSlim _httpSlots;
         private readonly string _root;
         private readonly string _cache;
+        private readonly string _bandSelector;
         private readonly ConcurrentDictionary<string, Lazy<Task<RemoteDocument>>> _documents = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, string> _validatedDocumentHashes = new(StringComparer.Ordinal);
         private readonly HashSet<string>? _languages;
@@ -85,7 +86,9 @@ public sealed partial class ArchiveDownloader : IDisposable
             if (options.Retries is < 1 or > 20) throw new ArgumentOutOfRangeException(nameof(options), "Retries must be between 1 and 20.");
             if (options.RequestTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(options), "Request timeout must be positive.");
             ValidateRoot(options.MetadataBase);
-            if (string.IsNullOrWhiteSpace(options.BandTextId)) throw new ArgumentException("A band text ID is required.");
+            var bandSelector = options.Band ?? options.BandTextId;
+            if (string.IsNullOrWhiteSpace(bandSelector)) throw new ArgumentException("A band ID or name is required.");
+            _bandSelector = bandSelector.Trim();
             if (options.Sites.Count == 0) throw new ArgumentException("At least one site is required.");
             if (options.Sites.Distinct(StringComparer.Ordinal).Count() != options.Sites.Count) throw new ArgumentException("Duplicate sites are not allowed.");
             foreach (var site in options.Sites)

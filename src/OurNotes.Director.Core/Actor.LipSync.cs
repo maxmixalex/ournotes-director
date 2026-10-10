@@ -20,7 +20,7 @@ public sealed unsafe partial class Actor
         var components=gamePrefab["nodes"]![0]!["components"]!.AsArray();var ctrl=components.FirstOrDefault(c=>Archive.S(c!,"class")=="CubismMotionSyncController");
         if(ctrl is null||!components.Any(c=>Archive.S(c!,"class")=="Live2DMotionSyncCriAudioInput"))return;
         var settings=ctrl["_motionSyncData"]!["Settings"]!.AsArray();if(settings.Count!=1)throw new NotSupportedException("Expected one MotionSync setting");mouthSetting=settings[0]!;
-        for(var dir=new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(coreDll))!);dir is not null;dir=dir.Parent){string candidate=Path.Combine(dir.FullName,"CubismSdkMotionSyncPluginForNative-5-r.1","Core","CRI","dll","Windows","x86_64","Live2DCubismMotionSyncEngine_CRI.dll");if(File.Exists(candidate)){mouthDll=candidate;break;}}
+        mouthDll=NativeDependencies.MotionSyncLibrary(coreDll)??"";
         var parameters=mouthSetting["CubismParameters"]!.AsArray();mouthTargets=parameters.Select(p=>{if(p?["Parameter"] is not JsonNode parameter)return -1;string path=Archive.S(parameter,"gameObject");return ids.GetValueOrDefault(path[(path.LastIndexOf('/')+1)..],-1);}).ToArray();
         mouthSmooth=parameters.Select(p=>N(p!["Smooth"])).ToArray();mouthDamper=parameters.Select(p=>N(p!["Damper"])).ToArray();mouthNeutral=new float[parameters.Count];mouthSmoothed=new float[parameters.Count];mouthDamped=new float[parameters.Count];
         var silence=mouthSetting["Mappings"]!.AsArray().FirstOrDefault(m=>Archive.S(m!,"AudioParameterId")=="Silence");if(silence is not null)for(int k=0;k<parameters.Count;k++)mouthNeutral[k]=N(silence["Targets"]![k]!["Value"]);
@@ -35,7 +35,7 @@ public sealed unsafe partial class Actor
             criVoice=fallback;criOpening=mouthFiltered=mouthPresented=mouthHold=0;mouthVoice=voice;LipSyncMissing=null;
             voice.OnFinished.Add(()=>{if(ReferenceEquals(mouthVoice,voice))StopVoiceLipSync();});return;
         }
-        if(mouthDll=="")throw new FileNotFoundException("Native MotionSync 5.0.4 DLL missing beside the Cubism SDK");
+        if(mouthDll=="")throw new FileNotFoundException("MotionSync 5.0.4 is missing from the application package. Extract the complete release package, or set CUBISM_MOTIONSYNC_DLL.");
         mouthAnalysis??=new(mouthDll,mouthSetting!);mouthAnalysis.ResetInput();mouthAudio=audio;mouthVoice=voice;mouthSample=0;mouthAccumulator=0;
         mouthFiltered=mouthPresented=mouthHold=mouthSpeechHint=0;Array.Copy(mouthNeutral,mouthSmoothed,mouthNeutral.Length);Array.Copy(mouthNeutral,mouthDamped,mouthNeutral.Length);LipSyncMissing=null;
         voice.OnFinished.Add(()=>{if(ReferenceEquals(mouthVoice,voice))StopVoiceLipSync();});

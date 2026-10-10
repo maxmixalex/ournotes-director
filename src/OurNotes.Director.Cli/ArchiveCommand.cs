@@ -15,7 +15,7 @@ internal static class ArchiveCommand
         if (positional.Count != 1)
             throw new ArgumentException("archive has no subcommands. Run advkit archive [--out DIRECTORY].");
 
-        string[] accepted = ["out", "archive", "sites", "site", "languages", "concurrency", "retries", "no-deep", "json", "debug"];
+        string[] accepted = ["out", "archive", "band", "sites", "site", "languages", "concurrency", "retries", "no-deep", "json", "debug"];
         foreach (var key in arguments.Keys)
             if (!accepted.Contains(key, StringComparer.Ordinal))
                 throw new ArgumentException($"--{key} is not supported by archive; updates and resuming are automatic.");
@@ -36,6 +36,8 @@ internal static class ArchiveCommand
         }
 
         var defaults = new ArchiveOptions();
+        var band = Option("band", defaults.BandTextId).Trim();
+        if (band.Length == 0) throw new ArgumentException("--band requires one MasterBand ID or name.");
         var sites = Csv(Option("sites", Option("site", "intl,jp")));
         if (sites.Length == 0 || sites.Any(site => !defaults.SiteRoots.ContainsKey(site)))
             throw new ArgumentException("--sites accepts intl, jp, or intl,jp.");
@@ -56,6 +58,7 @@ internal static class ArchiveCommand
         {
             OutputDirectory = destination,
             MetadataBase = Environment.GetEnvironmentVariable("OURNOTES_METADATA_BASE") ?? defaults.MetadataBase,
+            Band = band,
             Sites = sites,
             SiteRoots = roots,
             Languages = languages,

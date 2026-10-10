@@ -25,7 +25,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -48,20 +48,52 @@ jobs:
           python-version: '3.12'
       - name: Install native compiler prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libegl1 libgl1 libgl1-mesa-dri
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libegl1 libgl1 libgl1-mesa-dri nasm pkg-config
+      - name: Set up Windows media compiler
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            diffutils
+            curl
+            tar
+            xz
+            python
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-pkgconf
+      - name: Cache verified media build and SDK downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            artifacts/media-cache/downloads
+            artifacts/media-cache/bundle
+            artifacts/dependency-cache
+          key: native-deps-${{ matrix.os }}-${{ matrix.rid }}-${{ hashFiles('scripts/build-media.sh', 'scripts/media-sources.lock', 'scripts/native-sources.lock.json') }}
       - name: Build managed development assemblies
         run: dotnet build OurNotes.Director.sln -c Release --nologo
       - name: Run core and archive tests
         run: dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore
       - name: Publish Native AOT
         run: dotnet publish src/OurNotes.Director.Cli -c Release -r ${{ matrix.rid }} -o artifacts/${{ matrix.rid }} --nologo
+      - name: Stage native SDK runtimes and licenses
+        run: python scripts/stage-native.py --rid ${{ matrix.rid }} --output artifacts/${{ matrix.rid }}
+      - name: Build and bundle media tools on Linux
+        if: runner.os == 'Linux'
+        run: bash scripts/build-media.sh ${{ matrix.rid }} artifacts/${{ matrix.rid }}
+      - name: Build and bundle media tools on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/build-media.sh ${{ matrix.rid }} artifacts/${{ matrix.rid }}
       - name: Verify standalone native executable
         run: python tests/native-smoke.py --binary artifacts/${{ matrix.rid }}/${{ matrix.executable }}
       - name: Archive incremental end-to-end test
         run: python tests/archive-smoke.py --binary artifacts/${{ matrix.rid }}/${{ matrix.executable }}
-      - name: Publish native graphics tests
-        if: runner.os == 'Linux'
-        run: dotnet publish tests/OurNotes.Director.NativeTests -c Release -r linux-x64 -o artifacts/native-tests --nologo
+      - name: Publish native runtime and graphics tests
+        run: dotnet publish tests/OurNotes.Director.NativeTests -c Release -r ${{ matrix.rid }} -o artifacts/native-tests --nologo
       - name: Run native graphics tests with software OpenGL
         if: runner.os == 'Linux'
         env:
@@ -86,6 +118,14 @@ jobs:
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)" | Set-Content "$($_.FullName).sha256" -Encoding ascii
           }
+      - name: Verify the complete extracted release package
+        shell: pwsh
+        run: |
+          $rid = '${{ matrix.rid }}'
+          $extension = if ($IsWindows) { 'zip' } else { 'tar.gz' }
+          $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
+          python tests/package-smoke.py --package "packages/ournotes-director-$rid.$extension" --native-tests $testBinary
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         id: artifact
         continue-on-error: >-

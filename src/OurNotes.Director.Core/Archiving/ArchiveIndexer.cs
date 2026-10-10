@@ -214,7 +214,7 @@ public static class ArchiveIndexer
             }
         }
 
-        var stats = new JsonObject { ["stories"] = catalog.Count };
+        var stats = new JsonObject { ["stories"] = catalog.Count, ["band"] = Clone(discovery["band"]) };
         foreach (var (key, count) in counts) stats[key] = count;
         stats["models"] = models.Count;
         stats["sites"] = siteCounts;
@@ -225,7 +225,8 @@ public static class ArchiveIndexer
         }, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(Path.Combine(indexDirectory, "models.json"), new JsonObject
         {
-            ["format"] = "millsage.models/1", ["models"] = new JsonArray(models.Values.Select(model => (JsonNode?)model).ToArray()),
+            ["format"] = "millsage.models/1", ["band"] = Clone(discovery["band"]),
+            ["models"] = new JsonArray(models.Values.Select(model => (JsonNode?)model).ToArray()),
         }, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(Path.Combine(indexDirectory, "stats.json"), stats, cancellationToken).ConfigureAwait(false);
         return stats;

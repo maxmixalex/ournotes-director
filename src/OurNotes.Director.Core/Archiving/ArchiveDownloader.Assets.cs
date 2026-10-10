@@ -87,6 +87,7 @@ public sealed partial class ArchiveDownloader
             var result = new JsonObject
             {
                 ["output"] = _root,
+                ["band"] = discovery["band"]?.DeepClone(),
                 ["stories"] = _stories,
                 ["models"] = _models,
                 ["assets"] = _assets,

@@ -137,6 +137,7 @@ internal static class ArchiveIndexTests
                 """);
 
             var stats = await ArchiveIndexer.BuildAsync(root);
+            assert(stats["band"]?["textId"]?.ToString() == "Band_Name_millsage", "index statistics retain legacy discovery band metadata");
             var archive = new Archive(root);
             assert(stats["stories"]!.GetValue<int>() == 3 && stats["commands"]!.GetValue<long>() == 6, "archive index builds from scratch across normal and simple ADV sites");
             assert(stats["dialogue"]!.GetValue<long>() == 1 && stats["voices"]!.GetValue<long>() == 1 && stats["sounds"]!.GetValue<long>() == 2, "archive index preserves command/dialogue/voice/sound counting");
@@ -161,6 +162,8 @@ internal static class ArchiveIndexTests
             assert(actor["targetName"]!.GetValue<string>() == "director_test" && actor["targetAssetName"]!.GetValue<string>() == "Actor" && actor["defaultMotion"]!.GetValue<string>() == "idle", "director model preload names and fallback motion match native runtime");
             assert(actor["motions"]!.AsArray().Count == 2 && actor["expressions"]![1]!.GetValue<string>() == "surprise", "director model registry includes deduplicated motions and expression names");
             var manifest = Archive.ReadJson(intl.PathFor("director/manifest.json"));
+            assert(manifest["story"]!["asset"]!.GetValue<string>() == "adv_director_millsage" && manifest["story"]!["titles"]!["en"]!.GetValue<string>() == "Millsage ADV Director Pack",
+                "Millsage resource packs retain the legacy asset identity and expose titles in downloaded languages");
             assert(manifest["language"]!.GetValue<string>() == "en" && manifest["languages"]!.AsObject().Count == 1, "director manifest uses a downloaded base language");
             var mergedScene = Encoding.UTF8.GetString(archive.Logical("intl", manifest, "scene.json"));
             assert(mergedScene.Contains("1e999", StringComparison.Ordinal), "director split scene merge preserves raw numeric values");
@@ -213,6 +216,17 @@ internal static class ArchiveIndexTests
             var assetCount = Directory.EnumerateFiles(intl.PathFor("assets")).Count();
             await DirectorPackBuilder.BuildAsync(root);
             assert(firstManifest.SequenceEqual(File.ReadAllBytes(intl.PathFor("director/manifest.json"))) && Directory.EnumerateFiles(intl.PathFor("assets")).Count() == assetCount, "director rebuild is deterministic and reuses existing generated assets");
+            var discoveryPath = Path.Combine(root, "discovery.json");
+            var bandDiscovery = Archive.ReadJson(discoveryPath);
+            bandDiscovery["band"] = new JsonObject { ["bandId"] = 2, ["bandTextId"] = "Band_Name_fixture", ["token"] = "fixture", ["name"] = "Fixture Band" };
+            File.WriteAllText(discoveryPath, bandDiscovery.ToJsonString());
+            await DirectorPackBuilder.BuildAsync(root);
+            var otherBandManifest = Archive.ReadJson(intl.PathFor("director/manifest.json"));
+            var otherBandEpisode = JsonNode.Parse(archive.Logical("intl", otherBandManifest, "episode.json"))!;
+            assert(otherBandManifest["story"]!["asset"]!.GetValue<string>() == "adv_director_fixture" && otherBandManifest["story"]!["titles"]!["en"]!.GetValue<string>() == "Fixture Band ADV Director Pack" &&
+                otherBandEpisode["asset"]!.GetValue<string>() == "adv_director_fixture" && otherBandEpisode["master"]!["_advEpisodeAsset"]!.GetValue<string>() == "adv_director_fixture" &&
+                Archive.ReadJson(intl.PathFor("director/resources.json"))["band"]!["bandId"]!.GetValue<int>() == 2,
+                "non-Millsage packs consistently use the selected band identity while keeping registry paths and native schemas compatible");
             var skipped = await DirectorPackBuilder.BuildAsync(root, "jp");
             assert(skipped["skipped"]!.GetValue<bool>() && !File.Exists(jp.PathFor("director/manifest.json")), "simple-only archive finishes with explicit skipped director pack");
 

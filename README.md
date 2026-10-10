@@ -8,7 +8,7 @@
 
 ## 下载和运行
 
-GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `ubuntu-24.04` 与 `windows-2022` 上分别构建、测试和发布。完成后下载 `ournotes-director-linux-x64` / `ournotes-director-win-x64` artifact，解开其中的平台压缩包；包内包含原生程序、使用指南、许可证和示例剧本。
+GitHub Actions 的 [**Build native executables** 工作流](https://github.com/maxmixalex/ournotes-director/actions/workflows/build.yml)在 GitHub 托管的 `ubuntu-24.04` 与 `windows-2022` 上分别构建、测试和发布。完成后下载 `ournotes-director-linux-x64` / `ournotes-director-win-x64` artifact，解开其中的平台压缩包；包内包含原生程序、原生运行库、音视频工具、使用指南、许可证和示例剧本。请保留整个解压目录，不能只复制 `advkit` 可执行文件。
 
 默认交付位置是 Actions artifacts。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会把各平台测试通过的包分别保存为独立的**草稿 Release**，下载链接见对应 job 的 Summary。草稿只有具有仓库写权限的人能查看；其他情况仍使用 artifacts。
 
@@ -24,7 +24,17 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 ./advkit story list
 ```
 
-归档、检索、校验和解包只需要程序本身及操作系统网络组件。渲染仍需要本机 Cubism Native Core 和 OpenGL；音视频解码／编码需要 FFmpeg/FFprobe。Linux 发布以 Ubuntu 24.04 为构建基线，需要兼容或更新的 glibc 系统，不适用于 Alpine/musl；图形路径使用 EGL surfaceless OpenGL，可配 Mesa 软件渲染。AOT 消除了 .NET 安装要求，没有替代这些图形和媒体组件；CI 包不包含游戏素材或用户提供的 Cubism SDK。
+CI 发布包自带以下运行依赖，默认按可执行文件所在目录加载，从其他工作目录启动也不需要配置 SDK 路径或 FFmpeg 的 `PATH`：
+
+| 组件 | Windows x64 | Linux x64 |
+|---|---|---|
+| Cubism Core | `native/Live2DCubismCore.dll` | `native/libLive2DCubismCore.so` |
+| 口型分析 | `native/Live2DCubismMotionSyncEngine_CRI.dll`，以及编译进程序的 C# CRI Lips | 编译进程序的 C# CRI Lips |
+| 音视频工具 | `tools/ffmpeg.exe`、`tools/ffprobe.exe` | `tools/ffmpeg`、`tools/ffprobe` |
+
+官方 MotionSync 没有 Linux 桌面运行库；Linux 使用已有 C# CRI Lips 与归档中的模型权重，不需要额外口型 DLL，但不保证与 Windows MotionSync 产生相同的音素嘴型。游戏素材仍由 `archive` 下载。图形驱动／OpenGL 是操作系统依赖：Linux 使用 EGL surfaceless OpenGL，可配 Mesa；Ubuntu 可安装 `libegl1 libgl1 libgl1-mesa-dri`。Linux 发布以 Ubuntu 24.04 为构建基线，需要兼容或更新的 glibc 系统，不适用于 Alpine/musl。
+
+`./advkit.exe probe runtime`（Linux 使用 `./advkit`）不需要素材归档，实际加载 Core、检查口型引擎并调用包内 FFmpeg/FFprobe，返回路径和版本。高级用法仍可通过 `--dll`、`--cubism-sdk` / `CUBISM_NATIVE_SDK`、`CUBISM_MOTIONSYNC_DLL`、`--ffmpeg`、`--ffprobe` 显式选择其他安装。第三方运行库沿用各自许可证，见 `THIRD-PARTY.md` 和包内 `licenses/`。
 
 ## 一个命令归档和增量更新
 
@@ -32,7 +42,7 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 ./advkit.exe archive
 ```
 
-它会读取当前 intl / JP MasterData，动态识别 millsage 成员和关联剧情，默认继续扫描 story/model manifest 以发现客串；随后下载所有语言、公共文件和模型依赖，校验素材，重建检索索引，并为有普通剧情的站点生成 Director Pack。不需要运行旧 Node 项目或拆成多个命令。
+它会读取当前 intl / JP MasterData，动态识别所选乐队的成员和关联剧情，默认继续扫描 story/model manifest 以发现客串；随后下载所有语言、公共文件和模型依赖，校验素材，重建检索索引，并为有普通剧情的站点生成 Director Pack。不需要运行旧 Node 项目或拆成多个命令。未指定乐队时继续使用 millsage。
 
 **更新或中断后续跑，仍执行同一条 `archive`。** 已有素材按解码后 SHA-256、decoded size 和 stored size 校验，通过后复用；缺失或损坏的文件会补齐。共享存储与站点素材优先使用 hardlink，不支持时自动复制。可变的目录、MasterData 和 manifest 会按 ETag / Last-Modified 重新确认；变化后只补下载所需的新内容。下载写入临时文件，校验成功后才替换；索引和 Director Pack 也先在临时目录构建，失败保留上一份完整结果。同一归档有进程锁，防止并发更新相互覆盖。
 
@@ -42,7 +52,14 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 ./advkit.exe archive --out D:/OurNotes/archive
 ./advkit.exe archive --out D:/OurNotes/archive --languages zh-Hans,ja
 ./advkit.exe archive --out D:/OurNotes/archive --sites intl --concurrency 8
+# 选择其他乐队；名称 token、完整 text ID 和数值 ID 均可
+./advkit.exe archive --band mygo --out D:/OurNotes/mygo --languages zh-Hans,ja
+./advkit.exe archive --band mujica --out D:/OurNotes/mujica
+./advkit.exe archive --band Band_Name_yumemita --out D:/OurNotes/yumemita
+./advkit.exe archive --band 5 --out D:/OurNotes/kadan
 ```
+
+`--band` 每次选择一个乐队，按上游 MasterBand 解析，不写死成员或乐队 ID。token 忽略大小写及常见标点，例如 `MyGO!!!!!` 与 `mygo` 等价；上游提供显示名时也接受该显示名。未知或含糊的名称会报错并列出可用 ID/token。换乐队后，剧情、角色、客串扫描、资源索引和 Director Pack 都按本次选择生成。已有素材保留并可增量复用；若需要同时保留多套可查询的乐队索引，请使用不同的 `--out` 目录。再次更新需沿用相同的 `--band`；省略它会回到 millsage。
 
 默认所有语言、两个站点、并发 8、开启客串深扫；`--no-deep` 可明确限定到 MasterData / 目录关联范围。已选剧情和模型清单也按该并发数预取，验证后按顺序汇总；即使素材完全复用，更新仍需等待上游确认清单版本。`--retries` 控制单次请求的最大尝试次数（默认 4）。筛选不会删除已经保存的旧素材；索引依据本次选择生成。归档器按完整文件复用，尚未下载完的单个文件会重新下载，不是 HTTP 字节范围续传。
 
@@ -59,6 +76,8 @@ GitHub Actions 的 **Build native executables** 工作流在 GitHub 托管的 `u
 高级镜像／测试可使用 `OURNOTES_METADATA_BASE`、`OURNOTES_STORY_SITE_INTL`、`OURNOTES_STORY_SITE_JP` 覆盖源地址，普通使用不需要设置。所有进度写 stderr，stdout 始终返回一个 JSON 结果；Ctrl+C 返回 130，下次执行同一命令恢复。进度包含当前阶段、完成数／总数和耗时；大型文件或请求重试期间也会定期显示状态。再次运行时，会在取得归档锁后清理 `store/` 中符合下载器命名规则的未完成临时文件。
 
 Director Pack 保留各剧情的聊天窗口、图标、贴图、文本和音效引用，并合并所选语言的字体子集。同名但内容不同的字体图片会分别保留，字形继续使用原始图片坐标。只下载日语等单一语言后，剧情与媒体渲染也使用该语言的 UI 资源。
+
+`story list`、`model list`、`stage list` 等命令读取所指定归档的当前索引，无需重复传 `--band`。`shot init` 从该归档选择可用模型与普通剧情作为场景来源，`--template duet` 选择两个不同的可用模型；也可用 `--model` 指定主角。生成的场景记录来源剧情、站点和语言，可继续交给统一 `render`。已有 millsage 示例仍保持原来的角色与剧情 ID，使用其他乐队时请生成新模板或替换示例中的资源引用。
 
 ## 使用流程
 
@@ -232,16 +251,20 @@ stdout 为 UTF-8 JSON，进度在 stderr。列表默认 50 项，可用 limit/of
 ```sh
 # Linux：同一项目，指定 Linux 目标
 ./build.sh linux-x64
-# 直接使用 .NET 发布命令
+# 仅发布 AOT 主程序（完整包还需下面的依赖暂存步骤）
 dotnet publish src/OurNotes.Director.Cli -c Release -r linux-x64 -o artifacts/linux-x64
+python3 scripts/stage-native.py --rid linux-x64 --output artifacts/linux-x64
+bash scripts/build-media.sh linux-x64 artifacts/linux-x64
 ```
 
 开发构建需要 .NET 10 SDK，Native AOT 另外需要目标平台的原生编译工具：Windows 的 Visual C++ / Windows SDK，Linux 的 clang 和 zlib 开发包。Native AOT 不支持跨操作系统发布，因此 `win-x64` 在 Windows runner 构建，`linux-x64` 在 Linux runner 构建。`global.json` 固定到 .NET 10 的稳定版本系列；业务代码不需要维护两个副本。没有第三方业务 NuGet 依赖，发布阶段由 .NET SDK 取得官方 AOT 编译器和运行时包。
+
+`build.sh` / `build.ps1` 默认还会暂存原生 SDK 运行库、构建媒体工具，并执行 `probe runtime`。完整媒体构建需要 GCC、make、NASM、pkg-config、curl、tar 和 Python 3；Windows 使用 MSYS2 UCRT64，默认在 `C:/msys64`，可用 `MSYS2_ROOT` 指定其他安装。`--no-publish` / `-NoPublish` 只编译和测试 C#。CI 已配置这些构建工具和按源码锁文件区分的缓存；首次媒体编译较慢，后续校验缓存后复用。`OURNOTES_BUILD_JOBS` 可限制媒体编译并发；`OURNOTES_MEDIA_CACHE` 可指定不含空格的构建缓存目录。这些均为开发依赖，最终包运行不需要它们。
 
 默认 CI 执行底层测试和无需真实素材的 CLI 归档回归：首次下载、五类归档文件、默认客串扫描、重复运行零素材请求、共享文件损坏修复、上游新增资源、旧归档迁移、语言／站点筛选、失败后的恢复。随后检查发布产物是原生 ELF/PE，并直接运行发布程序。Python 仅用于 CI 测试，不是程序运行依赖。
 
 `tests/*smoke.ps1` 是保留的真实素材验收脚本，部分断言针对 2026-10-07 的固定归档快照；需要该素材、Cubism SDK 和 FFmpeg 才能运行，不作为当前上游内容数量的断言，也不加入默认托管 CI。可设置 `OURNOTES_CLI` 指定待验收的原生程序。
 
-Native SDK 默认使用本机已有 CubismSdkForNative-5-r.5，也支持 --dll、--cubism-sdk / CUBISM_NATIVE_SDK。缺失时报错，无 Web/静态图替代。Core 不打包进 bin。移植来源与许可证见 THIRD-PARTY.md。
+正式包在发布后按目标 RID 提取并校验 Cubism Core 和 Windows MotionSync，只附带运行所需的库与许可证。FFmpeg/FFprobe 从锁定版本的 FFmpeg、x264、zlib 源码静态构建，不依赖系统安装的媒体库；`media-sources/` 随包提供完整源码压缩包、SHA-256 和构建脚本。包内版本与文件清单见 `native-dependencies.json`、`media-dependencies.json`。CI 在陌生工作目录中运行依赖探测及媒体回归，再对最终压缩包解压后的副本做验收，避免只验证构建工作区里碰巧存在的 SDK。
 
 附件保留的历史验收记录（使用当时的固定素材快照，并非本次托管 CI 结果）：119 项底层/镜头/PNG/剧情/原生内核检查（含阶段顺序、并发取消、分支、变速、缓动、PCM 混音与相机矩阵）；9 项原生归档检查；55 项归档集成；45 项渲染检查，包含全部 31 个模型真实输出、随机访问/连续对照、容差重复性、损坏帧修复、ProRes alpha、FFV1 精确像素往返、双角色+舞台背景。18 项剧情包/封装检查覆盖真实原声、字幕、帧时长、视频像素不变、长音轨裁切、短音轨补静音和失败清理。10 秒 1080p / 2× supersampling 经 ffprobe 核实 300 帧。报告见 output/reports/ 下各 smoke JSON。测试临时目录在 finally 中自动清理，失败时也保留已完成检查的报告。

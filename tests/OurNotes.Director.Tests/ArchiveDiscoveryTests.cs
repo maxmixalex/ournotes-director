@@ -14,7 +14,7 @@ static class ArchiveDiscoveryTests
             using var origin = new FixtureOrigin();
             using var client = new HttpClient(origin);
             using var downloader = new ArchiveDownloader(client);
-            ArchiveOptions Options(bool deep) => new()
+            ArchiveOptions Options(bool deep, string? band = null, string bandTextId = "Band_Name_millsage") => new()
             {
                 OutputDirectory = Path.Combine(temporary, deep ? "deep" : "shallow"),
                 MetadataBase = "https://fixture.invalid/metadata",
@@ -24,6 +24,8 @@ static class ArchiveDiscoveryTests
                     ["jp"] = "https://fixture.invalid/jp",
                 },
                 DeepScan = deep,
+                Band = band,
+                BandTextId = bandTextId,
                 Concurrency = 3,
                 Retries = 1,
             };
@@ -56,6 +58,56 @@ static class ArchiveDiscoveryTests
             var shallow = await downloader.DiscoverAsync(Options(false));
             var shallowIds = shallow["stories"]!.AsArray().Select(x => x!["advId"]!.GetValue<long>()).Order().ToArray();
             assert(shallowIds.SequenceEqual(masterIds.Concat([30001L, 30002L]).Order()), "Disabling deep scan retains the complete metadata and index-group selection while excluding model-only cameos.");
+
+            var other = await downloader.DiscoverAsync(Options(false, "99"));
+            var otherIds = other["stories"]!.AsArray().Select(x => x!["advId"]!.GetValue<long>()).Order().ToArray();
+            assert(other["band"]!["bandId"]!.GetValue<long>() == 99 && other["band"]!["bandTextId"]!.ToString() == "Band_Name_other_band",
+                "Numeric band selection records the actual canonical MasterBand text ID.");
+            assert(other["band"]!["characters"]!.AsArray().Select(x => x!["id"]!.GetValue<long>()).SequenceEqual([99L]),
+                "A different band uses its own MasterCharacter members without Millsage members.");
+            assert(otherIds.Contains(20000) && otherIds.Contains(20001) && otherIds.Contains(20002) && otherIds.Contains(20003)
+                && otherIds.Contains(29999) && !otherIds.Contains(10060) && !otherIds.Contains(10061),
+                "All first-class discovery categories follow the selected band instead of the default band.");
+            foreach (var selector in new[] { "other_band", "OTHER BAND!!!", "Band_Name_other_band", "其他乐队" })
+            {
+                var alias = await downloader.DiscoverAsync(Options(false, selector));
+                assert(alias["stories"]!.AsArray().Select(x => x!["advId"]!.GetValue<long>()).Order().SequenceEqual(otherIds)
+                    && alias["regions"]!["jp"]!["band"]!["bandTextId"]!.ToString() == "Band_Name_other_band",
+                    $"Band selector '{selector}' resolves from MasterData and keeps the same identity across translated regions.");
+            }
+            var compatible = await downloader.DiscoverAsync(Options(false, bandTextId: "Band_Name_other_band"));
+            assert(compatible["band"]!["bandId"]!.GetValue<long>() == 99, "Existing BandTextId API callers retain explicit band selection.");
+            var otherDeep = await downloader.DiscoverAsync(Options(true, "other_band"));
+            var otherDeepStories = otherDeep["stories"]!.AsArray().OfType<JsonObject>().ToDictionary(x => x["advId"]!.GetValue<long>());
+            assert(Strings(otherDeepStories[30004]["categories"]).Contains("model-cameo")
+                && otherDeepStories[30003]["sites"]!.AsObject().Count == 2 && !otherDeepStories.ContainsKey(10060),
+                "Deep model-cameo scanning follows the selected band's character set across all sites.");
+            try
+            {
+                await downloader.DiscoverAsync(Options(false, "not-a-band"));
+                assert(false, "Unknown band selection must fail.");
+            }
+            catch (ArgumentException error)
+            {
+                assert(error.Message.Contains("4 (millsage)", StringComparison.Ordinal)
+                    && error.Message.Contains("99 (other_band)", StringComparison.Ordinal),
+                    "Unknown band errors list current MasterData choices instead of silently selecting Millsage.");
+            }
+            using var ambiguousOrigin = new FixtureOrigin(ambiguousBands: true);
+            using var ambiguousClient = new HttpClient(ambiguousOrigin);
+            using var ambiguousDownloader = new ArchiveDownloader(ambiguousClient);
+            try
+            {
+                await ambiguousDownloader.DiscoverAsync(Options(false, "other-band!!!"));
+                assert(false, "Ambiguous normalized band names must fail.");
+            }
+            catch (ArgumentException error)
+            {
+                assert(error.Message.Contains("more than one", StringComparison.Ordinal) && error.Message.Contains("100 (otherband)", StringComparison.Ordinal),
+                    "Ambiguous normalized aliases require an explicit band ID or exact text ID.");
+            }
+            var exact = await ambiguousDownloader.DiscoverAsync(Options(false, "Band_Name_other_band"));
+            assert(exact["band"]!["bandId"]!.GetValue<long>() == 99, "An exact text ID remains usable when loose name aliases are ambiguous.");
         }
         finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }
     }
@@ -66,12 +118,12 @@ static class ArchiveDiscoveryTests
         public ConcurrentDictionary<string, int> Requests { get; } = new(StringComparer.Ordinal);
         public int Count(string path) => Requests.TryGetValue(path, out var value) ? value : 0;
 
-        public FixtureOrigin()
+        public FixtureOrigin(bool ambiguousBands = false)
         {
             Put("/metadata/current_version.json", """{"regions":{"hk-tw-mo":{"version":"fixture"},"jp":{"version":"fixture"}}}""");
             var tables = new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["MasterBand.json"] = """[{"_id":4,"_nameTextID":"Band_Name_millsage"},{"_id":99,"_nameTextID":"Other_Band"}]""",
+                ["MasterBand.json"] = """[{"_id":4,"_nameTextID":"Band_Name_millsage"},{"_id":99,"_nameTextID":"Band_Name_other_band","_name":"Other Band","names":{"zh-Hans":"其他乐队"}}]""",
                 ["MasterCharacter.json"] = """[{"_id":16,"_bandID":4,"_nameTextID":"Character_Name_hotaru"},{"_id":17,"_bandId":4,"nameTextId":"Character_Name_other"},{"_id":99,"_bandId":99}]""",
                 ["MasterStoryChapter.json"] = """[{"_id":4,"_bandId":4,"_mainCharacterIds":[16,17]},{"_id":5,"_bandId":4,"_mainCharacterIds":[16],"_isSpecialStory":true},{"_id":6,"_bandId":99,"_mainCharacterIds":[16,99]},{"_id":7,"_bandId":99,"_mainCharacterIds":[99]},{"_id":8,"_bandId":99,"_mainCharacterIds":[99]}]""",
                 ["MasterStoryEpisode.json"] = """[{"_id":1,"_advId":10060,"_chapterId":4,"_episodeNumber":1},{"_id":2,"_advId":10061,"_chapterId":5},{"_id":3,"_advId":10062,"_chapterId":6,"_isAnotherEpisode":true,"_characterId":16},{"_id":4,"_advId":10063,"_chapterId":7,"_isExtraEpisode":true,"_characterId":17},{"_id":5,"_advId":20000,"_chapterId":8}]""",
@@ -82,10 +134,21 @@ static class ArchiveDiscoveryTests
                 ["MasterStoryHomeSpotTapTalkEpisode.json"] = """[{"_id":1,"_advId":10836,"_characterId":16,"_spotId":40001},{"_id":2,"_advId":10837,"_characterId":99,"_spotId":40003},{"_id":3,"_advId":20003,"_characterId":99,"_spotId":40002}]""",
                 ["MasterAdv.json"] = """[{"_id":10060,"_advEpisodeAsset":"adv_10060","_sheetName":"sheet_10060","_titleTextID":"title_10060","_playbackMode":0}]""",
             };
+            if (ambiguousBands)
+                tables["MasterBand.json"] = tables["MasterBand.json"][..^1] + ", {\"_id\":100,\"_nameTextID\":\"Band_Name_otherband\"}]";
             foreach (var (file, rows) in tables)
             {
                 Put("/metadata/tw/master/" + file, rows);
-                Put("/metadata/jp/master/" + file, "{\"_allData\":" + rows + "}");
+                // The localized selector exists only in the first region. Subsequent
+                // regions must use its resolved text ID, not repeat the translated name.
+                var japan = rows;
+                if (file == "MasterBand.json")
+                {
+                    var bands = JsonNode.Parse(rows)!.AsArray();
+                    foreach (var band in bands.OfType<JsonObject>()) { band.Remove("_name"); band.Remove("names"); }
+                    japan = bands.ToJsonString();
+                }
+                Put("/metadata/jp/master/" + file, "{\"_allData\":" + japan + "}");
             }
             long[] ids = [10060, 10061, 10062, 10063, 10304, 10549, 10836, 10837, 10844, 10845, 30001, 30002, 30003, 30004];
             foreach (var site in new[] { "intl", "jp" })
@@ -100,6 +163,7 @@ static class ArchiveDiscoveryTests
                         _ => new JsonArray(),
                     };
                     entries.Add((JsonNode)new JsonObject { ["advId"] = id, ["groups"] = groups });
+                    Put("/" + site + "/stories/" + id + ".json", """{"models":{"appearance":"models/target.json"}}""");
                 }
                 Put("/" + site + "/stories.json", new JsonObject { ["stories"] = entries }.ToJsonString());
                 Put("/" + site + "/stories/30003.json", site == "jp" ? """{"models":{"appearance":"models/target.json"}}""" : """{"models":{"appearance":"models/other.json"}}""");

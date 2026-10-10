@@ -5,3 +5,5 @@
 *.cs text eol=lf
 *.json text eol=lf
 *.yml text eol=lf
+# Source locks are read by Bash and included in the media build fingerprint.
+*.lock text eol=lf

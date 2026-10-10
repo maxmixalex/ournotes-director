@@ -9,6 +9,7 @@ public static class ShotProject
     public static JsonObject Convert(string path)
     {
         var shot=Shot.Read(path);shot.Validate();var commands=new JsonArray();
+        var source=shot.Source??new ShotSource();
         JsonNode Node<T>(T value)=>JsonOutput.SerializeToNode(value,Shot.JsonOptions)!;
         void Add(string cmd,JsonObject values)=>commands.Add((JsonNode)new JsonObject{["cmd"]=cmd,["Values"]=values});
         Add("Director.Scene",new(){["background"]=Node(shot.Background),["stageVisible"]=false,["grade"]=Node(shot.Grade)});
@@ -49,7 +50,7 @@ public static class ShotProject
             if(item.Time>time)commands.Add((JsonNode)new JsonObject{["cmd"]="Delay",["Duration"]=item.Time-time});commands.Add((JsonNode)item.Row);time=item.Time;
         }
         if(time<shot.Duration)commands.Add((JsonNode)new JsonObject{["cmd"]="Delay",["Duration"]=shot.Duration-time});
-        return new(){["format"]=DirectorProject.Format,["version"]=1,["source"]=new JsonObject{["adv"]="10060"},["initialize"]=new JsonArray(),["finalize"]=new JsonArray(),["commands"]=commands,
+        return new(){["format"]=DirectorProject.Format,["version"]=1,["source"]=new JsonObject{["adv"]=source.Adv,["site"]=source.Site,["language"]=source.Language},["initialize"]=new JsonArray(),["finalize"]=new JsonArray(),["commands"]=commands,
             ["output"]=new JsonObject{["width"]=shot.Output.Width,["height"]=shot.Output.Height,["supersample"]=shot.Output.RenderScale,["codec"]="prores",["clean"]=true,["letterbox"]="none"}};
     }
 }

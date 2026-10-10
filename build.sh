@@ -27,5 +27,8 @@ dotnet build OurNotes.Director.sln -c Release --nologo
 dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore
 if "$publish"; then
     dotnet publish src/OurNotes.Director.Cli -c Release -r "$rid" -o "artifacts/$rid" --nologo
+    python3 scripts/stage-native.py --rid "$rid" --output "artifacts/$rid"
+    bash scripts/build-media.sh "$rid" "artifacts/$rid"
+    "artifacts/$rid/advkit$(if [[ "$rid" == win-x64 ]]; then printf '.exe'; fi)" probe runtime
     printf 'Native executable: artifacts/%s/advkit\n' "$rid"
 fi

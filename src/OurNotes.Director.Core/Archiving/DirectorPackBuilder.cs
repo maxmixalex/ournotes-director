@@ -10,7 +10,6 @@ namespace OurNotes.Director.Core.Archiving;
 public static partial class DirectorPackBuilder
 {
     private const long DirectorAdvId = 9990001;
-    private const string DirectorAsset = "adv_director_millsage";
     private static readonly HashSet<string> SpecialFiles = new(StringComparer.Ordinal)
     {
         "story.json", "episode.json", "scene.json", "frames.json", "effects.json", "posteffects.json", "stills.json",
@@ -37,10 +36,11 @@ public static partial class DirectorPackBuilder
     public static async Task<JsonObject> BuildAsync(string archiveDirectory, string site = "intl", long baseAdvId = 10060,
         CancellationToken cancellationToken = default)
     {
+        var identity = await PackIdentityAsync(archiveDirectory, site, cancellationToken).ConfigureAwait(false);
         var siteDirectory = SiteDirectory(archiveDirectory, site);
         var storiesDirectory = Path.Combine(siteDirectory, "stories");
         if (!Directory.Exists(storiesDirectory))
-            return await PublishEmptyAsync(siteDirectory, site, "No downloaded stories for this site.", new JsonArray(), cancellationToken).ConfigureAwait(false);
+            return await PublishEmptyAsync(siteDirectory, site, "No downloaded stories for this site.", new JsonArray(), identity.Band, cancellationToken).ConfigureAwait(false);
 
         // Follow the published selection, not leftover files from an earlier archive invocation.
         var selectedIndex = Path.Combine(siteDirectory, "stories.json");
@@ -74,7 +74,7 @@ public static partial class DirectorPackBuilder
         if (manifests.Count == 0)
         {
             return await PublishEmptyAsync(siteDirectory, site,
-                "No normal ADV story with scene, story and episode resources is available.", skippedStories, cancellationToken).ConfigureAwait(false);
+                "No normal ADV story with scene, story and episode resources is available.", skippedStories, identity.Band, cancellationToken).ConfigureAwait(false);
         }
         manifests.Sort((left, right) => CompareIds(left["advId"], right["advId"]));
         var baseManifest = manifests.FirstOrDefault(manifest => Text(manifest["advId"]) == baseAdvId.ToString(CultureInfo.InvariantCulture)) ?? manifests[0];
@@ -183,7 +183,7 @@ public static partial class DirectorPackBuilder
 
         var commands = SyntheticCommands(media, effectInstances, actors);
         episode["advId"] = DirectorAdvId;
-        episode["asset"] = DirectorAsset;
+        episode["asset"] = identity.Asset;
         episode["commandCount"] = commands.Count;
         episode["commands"] = Clone(commands);
         episode["text"] = episodeText;
@@ -194,23 +194,26 @@ public static partial class DirectorPackBuilder
         episode["master"] ??= new JsonObject();
         var master = episode["master"]!.AsObject();
         master["_id"] = DirectorAdvId;
-        master["_advEpisodeAsset"] = DirectorAsset;
-        master["_sheetName"] = DirectorAsset;
+        master["_advEpisodeAsset"] = identity.Asset;
+        master["_sheetName"] = identity.Asset;
         master["_titleTextId"] = "";
         master["_playbackMode"] = 0;
         files["episode.json"] = await PutJsonAssetAsync(siteDirectory, episode, cancellationToken).ConfigureAwait(false);
 
         var commandNames = Strings(commands.Select(command => Text(command?["cmd"])).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
+        var titles = new JsonObject { ["zh-Hans"] = identity.Title, ["ja"] = identity.Title };
+        foreach (var language in languages.Select(pair => pair.Key)) titles[language] = identity.Title;
         var outputManifest = new JsonObject
         {
             ["format"] = "ournotes.story-manifest/2", ["advId"] = DirectorAdvId, ["root"] = "../", ["language"] = Clone(baseLanguage),
+            ["band"] = Clone(identity.Band),
             ["audio"] = chatSounds.Count > 0, ["audioFormat"] = chatSounds.Count > 0 ? Clone(baseManifest["audioFormat"]) : null,
             ["fonts"] = Clone(baseManifest["fonts"]) ?? JsonValue.Create("open"),
             ["requires"] = new JsonObject { ["commands"] = Clone(commandNames), ["cubismCore"] = true, ["motionSync"] = false },
             ["story"] = new JsonObject
             {
-                ["advId"] = DirectorAdvId, ["asset"] = DirectorAsset, ["sheetName"] = DirectorAsset, ["playbackMode"] = 0,
-                ["titles"] = new JsonObject { ["zh-Hans"] = "Millsage ADV Director Pack", ["ja"] = "Millsage ADV Director Pack" },
+                ["advId"] = DirectorAdvId, ["asset"] = identity.Asset, ["sheetName"] = identity.Asset, ["playbackMode"] = 0,
+                ["titles"] = titles,
                 ["groups"] = new JsonArray(), ["commands"] = Clone(commandNames), ["commandCount"] = commands.Count,
                 ["language"] = Clone(baseLanguage), ["languages"] = Strings(languages.Select(pair => pair.Key)),
             },
@@ -228,6 +231,7 @@ public static partial class DirectorPackBuilder
         var resources = new JsonObject
         {
             ["format"] = "millsage.adv-director-resources/2", ["site"] = site, ["baseAdvId"] = Clone(baseManifest["advId"]),
+            ["band"] = Clone(identity.Band),
             ["advId"] = DirectorAdvId, ["manifest"] = "director/manifest.json", ["sources"] = sources,
             ["stages"] = Strings(stages.Select(pair => pair.Key).Order(StringComparer.Ordinal)), ["stageDetails"] = StageInfo(stages),
             ["videos"] = videos, ["models"] = Clone(actors), ["actors"] = actors,
@@ -265,7 +269,7 @@ public static partial class DirectorPackBuilder
     private static JsonObject Skipped(string site, string reason) => new() { ["site"] = site, ["skipped"] = true, ["reason"] = reason };
 
     private static async Task<JsonObject> PublishEmptyAsync(string siteDirectory, string site, string reason,
-        JsonArray incompleteStories, CancellationToken cancellationToken)
+        JsonArray incompleteStories, JsonNode? band, CancellationToken cancellationToken)
     {
         // A successful selection change must not leave an older pack queryable. The empty
         // registry keeps list commands useful for a SimpleADV-only archive; there is no
@@ -273,6 +277,7 @@ public static partial class DirectorPackBuilder
         var resources = new JsonObject
         {
             ["format"] = "millsage.adv-director-resources/2", ["site"] = site, ["baseAdvId"] = null,
+            ["band"] = Clone(band),
             ["advId"] = DirectorAdvId, ["manifest"] = null, ["skipped"] = true, ["reason"] = reason,
         };
         foreach (var key in new[] { "sources", "stages", "stageDetails", "frames", "effects", "postEffects", "stills", "videos", "models", "actors", "cameraPresets", "visualPresets" })

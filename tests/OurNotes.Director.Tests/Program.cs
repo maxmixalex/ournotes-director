@@ -63,6 +63,8 @@ JsonObject Put(string text, string encoding)
 try
 {
     JsonOutputTests.Run(Assert);
+    ShotTemplateTests.Run(Assert);
+    NativeDependencyTests.Run(Assert);
     await ArchiveIndexTests.RunAsync(Assert);
     await ArchiveDiscoveryTests.RunAsync(Assert);
     ArchiveTransactionTests.Run(Assert);

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace OurNotes.Director.Core.Archiving;
@@ -41,13 +42,13 @@ public sealed partial class ArchiveDownloader
                     return (File: file, Rows: rows);
                 }));
                 var data = tables.ToDictionary(x => x.File, x => x.Rows, StringComparer.Ordinal);
-                var band = SelectBand(data);
+                var band = SelectBand(data, site, canonicalBand);
                 bands.Add(site, band);
                 canonicalBand ??= band;
                 var regionStories = SelectMasterStories(data, band);
                 regions[site] = new JsonObject
                 {
-                    ["band"] = new JsonObject { ["bandId"] = band.Id, ["characters"] = band.Characters.DeepClone() },
+                    ["band"] = BandMetadata(band),
                     ["stories"] = new JsonArray(regionStories.OrderBy(x => x.Key).Select(x => (JsonNode?)x.Value.DeepClone()).ToArray()),
                 };
                 foreach (var (id, story) in regionStories)
@@ -142,12 +143,7 @@ public sealed partial class ArchiveDownloader
                 ["format"] = "millsage.discovery/1",
                 ["generatedAt"] = DateTimeOffset.UtcNow.ToString("O"),
                 ["source"] = new JsonObject { ["metadataBase"] = _options.MetadataBase, ["version"] = version["regions"]?.DeepClone() },
-                ["band"] = new JsonObject
-                {
-                    ["bandTextId"] = _options.BandTextId,
-                    ["bandId"] = actualBand.Id,
-                    ["characters"] = actualBand.Characters.DeepClone(),
-                },
+                ["band"] = BandMetadata(actualBand),
                 ["regions"] = regions,
                 ["stories"] = new JsonArray(selected.OrderBy(x => x.Key).Select(x => (JsonNode?)x.Value).ToArray()),
                 ["indexes"] = indexes,
@@ -155,10 +151,39 @@ public sealed partial class ArchiveDownloader
             };
         }
 
-        private BandSelection SelectBand(Dictionary<string, JsonArray> data)
+        private BandSelection SelectBand(Dictionary<string, JsonArray> data, string site, BandSelection? canonicalBand)
         {
-            var row = data["MasterBand.json"].FirstOrDefault(x => Text(Pick(x, "_nameTextID", "_nameTextId", "nameTextID", "nameTextId")) == _options.BandTextId);
-            var bandId = Id(row) ?? throw new InvalidDataException($"Band '{_options.BandTextId}' was not found in MasterBand.");
+            // Resolve a display name once, then use the stable text ID in subsequent
+            // regions. A translated name need not appear in every region's table.
+            var selector = canonicalBand is null ? _bandSelector : canonicalBand.TextId.Length > 0
+                ? canonicalBand.TextId : canonicalBand.Id.ToString(CultureInfo.InvariantCulture);
+            var available = data["MasterBand.json"].OfType<JsonObject>().Where(row => Id(row) is > 0)
+                .OrderBy(row => Id(row)).ToArray();
+            JsonObject[] matches;
+            if (long.TryParse(selector, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedId))
+                matches = available.Where(row => Id(row) == requestedId).ToArray();
+            else
+            {
+                matches = available.Where(row => BandNames(row).Any(name => name.Equals(selector, StringComparison.OrdinalIgnoreCase))).ToArray();
+                if (matches.Length == 0)
+                {
+                    var normalized = NormalizeBandName(selector);
+                    matches = normalized.Length == 0 ? [] : available.Where(row =>
+                        BandNames(row).Any(name => NormalizeBandName(name) == normalized)).ToArray();
+                }
+            }
+            if (matches.Length != 1)
+            {
+                var choices = string.Join(", ", available.Select(row =>
+                    $"{Id(row)} ({BandToken(BandTextId(row), Id(row)!.Value)})"));
+                var problem = matches.Length == 0 ? "was not found" : "matches more than one band";
+                throw new ArgumentException($"Band '{selector}' {problem} in {site} MasterBand. Choose one band by ID or name. Available bands: {choices}.");
+            }
+            var selectedRow = matches[0];
+            var bandId = Id(selectedRow)!.Value;
+            var textId = BandTextId(selectedRow);
+            var token = BandToken(textId, bandId);
+            var displayName = DisplayNames(selectedRow).FirstOrDefault() ?? token;
             var characters = new JsonArray();
             var characterIds = new HashSet<long>();
             foreach (var character in data["MasterCharacter.json"].Where(x => Number(Pick(x, "_bandID", "_bandId", "bandID", "bandId")) == bandId))
@@ -176,8 +201,53 @@ public sealed partial class ArchiveDownloader
                     ["assetToken"] = (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? name[prefix.Length..] : name).ToLowerInvariant(),
                 });
             }
-            return new(bandId, characters, characterIds);
+            return new(bandId, textId, token, displayName, characters, characterIds);
         }
+
+        private static string BandTextId(JsonNode row) => Text(Pick(row, "_nameTextID", "_nameTextId", "nameTextID", "nameTextId"));
+
+        private static string BandToken(string textId, long id)
+        {
+            const string prefix = "Band_Name_";
+            return textId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? textId[prefix.Length..]
+                : textId.Length > 0 ? textId : id.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static IEnumerable<string> DisplayNames(JsonNode row)
+        {
+            static IEnumerable<string> Values(JsonNode? node)
+            {
+                if (node is JsonValue value && value.TryGetValue<string>(out var name) && !string.IsNullOrWhiteSpace(name)) yield return name;
+                else if (node is JsonObject names)
+                    foreach (var (_, child) in names)
+                        foreach (var text in Values(child)) yield return text;
+                else if (node is JsonArray array)
+                    foreach (var child in array)
+                        foreach (var text in Values(child)) yield return text;
+            }
+            foreach (var field in new[] { "_name", "name", "_displayName", "displayName", "_names", "names", "displayNames" })
+                foreach (var name in Values(row[field])) yield return name;
+        }
+
+        private static IEnumerable<string> BandNames(JsonNode row)
+        {
+            var textId = BandTextId(row);
+            if (textId.Length > 0)
+            {
+                yield return textId;
+                yield return BandToken(textId, Id(row)!.Value);
+            }
+            foreach (var name in DisplayNames(row)) yield return name;
+        }
+
+        private static string NormalizeBandName(string name) =>
+            new(name.Normalize(NormalizationForm.FormKC).Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+        private static JsonObject BandMetadata(BandSelection band) => new()
+        {
+            ["bandId"] = band.Id, ["bandTextId"] = band.TextId, ["token"] = band.Token,
+            ["name"] = band.Name, ["characters"] = band.Characters.DeepClone(),
+        };
 
         private static Dictionary<long, JsonObject> SelectMasterStories(Dictionary<string, JsonArray> data, BandSelection band)
         {
@@ -309,6 +379,6 @@ public sealed partial class ArchiveDownloader
             ["deepScan"] = _options.DeepScan,
         };
 
-        private sealed record BandSelection(long Id, JsonArray Characters, HashSet<long> CharacterIds);
+        private sealed record BandSelection(long Id, string TextId, string Token, string Name, JsonArray Characters, HashSet<long> CharacterIds);
     }
 }

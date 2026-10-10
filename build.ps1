@@ -20,6 +20,31 @@ try {
     if (-not $NoPublish) {
         & dotnet publish src/OurNotes.Director.Cli -c Release -r $Runtime -o "artifacts/$Runtime" --nologo
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & python scripts/stage-native.py --rid $Runtime --output "artifacts/$Runtime"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if ($Runtime -eq 'win-x64') {
+            $msysRoot = if ($env:MSYS2_ROOT) { $env:MSYS2_ROOT } else { 'C:/msys64' }
+            $msysBash = Join-Path $msysRoot 'usr/bin/bash.exe'
+            if (-not (Test-Path -LiteralPath $msysBash)) {
+                throw 'Media builds require MSYS2 UCRT64 (GCC, NASM, make, pkgconf, curl and Python). Set MSYS2_ROOT if it is installed outside C:/msys64.'
+            }
+            $previousMsystem = $env:MSYSTEM
+            $previousChere = $env:CHERE_INVOKING
+            try {
+                $env:MSYSTEM = 'UCRT64'
+                $env:CHERE_INVOKING = '1'
+                & $msysBash --login -c 'bash scripts/build-media.sh win-x64 artifacts/win-x64'
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } finally {
+                $env:MSYSTEM = $previousMsystem
+                $env:CHERE_INVOKING = $previousChere
+            }
+        } else {
+            & bash scripts/build-media.sh $Runtime "artifacts/$Runtime"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+        & "artifacts/$Runtime/advkit$(if ($Runtime -eq 'win-x64') { '.exe' })" probe runtime
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         Write-Host "Native executable: artifacts/$Runtime/advkit$(if ($Runtime -eq 'win-x64') { '.exe' })"
     }
 }

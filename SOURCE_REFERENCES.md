@@ -23,7 +23,7 @@ Windows 使用 `./advkit.exe`。`story commands` 保留原字段与行号；`nat
 | 10061 | 手机画面，搭配 `samples/game-chat.json` |
 | 10062 | CRI Lips 分析数据 |
 
-部分特效样例依赖原开发工作区中另行准备的 `references/effect-samples` 归档，例如剧情 10020；默认 millsage 归档不保证包含它们。
+部分特效样例依赖原开发工作区中另行准备的 `references/effect-samples` 归档，例如剧情 10020；默认 millsage 归档不保证包含它们。现在可以用同一个 `archive --band <ID|token>` 命令为其他乐队建立归档，普通剧情及相关舞台、特效、模型会随该选择生成索引和 Director Pack。
 
 ## 社区实现
 

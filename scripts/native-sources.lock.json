@@ -1,0 +1,129 @@
+{
+  "schema": "ournotes-native-sources/1",
+  "components": [
+    {
+      "id": "cubism-core",
+      "name": "Live2D Cubism Core",
+      "version": "6.0.1",
+      "engineVersion": 100663297,
+      "source": {
+        "file": "CubismSdkForNative-5-r.5.zip",
+        "sha256": "7ff3a4bbc19c0a8728965aa522ab77eb11b252916453e68a8a78d3b71188bb12",
+        "origin": "SDK archive tracked by this repository",
+        "downloadPage": "https://www.live2d.com/en/sdk/download/native/"
+      },
+      "runtimes": {
+        "win-x64": {
+          "entry": "CubismSdkForNative-5-r.5/Core/dll/windows/x86_64/Live2DCubismCore.dll",
+          "file": "native/Live2DCubismCore.dll",
+          "sha256": "d883c00d114fdf6cef61f439feb23e02d000fdf683e092803010470b80dfaf09",
+          "size": 249800,
+          "systemDependencies": [
+            "KERNEL32.dll"
+          ]
+        },
+        "linux-x64": {
+          "entry": "CubismSdkForNative-5-r.5/Core/dll/linux/x86_64/libLive2DCubismCore.so",
+          "file": "native/libLive2DCubismCore.so",
+          "sha256": "f741b043ae01a2821824412e3aa498b96564904fbf38cb40a9036f8372f3d77f",
+          "size": 124424,
+          "systemDependencies": [
+            "libc.so.6"
+          ]
+        }
+      },
+      "notices": [
+        {
+          "entry": "CubismSdkForNative-5-r.5/Core/LICENSE.md",
+          "file": "licenses/live2d/core/LICENSE.md",
+          "sha256": "b81e37048010ef1d336106151201a0323c3309cae44aecdedf57831fe88fa991",
+          "size": 520
+        },
+        {
+          "entry": "CubismSdkForNative-5-r.5/LICENSE.md",
+          "file": "licenses/live2d/core/SDK-LICENSE.md",
+          "sha256": "bfb10ff526e0efcd67b4191b334f3cab191981ff0fa705e7990677966efbb1b8",
+          "size": 3061
+        },
+        {
+          "entry": "CubismSdkForNative-5-r.5/NOTICE.md",
+          "file": "licenses/live2d/core/NOTICE.md",
+          "sha256": "698685c289f25e16ca4f65febe6a93583b638c2db0db3526894514a840aa2047",
+          "size": 4256
+        },
+        {
+          "entry": "CubismSdkForNative-5-r.5/Core/RedistributableFiles.txt",
+          "file": "licenses/live2d/core/RedistributableFiles.txt",
+          "sha256": "7fc84de68c192319cb0f8f724ba2c3aa374dc5385900af32d11ffe6a248c6b68",
+          "size": 2730
+        }
+      ]
+    },
+    {
+      "id": "motionsync-cri",
+      "name": "Live2D Cubism MotionSync Core CRI",
+      "version": "5.0.4",
+      "engineVersion": 83886084,
+      "source": {
+        "url": "https://cubism.live2d.com/motion-sync-plugin/bin/CubismSdkMotionSyncPluginForNative-5-r.1.zip",
+        "sha256": "c0bced3a71a7b6476d3a8af977940a98dd684d53d28c22b2d326e2078f867fdd",
+        "size": 22183128
+      },
+      "runtimes": {
+        "win-x64": {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/Core/CRI/dll/Windows/x86_64/Live2DCubismMotionSyncEngine_CRI.dll",
+          "file": "native/Live2DCubismMotionSyncEngine_CRI.dll",
+          "sha256": "dfdcb71970025bdf21edf39478b8570fe40249125b0fb3364fe9d50540076837",
+          "size": 541320,
+          "systemDependencies": [
+            "KERNEL32.dll"
+          ]
+        }
+      },
+      "notices": [
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/Core/CRI/LICENSE.md",
+          "file": "licenses/live2d/motionsync/LICENSE.md",
+          "sha256": "9888e8d0e69969430e4fbd800a243bacc915213b5a6f052bcf7b1fa7ecc80066",
+          "size": 531
+        },
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/Core/LICENSE.md",
+          "file": "licenses/live2d/motionsync/COMPONENTS-LICENSE.md",
+          "sha256": "f4858f29ec2c9e163a14b67871f6cdd91181d268932bfeef0b4bb87ab218fc4d",
+          "size": 1481
+        },
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/LICENSE.md",
+          "file": "licenses/live2d/motionsync/SDK-LICENSE.md",
+          "sha256": "c5d88e21c8ad4e01f085b7fb7f150b271499e00df364f3935d630ae5af0fd751",
+          "size": 2971
+        },
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/NOTICE.md",
+          "file": "licenses/live2d/motionsync/NOTICE.md",
+          "sha256": "381224e35d8e83b8b7782dbf7d47a360853f63fb5a9bdb93dd04cb7b79714175",
+          "size": 681
+        },
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/Core/README.md",
+          "file": "licenses/live2d/motionsync/README.md",
+          "sha256": "bd84b62f10d8360e812a3d1289620e407f671657bf2371ed007f9a0ebc2e413d",
+          "size": 1193
+        },
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/Core/CRIWARELOGO_1.png",
+          "file": "licenses/live2d/motionsync/CRIWARELOGO_1.png",
+          "sha256": "8663074dba874d4dc5eb57abb254bbb82041e77d14e642916ba0f0aaed153f74",
+          "size": 6153
+        },
+        {
+          "entry": "CubismSdkMotionSyncPluginForNative-5-r.1/Core/CRI/RedistributableFiles.txt",
+          "file": "licenses/live2d/motionsync/RedistributableFiles.txt",
+          "sha256": "7550b87e4e438a56c01e18479735aae8244c225c0618413c38add95af30e3dfc",
+          "size": 841
+        }
+      ]
+    }
+  ]
+}

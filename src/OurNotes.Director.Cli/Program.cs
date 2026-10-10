@@ -12,7 +12,7 @@ try
 {
     var options = new Dictionary<string, string>(); var positional = new List<string>();
     var flags = new HashSet<string> { "json", "with-voice", "overwrite", "help", "resume", "clean", "until-end", "debug", "no-deep" };
-    var allowed = new HashSet<string> { "archive", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries" };
+    var allowed = new HashSet<string> { "archive", "band", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries" };
     for (var i = 0; i < args.Length; i++)
     {
         var a = args[i];
@@ -33,9 +33,9 @@ try
     if (command is "" or "help" || options.ContainsKey("help"))
     {
         Console.WriteLine(JsonOutput.Serialize(JsonOutput.Object(("schema", "ournotes-director/1"), ("commands", new[] {
-            "archive [--out DIRECTORY] [--languages zh-Hans,ja] [--sites intl,jp] [--concurrency 8] [--no-deep] (discover, verify/download, index and build Director Pack; rerun to update incrementally)",
+            "archive [--band ID|NAME] [--out DIRECTORY] [--languages zh-Hans,ja] [--sites intl,jp] [--concurrency 8] [--no-deep] (one band; default millsage; accepts a MasterBand ID, name token or Band_Name_* text ID; discover, verify/download, index and build Director Pack; rerun to update incrementally)",
             "render validate|state|frame|contact|clip|sequence <project.json|legacy-shot.json> (one native ADV executor; game primitives and Director.Actor/Camera/Parameter/Scene; sequence supports --resume)",
-            "probe archive", "probe model <id>", "probe native <model-id> [--cubism-sdk PATH | --dll PATH]",
+            "probe archive", "probe runtime (load packaged Core, lip-sync engine and FFmpeg; no archive required)", "probe model <id>", "probe native <model-id> [--cubism-sdk PATH | --dll PATH]",
             "probe sound <sound-id> --adv ID (native PCM decode and loop metadata)",
             "probe camera <adv-id> (native main-camera definition and projection)",
             "story list|search [text]", "story show <adv-id>", "dialogue search <text>", "voice search <text>", "voice extract <voice-id> -o FILE",
@@ -63,8 +63,14 @@ try
         return 0;
     }
     if (command == "archive") return await ArchiveCommand.RunAsync(options, positional, json);
-    foreach (var key in new[] { "sites", "languages", "concurrency", "retries", "no-deep" })
+    foreach (var key in new[] { "band", "sites", "languages", "concurrency", "retries", "no-deep" })
         if (options.ContainsKey(key)) throw new ArgumentException($"--{key} is only supported by archive");
+    if (command == "probe" && verb == "runtime")
+    {
+        var runtime = NativeDependencies.Probe(Opt("dll"), Opt("cubism-sdk"), options.GetValueOrDefault("ffmpeg"), options.GetValueOrDefault("ffprobe"));
+        Console.WriteLine(JsonOutput.Serialize(JsonOutput.Object(("schema", "ournotes-director/1"), ("ok", true), ("result", runtime)), json));
+        return 0;
+    }
     // Both project files and adapted legacy Shot files use the native ADV executor.
     if(command=="render"){
         string projectPath=Required(2);
@@ -103,26 +109,19 @@ try
     }
     JsonNode[] SiteRows(string name) => archive.Rows(name).Where(r => S(r, "site") == site).ToArray();
     string Output() => Opt("out") is { Length: > 0 } s ? s : throw new ArgumentException("--out is required");
-    string NativeDll()
-    {
-        var sdk = Opt("cubism-sdk", Environment.GetEnvironmentVariable("CUBISM_NATIVE_SDK") ?? "");
-        if (sdk == "") {
-            sdk=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","CubismSdkForNative-5-r.5"));
-            if(!Directory.Exists(sdk))sdk=Path.GetFullPath(Path.Combine(archive.Root,"..","..","..","ournotes-director","CubismSdkForNative-5-r.5"));
-        }
-        return Opt("dll", Path.Combine(sdk,"Core","dll",OperatingSystem.IsLinux()?"linux":"windows","x86_64",OperatingSystem.IsLinux()?"libLive2DCubismCore.so":"Live2DCubismCore.dll"));
-    }
+    string NativeDll() => NativeDependencies.CoreLibrary(Opt("dll"), Opt("cubism-sdk"));
+    string MediaTool(string name) => NativeDependencies.MediaTool(name, options.GetValueOrDefault(name));
     if(command=="story"&&verb=="sequence")
-        result=DirectorSequence.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),Opt("script") is {Length:>0} script?script:throw new ArgumentException("sequence requires a project"),Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),int.Parse(Opt("supersample","2")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("clean"),options.ContainsKey("resume"),options.ContainsKey("until-end"),Opt("ffmpeg","ffmpeg"));
+        result=DirectorSequence.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),Opt("script") is {Length:>0} script?script:throw new ArgumentException("sequence requires a project"),Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),int.Parse(Opt("supersample","2")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("clean"),options.ContainsKey("resume"),options.ContainsKey("until-end"),MediaTool("ffmpeg"));
     else if(command=="story"&&verb is "frame" or "clip")
-        result=AdvStoryRenderer.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),verb,Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),Opt("codec","h264"),options.ContainsKey("clean"),options.ContainsKey("overwrite"),Opt("ffmpeg","ffmpeg"),int.Parse(Opt("supersample","2")),options.ContainsKey("until-end"),double.Parse(Opt("speed","1"),System.Globalization.CultureInfo.InvariantCulture));
+        result=AdvStoryRenderer.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),verb,Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),Opt("codec","h264"),options.ContainsKey("clean"),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),int.Parse(Opt("supersample","2")),options.ContainsKey("until-end"),double.Parse(Opt("speed","1"),System.Globalization.CultureInfo.InvariantCulture));
     else if(command=="story"&&verb=="contact")
-        result=AdvStoryRenderer.Contact(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),Output(),int.Parse(Opt("width","640")),int.Parse(Opt("height","360")),Opt("times","0,1,2").Split(',').Select(t=>double.Parse(t,System.Globalization.CultureInfo.InvariantCulture)).ToArray(),int.Parse(Opt("columns","3")),options.ContainsKey("clean"),options.ContainsKey("overwrite"),Opt("ffmpeg","ffmpeg"),int.Parse(Opt("supersample","2")));
+        result=AdvStoryRenderer.Contact(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),Output(),int.Parse(Opt("width","640")),int.Parse(Opt("height","360")),Opt("times","0,1,2").Split(',').Select(t=>double.Parse(t,System.Globalization.CultureInfo.InvariantCulture)).ToArray(),int.Parse(Opt("columns","3")),options.ContainsKey("clean"),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),int.Parse(Opt("supersample","2")));
     else if(command=="story"&&verb=="state")
     {
         double time=double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture);
         if(!double.IsFinite(time)||time<0||time>36000)throw new ArgumentException("Invalid time; maximum ten hours");
-        using var renderer=new AdvStoryRenderer(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),320,180,options.GetValueOrDefault("script"),Opt("ffmpeg","ffmpeg"),1);
+        using var renderer=new AdvStoryRenderer(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),320,180,options.GetValueOrDefault("script"),MediaTool("ffmpeg"),1);
         renderer.Frame((int)Math.Floor(time*30+1e-8));
         float[] V(System.Numerics.Vector3 v)=>[v.X,v.Y,v.Z];
         result=JsonOutput.Object(("frame", renderer.Loop.Frame), ("time", renderer.Loop.Frame/30d), ("row", renderer.Player.ListIndex), ("finished", renderer.Player.Finished), ("stage", renderer.Scene.StageName), ("camera", JsonOutput.Object(("position", V(renderer.Scene.Camera.Position)), ("euler", V(renderer.Scene.Camera.Euler)), ("Fov", renderer.Scene.Camera.Fov), ("ZoomRatio", renderer.Scene.Camera.ZoomRatio))), ("actors", renderer.Scene.Shown.Select(p=>JsonOutput.Object(("slot", p.Key), ("name", p.Value.Spec.Name), ("model", p.Value.Spec.Model), ("position", V(p.Value.Prefab.Root.WorldPosition)), ("EyeBlinkStopped", p.Value.EyeBlinkStopped), ("VoiceLipSyncActive", p.Value.VoiceLipSyncActive), ("PseudoLipSyncActive", p.Value.PseudoLipSyncActive), ("MouthOpen", p.Value.MouthOpen), ("LipSyncMissing", p.Value.LipSyncMissing)))), ("directorActors", renderer.Scene.DirectorState()), ("dialogue", JsonOutput.Object(("Text", renderer.Ui.Text), ("Speaker", renderer.Ui.Speaker), ("Typing", renderer.Ui.Typing))), ("frames", renderer.Frames.Snapshot()), ("chat", renderer.Ui.Chat?.Snapshot()), ("effects", renderer.Scene.Effects.ToDictionary(p=>p.Key,p=>p.Value.Snapshot())), ("stageEffects", renderer.Scene.StageEffectGroups.ToDictionary(p=>p.Key,p=>JsonOutput.Object(("group", p.Value.Current), ("effects", p.Value.Instances.Select(e=>e.Snapshot()))))), ("audio", renderer.Audio.Playing.Select(a=>JsonOutput.Object(("Id", a.Id), ("SoundId", a.Cue.SoundId), ("StartFrame", a.StartFrame), ("Repeat", a.Repeat), ("Gain", a.Gain)))));
@@ -131,16 +130,14 @@ try
         result = JsonOutput.Object(("root", archive.Root), ("stats", archive.Index("stats")), ("indexFingerprint", Hash(File.ReadAllBytes(Path.Combine(archive.Root, "index", "stats.json")))), ("capabilities", JsonOutput.Object(("query", true), ("verifiedExtraction", true), ("nativeCoreProbe", true), ("nativeRendering", true), ("gameAdvFidelity", false))), ("fingerprintScope", "stats.json only; not a full archive integrity check"));
     else if(command=="shot"&&verb=="init")
     {
-        var template=Opt("template","fullbody");if(template is not ("fullbody" or "portrait" or "duet"))throw new ArgumentException("--template: fullbody, portrait, duet");
-        var shot=new Shot{Actors=[new ActorSpec{Name="hotaru",Model=Opt("model","adv_live2d_hotaru_016_casual_spring_01")} ]};
-        if(template=="portrait")shot.Camera=new(){Zoom=2.5f,Y=-.24f};
-        if(template=="duet"){shot.Actors[0].X=.35f;shot.Actors.Add(new(){Name="natsume",Model="adv_live2d_natsume_017_casual_spring_01",X=.65f});}
+        var template=Opt("template","fullbody");
+        var shot=Shot.CreateTemplate(archive,site,template,Opt("model"),language);
         result=archive.Export(site,JsonOutput.SerializeToUtf8Bytes(shot,Shot.JsonOptions),Output(),JsonOutput.Object(("template", "transparent-character")),options.ContainsKey("overwrite"));
     }
     else if(command=="probe"&&verb=="sound")
     {
         if(Opt("adv")=="")throw new ArgumentException("--adv is required");
-        var story=new Story(archive,site,Opt("adv"));var cue=AdvAudio.Decode(archive,site,story.Manifest,story.Episode,long.Parse(Required(2),System.Globalization.CultureInfo.InvariantCulture),Opt("ffmpeg","ffmpeg"));
+        var story=new Story(archive,site,Opt("adv"));var cue=AdvAudio.Decode(archive,site,story.Manifest,story.Episode,long.Parse(Required(2),System.Globalization.CultureInfo.InvariantCulture),MediaTool("ffmpeg"));
         result=JsonOutput.Object(("SoundId", cue.SoundId), ("Category", cue.Category), ("Channels", cue.Channels), ("rate", AdvAudio.SampleRate), ("Samples", cue.Samples), ("duration", (double)cue.Samples/AdvAudio.SampleRate), ("peak", cue.Pcm.Max(v=>Math.Abs(v))), ("LoopStart", cue.LoopStart), ("LoopEnd", cue.LoopEnd));
     }
     else if(command=="probe"&&verb=="camera")
@@ -165,11 +162,11 @@ try
     }
     else if(command=="model"&&verb=="gallery")result=Gallery.Models(archive,site,NativeDll(),Required(2),Opt("kind","expression"),offset,Math.Min(limit,48),double.Parse(Opt("time","1"),System.Globalization.CultureInfo.InvariantCulture),Output(),options.ContainsKey("overwrite"));
     else if(command=="asset"&&verb=="gallery")result=Gallery.Assets(archive,site,Arg(2),offset,Math.Min(limit,48),Output(),options.ContainsKey("overwrite"));
-    else if(command=="media"&&verb=="probe")result=Media.Probe(Required(2),Opt("ffprobe","ffprobe"));
-    else if(command=="media"&&verb=="mux")result=Media.Mux(Required(2),Opt("audio") is {Length:>0} audio?audio:throw new ArgumentException("--audio is required"),Opt("subtitles") is {Length:>0} subs?subs:null,Output(),options.ContainsKey("overwrite"),Opt("ffmpeg","ffmpeg"),Opt("ffprobe","ffprobe"));
+    else if(command=="media"&&verb=="probe")result=Media.Probe(Required(2),MediaTool("ffprobe"));
+    else if(command=="media"&&verb=="mux")result=Media.Mux(Required(2),Opt("audio") is {Length:>0} audio?audio:throw new ArgumentException("--audio is required"),Opt("subtitles") is {Length:>0} subs?subs:null,Output(),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"));
     else if(command=="image"&&verb=="probe")result=ImageProbe.Inspect(Required(2));
     else if(command=="image"&&verb=="compare")result=ImageProbe.Compare(Required(2),Required(3));
-    else if(command=="media"&&verb=="clip")result=Media.Clip(Required(2),Output(),double.Parse(Opt("start","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration","5"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("overwrite"),Opt("ffmpeg","ffmpeg"),Opt("ffprobe","ffprobe"));
+    else if(command=="media"&&verb=="clip")result=Media.Clip(Required(2),Output(),double.Parse(Opt("start","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration","5"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"));
     else if ((command == "model" && verb == "show") || (command == "probe" && verb == "model") || (command is "motion" or "expression" && verb == "list"))
     {
         var model = archive.Model(site, Required(2));
@@ -192,7 +189,7 @@ try
             var ids=id=="all"?archive.Index("catalog")["stories"]!.AsArray().OfType<JsonNode>().Where(r=>S(r,"site")==site).Select(r=>S(r,"advId")).Distinct().ToArray():[id];
             result=JsonOutput.Object(("backend", "C# native ADV"), ("browser", false), ("fullFidelityVerified", false), ("scope", "Native resource initialization and frame zero; use story clip --until-end to validate the complete timeline"), ("stories", ids.Select(i=>{
                 try{var program=AdvProgram.Load(archive,site,i);
-                    try{using var renderer=new AdvStoryRenderer(archive,site,NativeDll(),i,Opt("lang","zh-Hans"),160,90,options.GetValueOrDefault("script"),Opt("ffmpeg","ffmpeg"),1);renderer.Frame(0);program=renderer.Player.Program;
+                    try{using var renderer=new AdvStoryRenderer(archive,site,NativeDll(),i,Opt("lang","zh-Hans"),160,90,options.GetValueOrDefault("script"),MediaTool("ffmpeg"),1);renderer.Frame(0);program=renderer.Player.Program;
                         return (object)JsonOutput.Object(("advId", i), ("compiled", true), ("initialized", true), ("PlaybackMode", program.PlaybackMode), ("initializeRows", program.Initialize.Length), ("bodyRows", program.Rows.Length), ("finalizeRows", program.Finalize.Length), ("required", program.RequiredCommands), ("implementedHandlers", renderer.Player.SupportedCommands), ("missing", renderer.Player.MissingCommands));}
                     catch(Exception ex) when(ex is NotSupportedException or InvalidDataException or ArgumentException){return JsonOutput.Object(("advId", i), ("compiled", true), ("initialized", false), ("required", program.RequiredCommands), ("reason", ex.Message));}
                 }
@@ -220,7 +217,7 @@ try
                 var plan = story.Plan(language == "" ? "zh-Hans" : language, offset, limit,
                     double.Parse(Opt("gap","0.4"),System.Globalization.CultureInfo.InvariantCulture),
                     double.Parse(Opt("silent-seconds","2"),System.Globalization.CultureInfo.InvariantCulture));
-                result = verb == "export-dialogue" ? story.ExportDialogue(plan,Output(),Opt("ffmpeg","ffmpeg")) : plan;
+                result = verb == "export-dialogue" ? story.ExportDialogue(plan,Output(),MediaTool("ffmpeg")) : plan;
             }
         }
         if (options.ContainsKey("out") && verb != "export-dialogue") result = archive.Export(site,JsonOutput.SerializeToUtf8Bytes(result,json),Output(),JsonOutput.Object(("command", "story " + verb), ("advId", id)),options.ContainsKey("overwrite"));
