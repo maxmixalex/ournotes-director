@@ -41,7 +41,8 @@ static class RuntimeDependencyTests
             ["CubismParameters"] = new JsonArray(new JsonObject { ["Parameter"] = new JsonObject { ["gameObject"] = "Parameters/ParamMouthOpenY" } }),
             ["Mappings"] = mappings,
             ["AudioParameters"] = audio,
-            ["PostProcessing"] = new JsonObject { ["BlendRatio"] = .5, ["Smoothing"] = 0 },
+            // MotionSync CRI requires Smoothing in the inclusive range 1..100.
+            ["PostProcessing"] = new JsonObject { ["BlendRatio"] = .5, ["Smoothing"] = 1 },
             ["EmphasisLevel"] = 0
         };
         using var analysis = new NativeMotionSync(motionSync, setting);

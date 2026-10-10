@@ -65,8 +65,9 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-nasm
             mingw-w64-ucrt-x86_64-pkgconf
-      - name: Cache verified media build and SDK downloads
-        uses: actions/cache@v4
+      - name: Restore verified media build and SDK downloads
+        id: dependency-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             artifacts/media-cache/downloads
@@ -81,6 +82,14 @@ jobs:
         run: dotnet publish src/OurNotes.Director.Cli -c Release -r ${{ matrix.rid }} -o artifacts/${{ matrix.rid }} --nologo
       - name: Stage native SDK runtimes and licenses
         run: python scripts/stage-native.py --rid ${{ matrix.rid }} --output artifacts/${{ matrix.rid }}
+      - name: Publish native runtime and graphics tests
+        run: dotnet publish tests/OurNotes.Director.NativeTests -c Release -r ${{ matrix.rid }} -o artifacts/native-tests --nologo
+      - name: Verify native SDK loading and lip-sync analysis
+        shell: pwsh
+        run: |
+          $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
+          & $testBinary --runtime-package "artifacts/${{ matrix.rid }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build and bundle media tools on Linux
         if: runner.os == 'Linux'
         run: bash scripts/build-media.sh ${{ matrix.rid }} artifacts/${{ matrix.rid }}
@@ -88,12 +97,19 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: bash scripts/build-media.sh ${{ matrix.rid }} artifacts/${{ matrix.rid }}
+      - name: Save verified media build and SDK downloads
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            artifacts/media-cache/downloads
+            artifacts/media-cache/bundle
+            artifacts/dependency-cache
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
       - name: Verify standalone native executable
         run: python tests/native-smoke.py --binary artifacts/${{ matrix.rid }}/${{ matrix.executable }}
       - name: Archive incremental end-to-end test
         run: python tests/archive-smoke.py --binary artifacts/${{ matrix.rid }}/${{ matrix.executable }}
-      - name: Publish native runtime and graphics tests
-        run: dotnet publish tests/OurNotes.Director.NativeTests -c Release -r ${{ matrix.rid }} -o artifacts/native-tests --nologo
       - name: Run native graphics tests with software OpenGL
         if: runner.os == 'Linux'
         env:
