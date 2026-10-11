@@ -3,4 +3,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../third_party/Spine.Runtime/Spine.Runtime.csproj" />
+  </ItemGroup>
 </Project>

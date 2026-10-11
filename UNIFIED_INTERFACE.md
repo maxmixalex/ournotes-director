@@ -2,7 +2,7 @@
 
 状态：统一原生执行路径已接通。original.json、free-character.json、mixed.json、millsage-demo.json 均可运行；四组 Director 指令、无留边、透明输出、旧 Shot 适配、sequence/resume 已实现。旧 Shot 经 ShotProject 转换后也进入 AdvStoryRenderer，不再通过旧 Renderer 输出。旧渲染类暂保留给内部回归和素材图集。
 
-## 唯一用户入口
+## 统一项目入口
 
 命令：
 
@@ -12,6 +12,7 @@ advkit render state project.json --time 4
 advkit render frame project.json --time 4 -o frame.png
 advkit render contact project.json --times 0,2,4 -o contact.png
 advkit render clip project.json --until-end --duration 60 -o clip.mp4
+advkit render clip project.json --duration 5 --codec cineform --cineform-quality film1 -o clip.mov
 advkit render sequence project.json -o frames --resume
 ```
 
@@ -21,6 +22,8 @@ validate 检查项目结构并执行资源初始化／首帧，不是全时间�
 
 原游戏指令不变。已有 `story` 命令保持兼容，与统一入口使用同一 AdvStoryRenderer。
 
+主页 Spine 的原 prefab、房间和角色导出使用 `home` 命令，见 [HOME_SPINE.md](HOME_SPINE.md)。它与 `render`／`story` 共用视频编码配置，但不使用本节的剧情 project 容器，不把 Spine 动画改写成 Live2D 剧情指令。
+
 ## 项目容器
 
 `format: "ournotes-director/project"` 与 `version: 1` 明确区分旧 Shot。
@@ -29,11 +32,30 @@ validate 检查项目结构并执行资源初始化／首帧，不是全时间�
 - `source.site` 默认 intl，`source.language` 默认 zh-Hans。归档根目录沿用 CLI/environment 解析，不写死在项目内。
 - `initialize`、`commands`、`finalize`：省略时使用原剧情相应段；明确 `[]` 清空。原有游戏行的 cmd 和参数字段不改名。
 - `text`：合并原文本表，沿用现有多语言格式。
-- `output`：width、height、supersample、codec、clean、letterbox。命令行显式选项优先，其次项目配置，再其次默认值。
+- `output`：width、height、supersample、codec、cineformQuality、clean、letterbox。命令行显式选项优先，其次项目配置，再其次默认值。
+- `output.codec`：`h264`、`cineform`（别名 `cfhd`）、`prores` 或 `ffv1`。CineForm 输出为 RGB + alpha MOV；对应命令行 `--codec cineform`。
+- `output.cineformQuality`：CineForm 的命名质量档位，默认 `film1`，更重视体积可用 `high`；对应命令行 `--cineform-quality`，完整档位见 [CINEFORM.md](CINEFORM.md)。
 - `output.letterbox`：`game` 保留原比例；`none` 使用整个输出画布，透明角色项目不强制加黑边。
 - 项目文件中的本地素材路径相对项目目录解析，输出命令路径相对当前工作目录解析。
 
 未来版本字段不静默接受；扩展行严格校验。原游戏行保留原数据字段，不将原始引擎未消费的字段误报为新接口错误。
+
+透明 CineForm 项目的输出部分可以写为：
+
+```json
+{
+  "output": {
+    "width": 1920,
+    "height": 1080,
+    "supersample": 2,
+    "codec": "cineform",
+    "cineformQuality": "film1",
+    "letterbox": "none"
+  }
+}
+```
+
+场景仍需使用 `Director.Scene` 设置透明背景并隐藏舞台；选择编码不会自动抠图。CineForm 要求宽度为 16 的倍数、高度为 8 的倍数且至少 32，无效尺寸明确拒绝，不自动改变取景。画面以 RGBA8 straight alpha 送入 12-bit 编码格式；CineForm 是有损中间文件，保留精确像素可使用 PNG 或 FFV1。Premiere Pro 2015 的格式支持依据和测试界限见 [CINEFORM.md](CINEFORM.md)。
 
 ## 必要扩展：四组指令
 

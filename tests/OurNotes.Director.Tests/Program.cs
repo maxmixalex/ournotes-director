@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using OurNotes.Director.Core;
 
 if(args.Contains("--director")){try{return DirectorIntegrationTests.Run();}catch(Exception e){Console.Error.WriteLine(e);return 1;}}
+if(args.Length==2&&args[0]=="--home-fixture")return HomeRenderingTests.WriteFixture(args[1]);
 if(args.Contains("--native-scene"))return NativeSceneTests.Run();
 if(args.Contains("--tmp-missing")){try{return TmpTextTests.MissingGlyphs();}catch(Exception e){Console.Error.WriteLine(e);return 1;}}
 if(args.Contains("--canvas-material")){try{return CanvasMaterialTests.Run();}catch(Exception e){Console.Error.WriteLine(e);return 1;}}
@@ -65,6 +66,10 @@ try
     JsonOutputTests.Run(Assert);
     ShotTemplateTests.Run(Assert);
     NativeDependencyTests.Run(Assert);
+    VideoEncodingTests.Run(Assert);
+    HomeCatalogTests.Run(Assert);
+    SpineTests.Run(Assert);
+    HomeRenderingTests.Run(Assert);
     await ArchiveIndexTests.RunAsync(Assert);
     await ArchiveDiscoveryTests.RunAsync(Assert);
     ArchiveTransactionTests.Run(Assert);

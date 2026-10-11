@@ -11,5 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/OurNotes.Director.Core/OurNotes.Director.Core.csproj" />
     <Compile Include="../OurNotes.Director.Tests/MaterialStateTests.cs" Link="MaterialStateTests.cs" />
+    <Compile Include="../OurNotes.Director.Tests/SpineTests.cs" Link="SpineTests.cs" />
+    <Compile Include="../OurNotes.Director.Tests/HomeRenderingTests.cs" Link="HomeRenderingTests.cs" />
   </ItemGroup>
 </Project>

@@ -116,12 +116,23 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: '1'
           GALLIUM_DRIVER: llvmpipe
         run: ./artifacts/native-tests/OurNotes.Director.NativeTests
+      - name: Verify home animation exports with bundled CineForm
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: >-
+          python tests/home-smoke.py
+          --binary artifacts/linux-x64/advkit
+          --fixture-writer artifacts/native-tests/OurNotes.Director.NativeTests
+          --ffmpeg artifacts/linux-x64/tools/ffmpeg
+          --ffprobe artifacts/linux-x64/tools/ffprobe
       - name: Package executable and documentation
         shell: pwsh
         run: |
           $rid = '${{ matrix.rid }}'
           $folder = "artifacts/$rid"
-          Copy-Item README.md, USER_GUIDE.md, UNIFIED_INTERFACE.md, SOURCE_REFERENCES.md, THIRD-PARTY.md, LICENSE $folder
+          Copy-Item README.md, USER_GUIDE.md, UNIFIED_INTERFACE.md, HOME_SPINE.md, CINEFORM.md, SOURCE_REFERENCES.md, THIRD-PARTY.md, LICENSE $folder
           Copy-Item samples "$folder/samples" -Recurse
           New-Item -ItemType Directory -Path packages -Force | Out-Null
           if ($IsWindows) {

@@ -91,7 +91,7 @@ else
         ./configure --prefix="$prefix" --disable-autodetect --disable-debug --disable-doc \
             --disable-ffplay --disable-shared --enable-static --enable-gpl --enable-libx264 --enable-zlib \
             --disable-network --disable-devices --disable-encoders \
-            --enable-encoder=libx264,prores_ks,ffv1,png,rawvideo,wrapped_avframe,aac,pcm_s16le,pcm_s24le,pcm_f32le,movtext,srt,subrip \
+            --enable-encoder=libx264,cfhd,prores_ks,ffv1,png,rawvideo,wrapped_avframe,aac,pcm_s16le,pcm_s24le,pcm_f32le,movtext,srt,subrip \
             --pkg-config-flags=--static --extra-cflags="-I$prefix/include" \
             --extra-ldflags="-L$prefix/lib $linker_flags"
         # Preserve assembler objects until linking; FFmpeg strips the final
@@ -120,7 +120,7 @@ to rebuild with GCC, make, NASM, pkg-config, Python 3 and a POSIX shell. Windows
 builds use MSYS2 UCRT64. The source archives are reused without network access.
 
 The supplied tools support local files/pipes and the codecs used by advkit,
-including H.264, ProRes, FFV1, PNG, AAC and PCM output, with FFmpeg's built-in
+including H.264, CineForm RGB+alpha, ProRes, FFV1, PNG, AAC and PCM output, with FFmpeg's built-in
 decoders. Hardware acceleration, capture devices and network protocols are
 disabled. --ffmpeg and --ffprobe can select another installation explicitly.
 NOTICE

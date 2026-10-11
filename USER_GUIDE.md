@@ -1,20 +1,21 @@
 # OurNotes Director 使用指南
 
-本工具用于下载和更新 Our Notes 素材归档，并制作 MAD 镜头：检索素材、回放原剧情、用游戏指令重新编排演出并导出视频。Windows 入口是 `advkit.exe`，Linux 入口是 `advkit`；两者来自同一套 C# 源码，发布程序不需要安装 .NET。
+本工具用于下载和更新 Our Notes 素材归档，并制作 MAD 镜头：检索素材、回放原剧情、用游戏指令重新编排演出，导出主页 Spine 的完整动画及独立角色视频。Windows 入口是 `advkit.exe`，Linux 入口是 `advkit`；两者来自同一套 C# 源码，发布程序不需要安装 .NET。
 
-实现边界是 **ournotes-player 的普通剧情演出及 MAD 导出**，不是通用 Unity 引擎。运行时为 C# + 原生 DLL + 离屏 OpenGL；不启动浏览器，不执行 JavaScript，不使用 Python。
+实现边界是 **ournotes-player 的普通剧情、已归档的主页 Spine 演出及 MAD 导出**，不是通用 Unity 引擎。运行时为 C# + 原生运行库 + 离屏 OpenGL；不启动浏览器，不执行 JavaScript，不使用 Python。
 
 目前可用，但尚未证明所有原剧情、所有参数组合都与网页画面一致。下文的“支持”表示已接入功能，不表示完整复刻了对应 Unity 组件。
 
 ## 统一制作入口
 
-新项目统一使用 `render <操作> project.json`。原游戏指令与自由摆放、模型参数、透明输出在同一个原生剧情执行器里运行。`story` 保留为直接打开原剧情 ID 的兼容入口。
+新编排项目统一使用 `render <操作> project.json`。原游戏指令与自由摆放、模型参数、透明输出在同一个原生剧情执行器里运行。`story` 保留为直接打开原剧情 ID 的兼容入口；主页 Spine 使用下文的 `home` 命令，详见 [主页指南](HOME_SPINE.md)。
 
 ```powershell
 ./advkit.exe render validate samples/unified/millsage-demo.json
 ./advkit.exe render frame samples/unified/millsage-demo.json --time 4 -o output/preview.png
 ./advkit.exe render clip samples/unified/millsage-demo.json --until-end --duration 60 -o output/mad.mp4
 ./advkit.exe render clip samples/unified/free-character.json --until-end --duration 10 -o output/character.mov
+./advkit.exe render clip samples/unified/free-character.json --duration 5 --codec cineform -o output/character-cineform.mov
 ./advkit.exe render sequence samples/unified/free-character.json --duration 3 -o output/frames
 ./advkit.exe render sequence samples/unified/free-character.json --duration 3 -o output/frames --resume
 ```
@@ -25,7 +26,7 @@
 
 帧序列输出 PNG 和 `render.json`；续渲校验输入、资源及已有帧散列，损坏帧会重写。续渲仍从头模拟并绘制，仅节省已有 PNG 的编码和写盘，不是模拟状态快照。帧序列固定 30 fps，不包含声音；有声音的交付使用 `clip`。
 
-透明项目设置 `Director.Scene.Values.background=[0,0,0,0]`、`stageVisible=false` 及 `output.letterbox="none"`，导出 ProRes 4444 或 FFV1。为保留 alpha，透明场景跳过原游戏场景／最终后处理；导演调色仍执行。MP4 不接受透明场景。
+透明项目设置 `Director.Scene.Values.background=[0,0,0,0]`、`stageVisible=false` 及 `output.letterbox="none"`，导出 CineForm RGB + alpha MOV、ProRes 4444 或 FFV1。CineForm 默认 `film1` 质量，`--cineform-quality high` 可减少体积；也可在项目 `output` 保存 `codec:"cineform"` 和 `cineformQuality:"film1"`。为保留 alpha，透明场景跳过原游戏场景／最终后处理；导演调色仍执行。MP4 不接受透明场景。格式与旧版 Premiere 的依据见 [CINEFORM.md](CINEFORM.md)。
 
 独立角色目前按 `order` 绘制在游戏场景之后；world 坐标能使用游戏相机，但不提供与舞台网格交错遮挡的完整深度排序。暂停角色动画时，参数覆盖也暂停求值；需要参数动画时保持角色更新。
 
@@ -117,6 +118,8 @@ Native AOT 发布支持 Windows x64 和 Linux x64，不需要安装 .NET / Node.
 | `--supersample 2` | 默认 2 倍超采样抗锯齿，允许 1–4；数值越高越慢、越占显存 |
 | `--clean` | 隐藏常规对话框、地点文字、字幕等 UI；不会清除所有剧情视觉层，手机、边框、插画等仍可能存在 |
 | `--codec h264` | 默认；MP4 预览，有损、无透明通道 |
+| `--codec cineform` | MOV / RGB + alpha；原生透明中间文件，默认 film1 |
+| `--cineform-quality high` | CineForm 质量档位；film1 平衡画质与体积，high 更重视体积 |
 | `--codec prores` | MOV / ProRes 4444，适合后期中间文件 |
 | `--codec ffv1` | MKV / FFV1，无损，文件较大 |
 | `--speed 0.5` | 统一变速，范围 0.25–4，音频保持音高；时间参数仍按原剧情时间填写 |
@@ -124,9 +127,38 @@ Native AOT 发布支持 Windows x64 和 Linux x64，不需要安装 .NET / Node.
 
 模拟固定 30 Hz。变速保留源帧，输出帧率为 `30 × speed`，例如半速为 15 fps；这不是补帧。剧情按原画布比例合成，16:9 输出可能保留上下留边。
 
-ProRes 不会自动去掉原剧情背景；透明镜头参照上面的统一项目。
+CineForm／ProRes 不会自动去掉原剧情背景；透明镜头参照上面的统一项目。CineForm 要求宽度为 16 的倍数、高度为 8 的倍数且至少 32，1920×1080 可直接使用；无效尺寸在渲染前报错并给出就近建议，不会自动变形。
 
 先用 640×360、2 倍超采样检查编排，再导出正式分辨率。CLI 的 JSON 会返回 GPU 名称、初始化时间和导出耗时；当前渲染速度依赖显卡和剧情复杂度，不保证实时。
+
+## 2a. 导出主页 Spine 动画
+
+主页资源由同一个 `archive` 命令随现有 story manifest 下载，不需要转换旧归档。先查看可用 spot 和角色：
+
+```powershell
+./advkit.exe home list
+./advkit.exe home show 40005
+./advkit.exe home animations 40005
+# 将 40005 换成当前归档中需要导出的 spot ID
+./advkit.exe home frame 40005 --time 2 --width 640 --height 360 -o output/home-preview.png
+./advkit.exe home export 40005 -o output/home-40005
+```
+
+`home export` 默认生成完整场景 `scene.mov`、每个角色的 `characters/<key>.mov` 和 `export.json`。使用 CineForm film1、1920×1080、30 fps、2 倍超采样；从第 0 帧输出到自然结束，非循环动画包含末帧，同一批次各文件共用完整场景的最长时长。`home export all` 导出归档内全部主页，`--character all` 只导出角色，`--character <key>` 只导出指定角色。
+
+```powershell
+# 整组 Spine 和各角色都输出透明 MOV
+./advkit.exe home export 40005 --no-background -o output/home-40005-alpha
+# 单角色；名称／key 取自 home show
+./advkit.exe home clip 40005 --character Hotaru --cineform-quality high -o output/hotaru.mov
+# 保持原场景位置，用于后期分层对齐
+./advkit.exe home export 40005 --character all --framing scene -o output/home-40005-layers
+./advkit.exe home sequence 40005 --character Hotaru -o output/hotaru-frames
+```
+
+角色默认透明，按整个输出区间固定 fit 构图；`--framing scene` 使用原场景相机。`--no-background` 仅移除 room 和全局后处理，保留 Spine 自身的背景、道具等部件。完整带背景场景按 HomeView 的启用状态使用原房间材质、Bloom 和色彩处理；独立透明角色不套全局后处理。add／multiply／screen 混合依赖下方画面，所以单角色换背景后不保证与原场景逐像素一致。
+
+`--time`、`--duration` 可剪取区间，`--animation` 可改用已存在的动画，`--loop` 强制循环，`--fps` 为 1–120。`frame/contact/sequence/clip` 均可选单角色。批量 export 和 sequence 需要新目录，home sequence 不支持 resume。主页渲染不需要 Cubism SDK，动画不包含点击对话或音轨；共享骨架不能可靠分离时会明确报不支持。命令和输出细节见 [HOME_SPINE.md](HOME_SPINE.md)。
 
 ## 3. 用游戏原语编写剧本
 
@@ -213,6 +245,7 @@ ProRes 不会自动去掉原剧情背景；透明镜头参照上面的统一项�
 | 功能 | 当前状态 |
 |---|---|
 | 原剧情、自定义指令 JSON、按时间抽帧／图集／视频 | 支持；整集仍需实际导出验证 |
+| 主页 Spine 完整动画、透明整组、每角色动画 | `home` 已接入 Spine 4.2、原房间／相机、固定取景、PNG／视频／批量目录；未知素材变体或不可靠的共享 slot 拆分明确拒绝 |
 | 角色装载、换装、进出场、动作、表情、循环、暂停、眨眼、视线、位置 | 已接入；依赖所选剧情内资源 |
 | 原舞台、Focus、Zoom、Pan/PanV2、Track/Pedestal、Shake/CameraShake | 已接入；按原场景预设和指令语义工作 |
 | BGM、SE、Voice、音量、48 kHz 混音、语音口型 | 已接入；缺资源或缺口型分析数据仍需处理 |
@@ -225,7 +258,7 @@ ProRes 不会自动去掉原剧情背景；透明镜头参照上面的统一项�
 | 分支与跳转 | `GoTo` 可跳转；`ChoiceSet` 当前为空处理器，`ChoiceShow` 未接入，不能自动遍历／选择全部分支 |
 | `Tilt`、`Role` | 已接入原游戏相机旋转 |
 | `Timeline` | 未接入；有效指令会拒绝 |
-| SimpleADV、主页／结算对话宿主 | 明确不在当前目标内 |
+| SimpleADV 的主页点击对话、结算对话与对应 UI 指令 | 尚未接入；主页场景和 Spine 动画可通过 `home` 导出 |
 | 任意 Unity 场景、脚本、材质、Shader Graph、组件导入 | 不支持，也不是建设目标 |
 | 整曲节奏剪辑、完整 NLE 时间线、任意音频自动嘴型 | 没有一站式实现；镜头素材可导出给后期软件 |
 
@@ -261,12 +294,20 @@ Shot 参数详见 [README 的 Shot JSON 部分](README.md#shot-json)。新编排
 
 `story export-dialogue` 可以输出 WAV、SRT 和原声包，但它按台词重新排时，不包含原剧情全部等待、转场和音效；不能用它代替完整剧情回放。
 
+已有透明视频可用 `media clip INPUT --start 0 --duration 3 --codec cineform -o output/plate.mov` 转为 CineForm，支持 `--cineform-quality`，保留源帧率、不带音频；不指定编码时仍为 ProRes HQ。`media mux` 支持 MOV，使用 PCM 24-bit 音频和可开关的 `mov_text` 字幕，并直接复制 CineForm／ProRes 等视频流，保留原视频的透明通道：
+
+```powershell
+./advkit.exe media mux output/hotaru.mov --audio dialogue.wav --subtitles dialogue.srt -o output/hotaru-audio.mov
+```
+
 ## 6. 报错、输出和清理
 
 - 命令输出为 JSON，进度在 stderr。列表通常默认 50 项，用 `--limit/--offset` 翻页。
 - 退出码：`0` 成功、`2` 输入错误、`3` 文件／数据／依赖错误、`4` 尚不支持、`130` 归档取消。必要时加 `--debug` 查看调用栈。
 - 缺模型、字体、语音或材质时，先确认剧情 ID、`--archive`、语言与脚本中的资源名是否匹配。
 - `Story did not finish within --duration`：增加上限，或用 `story state` 检查等待／跳转；不是把未完成片段当整集输出。
+- 主页独立角色无法分离：查看 `home show` 的 `exportSupported`、`slotFilters` 和 `unsupportedReason`，确认选择和原始部件归属；完整场景仍可单独尝试 `home clip`。
+- CineForm 尺寸不符：按报错显式选择宽 16／高 8 的倍数，例如 1088×1920；普通播放器显示黑底不代表 alpha 丢失，透明和 PR 2015 验收方法见 [CINEFORM.md](CINEFORM.md)。
 - 视频导出会临时写 `.adv-*.video/.f32/.mux`，正常退出及捕获到的失败会清理；解码缓存使用程序目录下的 `.ournotes-temp`。强制杀进程后可能残留，确认没有导出进程在运行再清理对应任务文件。
 - 用户生成的 PNG、MP4、MOV、MKV、台词包需要自行保留或删除。不要把 `archive`、`references`、`samples`、SDK、`bin` 当测试缓存删除。
 

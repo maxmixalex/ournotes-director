@@ -1,10 +1,10 @@
 # OurNotes Director / advkit
 
-**用户入口：[CLI 使用指南](USER_GUIDE.md)**。统一 `render` 接受原游戏指令及自由编排扩展，旧 Shot 自动适配到同一原生执行器。包含原剧情导出、自编剧本、常用参数、支持范围和已知限制。本文保留较详细的素材与 Shot 格式说明。
+**用户入口：[CLI 使用指南](USER_GUIDE.md)**。统一 `render` 接受原游戏指令及自由编排扩展，旧 Shot 自动适配到同一原生执行器。[主页 Spine 导出](HOME_SPINE.md)使用 `home`，支持完整场景及每个角色的动画；[CineForm 透明 MOV](CINEFORM.md)说明质量参数和 Premiere Pro 2015 的支持依据。本文保留较详细的素材与 Shot 格式说明。
 
 面向素材归档、检索和 MAD 镜头渲染的原生 CLI。Windows 和 Linux 共用 `src/` 下的同一套 C# 源码，由 `win-x64` / `linux-x64` 编译目标决定发布平台。正式发布使用 **.NET 10 Native AOT**，解压后直接运行 `advkit.exe` / `advkit`，用户机器不需要安装 .NET、Node.js 或 Python。
 
-已能生成真实模型的透明角色、动作/表情动画、多角色构图、舞台背景镜头、PNG 帧序列、ProRes 4444、FFV1 和 H.264。`archive` 联网更新素材，检索和渲染使用本地归档。固定 30 Hz 逐帧模拟，渲染速度不改变片长。
+已能生成真实模型的透明角色、动作/表情动画、多角色构图、舞台背景镜头，以及主页 Spine 的完整动画和独立角色动画。输出包括 PNG 帧序列、CineForm RGB + alpha MOV、ProRes 4444、FFV1 和 H.264。`archive` 联网更新素材，检索和渲染使用本地归档。剧情固定 30 Hz 逐帧模拟；主页默认 30 fps，可显式指定 1–120 fps，渲染速度不改变片长。
 
 ## 下载和运行
 
@@ -107,9 +107,26 @@ gallery 为 4 列图集，旁边 `.json` 按 row/column 给出表演或素材 ID
 
 可直接渲染 `samples/portrait.json`（10 秒近景、头部角度、镜头推近、表情转换）与 `samples/duet.json`（双角色、原始舞台背景、调色）。
 
+## 主页 Spine 完整动画与角色导出
+
+```powershell
+./advkit.exe home list
+./advkit.exe home show 40005
+./advkit.exe home animations 40005
+# ID 40005 是 Hotaru 主页示例，按 home list 选择已归档的 spot
+./advkit.exe home export 40005 -o output/home-40005
+./advkit.exe home export all -o output/all-homes
+# 去掉房间，输出透明整组 Spine 和每个独立角色
+./advkit.exe home export 40005 --no-background -o output/home-40005-alpha
+```
+
+批量默认生成 `scene.mov`、`characters/<key>.mov` 和 `export.json`，格式为 CineForm、film1 质量、1920×1080、30 fps、2 倍超采样。省略时长时从原动画第 0 帧输出到自然结束，非循环动画包含末帧；同一批次内场景和角色共用最长时长，便于对齐。`--character all` 只导出角色，`--character <key>` 只导出所选角色。
+
+角色默认按整个时间段固定取景并输出透明画面；需要原位置图层时用 `--framing scene`。`--no-background` 移除 room 和全局 volume，仍保留 Spine 自身的背景及道具。单独 RGBA 层在不同背景上的 add／multiply／screen 合成不保证与原场景逐像素一致。主页资源直接来自已有 story manifest，不需要迁移归档；该路径不依赖 Cubism SDK。完整命令、动画和角色拆分边界见 [HOME_SPINE.md](HOME_SPINE.md)。
+
 ## 剧情检查与原声剪辑包
 
-`story frame|clip` 直接执行游戏指令，支持舞台、透视相机、角色动作、对话、48 kHz 混音、语音口型、原始材质与后处理。剧情 10060 已完成整段视频导出；含手机聊天的 10061、10066、10078 已完成整段时间线运行。ChatWindow、ChatTalk、ChatStamp、ChatRead、ChatTyping 已接入原生手机画布，含来电、锁屏、emoji 与历史记录；输入动画和非等待模式切换已对照网页帧状态校验。SimpleADV（结算、主页短对话及其宿主场景）按需求排除；正常剧情的完整画面一致性尚未达成。使用 `story native-check` 检查资源初始化，`story clip --until-end` 验证整段播放；初始化成功不代表全部演出已验证。
+`story frame|clip` 直接执行游戏指令，支持舞台、透视相机、角色动作、对话、48 kHz 混音、语音口型、原始材质与后处理。剧情 10060 已完成整段视频导出；含手机聊天的 10061、10066、10078 已完成整段时间线运行。ChatWindow、ChatTalk、ChatStamp、ChatRead、ChatTyping 已接入原生手机画布，含来电、锁屏、emoji 与历史记录；输入动画和非等待模式切换已对照网页帧状态校验。主页场景及 Spine 动画已由 `home` 接入，SimpleADV 的主页点击对话、结算对话及其 UI 指令尚未支持；正常剧情的完整画面一致性尚未达成。使用 `story native-check` 检查资源初始化，`story clip --until-end` 验证整段播放；初始化成功不代表全部演出已验证。
 
 手机编排示例见 `samples/game-chat*.json`，使用 `story frame 10061 --script samples/game-chat-lock.json --time 11 -o output/chat.png`。`story state` 返回手机模式、消息数量、滚动位置、已读状态和输入框状态。示例只使用游戏指令原语；所需头像、贴图和字体必须存在于选定剧情的归档资源中。
 
@@ -155,7 +172,7 @@ gallery 为 4 列图集，旁边 `.json` 按 row/column 给出表演或素材 ID
 ./advkit.exe media mux output/shot.mp4 --audio output/dialogue-10060/dialogue.wav --subtitles output/dialogue-10060/dialogue.srt -o output/preview.mp4
 ```
 
-`media mux` 直接复制第一路视频，不重编码画面；用指定音频替换原音轨，过短补静音、过长按视频时长裁切。字幕为可开关轨道，不烧入画面。MP4 支持 H.264/HEVC + AAC；MKV 支持现有 ProRes/FFV1/H.264 等视频 + PCM，可保留透明视频编码。输出旁边 `.source.json` 记录来源哈希和处理策略。视频镜头与台词内容仍需自行编排，封装不代表已复现原剧情画面。
+`media mux` 直接复制第一路视频，不重编码画面；用指定音频替换原音轨，过短补静音、过长按视频时长裁切。字幕为可开关轨道，不烧入画面。MP4 支持 H.264/HEVC + AAC；MKV 支持现有 ProRes/FFV1/H.264 等视频 + PCM；MOV 支持 CineForm／ProRes 等视频 + PCM 24-bit 和 `mov_text` 字幕，复制 CineForm 视频流时保留 alpha。输出旁边 `.source.json` 记录来源哈希和处理策略。视频镜头与台词内容仍需自行编排，封装不代表已复现原剧情画面。
 
 现有演示 `output/ready-dialogue-preview.mp4` 是 10 秒 1080p/300 帧自编萤镜头 + 剧情 10060 开头两句原声 + 可选中文字幕。对应 `output/dialogue-10060-opening/` 保留台词包。这是输出流程示例，不是原剧情镜头或口型复现。
 
@@ -194,20 +211,22 @@ loop=true 是导演循环语义，false 在末尾保持。切换使用定长淡�
 ## 输出与检查
 
 - PNG/FFV1 为 RGBA8 straight alpha；内部预乘合成、超采样降采样后转换回 straight。PNG/图集/帧序列不需要 FFmpeg。
-- ProRes 为 4444 / yuva444p10le；H.264 为 yuv420p / CRF 16，无 alpha。10-bit 编码容器不代表内部渲染具有 10-bit 色深。
+- CineForm 为 `cfhd` / `gbrap12le` / MOV，原生携带 RGB + alpha。默认 `--cineform-quality film1` 平衡体积与画质，`high` 更重视体积。支持 `render clip`、`story clip`、`home clip|export` 和 `media clip`；统一项目可保存 `output.codec="cineform"` 与 `output.cineformQuality="film1"`。宽度须为 16 的倍数、高度须为 8 的倍数且至少 32，1920×1080 可用。不支持的尺寸明确拒绝，不自动缩放。详见 [CINEFORM.md](CINEFORM.md)。
+- ProRes 为 4444 / yuva444p10le；H.264 为 yuv420p / CRF 16，无 alpha。10／12-bit 编码格式不代表内部 RGBA8 渲染具有更高的源色深。CineForm 和 ProRes 均是有损中间文件。
 - 统一帧序列的 `render.json` 记录输入／依赖散列、GPU、尺寸和各帧散列；frame/clip 的信息返回到 stdout JSON，旧版逐帧几何 `.render.json` 不再生成。
-- sequence 从 000000.png 开始。`--resume` 校验 job 与每帧 hash，从头模拟状态，只跳过已验证的像素输出，补画损坏/缺失帧。输入、renderer、DLL 或 GPU 改变会拒绝续渲。
-- frame 的 time 取 floor(time×30)，必须小于 duration。GPU 在极少透明边缘可能出现舍入差异；当前同机验收容差为预乘 RGBA 每通道 1 个 8-bit 级，不声称跨进程/跨 GPU 字节完全一致。
-- 默认拒绝覆盖，显式 `--overwrite` 才替换；较短任务不能覆盖含有尾部旧帧的 sequence 目录。PNG/视频写临时文件再移动。clip 中断需重跑，只有 sequence 支持续渲。
+- `render sequence` 从 000000.png 开始。`--resume` 校验 job 与每帧 hash，从头模拟状态，只跳过已验证的像素输出，补画损坏/缺失帧。输入、renderer、DLL 或 GPU 改变会拒绝续渲。`home sequence` 使用 `frame-000000.png` 和 `animation.json`，需要新目录，不支持 resume。
+- 剧情／统一 frame 的 time 取 floor(time×30)；主页取 floor(time×fps)，详见主页指南。GPU 在极少透明边缘可能出现舍入差异；当前同机验收容差为预乘 RGBA 每通道 1 个 8-bit 级，不声称跨进程/跨 GPU 字节完全一致。
+- 默认拒绝覆盖，显式 `--overwrite` 才替换单个文件；较短任务不能覆盖含有尾部旧帧的 sequence 目录。PNG/视频写临时文件再移动。clip 中断需重跑，`render sequence` 支持续渲；`home export` 始终发布新目录。
 
 ```powershell
 ./advkit.exe image probe output/frame.png
 ./advkit.exe image compare output/frame.png output/another.png
 ./advkit.exe media probe output/shot.mov
 ./advkit.exe media clip "../素材/source.mp4" --start 12 --duration 3 -o output/plate.mov
+./advkit.exe media clip output/transparent.mkv --start 0 --duration 3 --codec cineform -o output/alpha-plate.mov
 ```
 
-image probe 返回 alpha 统计、可见边界、像素 hash；compare 返回误差指标，调用方应检查 withinOneLevel，退出码 0 仅表示完成比较。media clip 解码时间段为 ProRes HQ，保留源帧率，不带音频，用于提取 MV 镜头素材。
+image probe 返回 alpha 统计、可见边界、像素 hash；compare 返回误差指标，调用方应检查 withinOneLevel，退出码 0 仅表示完成比较。media clip 默认解码时间段为 ProRes HQ；显式 `--codec cineform` 可转换为 RGB + alpha MOV，并支持 `--cineform-quality`。两者保留源帧率、不带音频。
 
 ## 归档与机器接口
 

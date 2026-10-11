@@ -11,8 +11,8 @@ var json = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolic
 try
 {
     var options = new Dictionary<string, string>(); var positional = new List<string>();
-    var flags = new HashSet<string> { "json", "with-voice", "overwrite", "help", "resume", "clean", "until-end", "debug", "no-deep" };
-    var allowed = new HashSet<string> { "archive", "band", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries" };
+    var flags = new HashSet<string> { "json", "with-voice", "overwrite", "help", "resume", "clean", "until-end", "debug", "no-deep", "loop", "no-background" };
+    var allowed = new HashSet<string> { "archive", "band", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "cineform-quality", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries", "animation", "framing", "fps" };
     for (var i = 0; i < args.Length; i++)
     {
         var a = args[i];
@@ -39,8 +39,11 @@ try
             "probe sound <sound-id> --adv ID (native PCM decode and loop metadata)",
             "probe camera <adv-id> (native main-camera definition and projection)",
             "story list|search [text]", "story show <adv-id>", "dialogue search <text>", "voice search <text>", "voice extract <voice-id> -o FILE",
+            "home list | home show <spot-id> | home animations <spot-id> [--character KEY] (discover archived home scenes, grouped characters, source animations and durations)",
+            "home export <spot-id|all> -o NEW_DIRECTORY [--character KEY|all --codec cineform --cineform-quality film1 --fps 30 --width 1920 --height 1080 --supersample 2] (complete scene plus each transparent character; default full animation including its end pose)",
+            "home frame|contact|sequence|clip <spot-id> [--character KEY --animation NAME --loop --framing scene|fit --no-background --time 0 --duration SECONDS --fps 30] -o OUTPUT (native Spine; fitted characters use one stable crop over the animation; scene preserves camera coordinates)",
             "story commands <adv-id> [--offset 0 --limit 50] (lossless episode rows)",
-            "story frame|clip <adv-id> --time 0 --duration 10 --width 1920 --height 1080 --supersample 2 [--script FILE --clean --lang zh-Hans --codec h264|prores|ffv1] -o FILE (native game primitives; supersample 1..4)",
+            "story frame|clip <adv-id> --time 0 --duration 10 --width 1920 --height 1080 --supersample 2 [--script FILE --clean --lang zh-Hans --codec h264|cineform|prores|ffv1] -o FILE (native game primitives; supersample 1..4)",
             "story clip <adv-id> [--speed 1] --until-end [--duration 3600] -o FILE (duration is a safety cap; unfinished output is rejected)",
             "story contact <adv-id> --times 0,1,2,3 --columns 3 [--script FILE --width 640 --height 360 --clean] -o contact.png (one native session; JSON maps cells to exact frames)",
             "story state <adv-id> --time 0 [--script FILE --lang zh-Hans] (native timeline, actors, camera, dialogue and audio at a frame)",
@@ -54,12 +57,12 @@ try
             "asset verify|show <logical-path> --adv ID|--model ID", "commands list --adv ID"
             ,"shot init -o shot.json [--archive PATH] [--site intl] [--lang LANGUAGE] [--template fullbody|portrait|duet] [--model ID]", "shot validate <shot.json>", "model parameters <id>",
             "render frame <shot.json> --time 0 -o frame.png", "render contact <shot.json> -o contact.png",
-            "render sequence <shot.json> -o frames [--resume]", "render clip <shot.json> -o shot.mov --codec prores|ffv1|h264"
+            "render sequence <shot.json> -o frames [--resume]", "render clip <shot.json> -o shot.mov --codec cineform|prores|ffv1|h264 [--cineform-quality film1] (CineForm: RGB+alpha, width multiple of 16, height multiple of 8 and at least 32; film1 balances size/quality, high is smaller)"
             ,"model gallery <id> --kind expression|motion --limit 12 --time 1 -o gallery.png", "asset gallery [substring] --limit 12 -o assets.png",
-            "media probe <local-file>", "media clip <local-file> --start 0 --duration 5 -o plate.mov"
-            ,"media mux <video> --audio FILE [--subtitles FILE.srt] -o preview.mp4|master.mkv (copy video; audio padded/trimmed to video duration)"
+            "media probe <local-file>", "media clip <local-file> --start 0 --duration 5 [--codec prores|cineform --cineform-quality film1] -o plate.mov (default ProRes HQ; CineForm preserves alpha)"
+            ,"media mux <video> --audio FILE [--subtitles FILE.srt] -o preview.mp4|master.mkv|master.mov (copy video including CineForm alpha; audio padded/trimmed to video duration)"
             ,"image probe <png>", "image compare <first.png> <second.png>"
-        }), ("options", "--archive PATH --site intl --lang zh-Hans --speaker hotaru --with-voice --limit 50 --offset 0 --json --overwrite"), ("output", "JSON envelope; exit 0 success, 2 invalid request, 3 IO/data failure, 4 unsupported feature. Extract never overwrites without --overwrite."), ("rendering", "Native Cubism + offscreen OpenGL; 30Hz game-command simulation, original materials and postprocessing, PNG/ProRes/FFV1/H264, 1..4x supersampling. Complete game parity remains in progress; unsupported features fail explicitly.")), json));
+        }), ("options", "--archive PATH --site intl --lang zh-Hans --speaker hotaru --with-voice --limit 50 --offset 0 --json --overwrite"), ("output", "JSON envelope; exit 0 success, 2 invalid request, 3 IO/data failure, 4 unsupported feature. Extract never overwrites without --overwrite."), ("rendering", "Native Cubism and Spine 4.2 + offscreen OpenGL; 30Hz game-command simulation, home animations at configurable fps, original materials and postprocessing, PNG/CineForm/ProRes/FFV1/H264, 1..4x supersampling. Complete game parity remains in progress; unsupported features fail explicitly.")), json));
         return 0;
     }
     if (command == "archive") return await ArchiveCommand.RunAsync(options, positional, json);
@@ -81,6 +84,7 @@ try
         if(Archive.ReadJson(projectPath)["format"] is null&&!options.ContainsKey("until-end"))options.TryAdd("duration",Shot.Read(projectPath).Duration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if(options.ContainsKey("script"))throw new ArgumentException("A unified project already supplies the script; do not combine it with --script");
         foreach(string key in new[]{"width","height","supersample","codec"})if(project.Output[key] is {} value)options.TryAdd(key,value.ToString());
+        if(project.Output["cineformQuality"] is {} quality)options.TryAdd("cineform-quality",quality.ToString());
         if(project.Output["clean"]?.GetValue<bool>()==true)options.TryAdd("clean","true");
         options.TryAdd("site",project.Site);options.TryAdd("lang",project.Language);options["script"]=Path.GetFullPath(projectPath);
         command="story";verb=verb=="validate"?"native-check":verb;positional[2]=project.Adv;
@@ -111,10 +115,11 @@ try
     string Output() => Opt("out") is { Length: > 0 } s ? s : throw new ArgumentException("--out is required");
     string NativeDll() => NativeDependencies.CoreLibrary(Opt("dll"), Opt("cubism-sdk"));
     string MediaTool(string name) => NativeDependencies.MediaTool(name, options.GetValueOrDefault(name));
-    if(command=="story"&&verb=="sequence")
+    if(command=="home") result=HomeCommand.Run(archive,options.GetValueOrDefault("site"),verb,Arg(2),options);
+    else if(command=="story"&&verb=="sequence")
         result=DirectorSequence.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),Opt("script") is {Length:>0} script?script:throw new ArgumentException("sequence requires a project"),Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),int.Parse(Opt("supersample","2")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("clean"),options.ContainsKey("resume"),options.ContainsKey("until-end"),MediaTool("ffmpeg"));
     else if(command=="story"&&verb is "frame" or "clip")
-        result=AdvStoryRenderer.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),verb,Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),Opt("codec","h264"),options.ContainsKey("clean"),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),int.Parse(Opt("supersample","2")),options.ContainsKey("until-end"),double.Parse(Opt("speed","1"),System.Globalization.CultureInfo.InvariantCulture));
+        result=AdvStoryRenderer.Run(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),verb,Output(),int.Parse(Opt("width","1920")),int.Parse(Opt("height","1080")),double.Parse(Opt("time","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration",options.ContainsKey("until-end")?"3600":"10"),System.Globalization.CultureInfo.InvariantCulture),Opt("codec","h264"),options.ContainsKey("clean"),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),int.Parse(Opt("supersample","2")),options.ContainsKey("until-end"),double.Parse(Opt("speed","1"),System.Globalization.CultureInfo.InvariantCulture),Opt("cineform-quality",VideoEncoding.DefaultCineFormQuality));
     else if(command=="story"&&verb=="contact")
         result=AdvStoryRenderer.Contact(archive,site,NativeDll(),Required(2),Opt("lang","zh-Hans"),options.GetValueOrDefault("script"),Output(),int.Parse(Opt("width","640")),int.Parse(Opt("height","360")),Opt("times","0,1,2").Split(',').Select(t=>double.Parse(t,System.Globalization.CultureInfo.InvariantCulture)).ToArray(),int.Parse(Opt("columns","3")),options.ContainsKey("clean"),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),int.Parse(Opt("supersample","2")));
     else if(command=="story"&&verb=="state")
@@ -166,7 +171,7 @@ try
     else if(command=="media"&&verb=="mux")result=Media.Mux(Required(2),Opt("audio") is {Length:>0} audio?audio:throw new ArgumentException("--audio is required"),Opt("subtitles") is {Length:>0} subs?subs:null,Output(),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"));
     else if(command=="image"&&verb=="probe")result=ImageProbe.Inspect(Required(2));
     else if(command=="image"&&verb=="compare")result=ImageProbe.Compare(Required(2),Required(3));
-    else if(command=="media"&&verb=="clip")result=Media.Clip(Required(2),Output(),double.Parse(Opt("start","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration","5"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"));
+    else if(command=="media"&&verb=="clip")result=Media.Clip(Required(2),Output(),double.Parse(Opt("start","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration","5"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"),Opt("codec","prores"),Opt("cineform-quality",VideoEncoding.DefaultCineFormQuality));
     else if ((command == "model" && verb == "show") || (command == "probe" && verb == "model") || (command is "motion" or "expression" && verb == "list"))
     {
         var model = archive.Model(site, Required(2));

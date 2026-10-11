@@ -225,6 +225,15 @@ public sealed unsafe class OffscreenGl : IDisposable
     }
     void ClearTarget(){glDepthMask(1);glStencilMask(255);glClearStencil(0);glClear(0x4500);}
     public uint Upload(Pixels image){glGenTextures(1,out var t);textures.Add(t);TextureUnit(0,t);glTexParameteri(0x0DE1,0x2801,0x2601);glTexParameteri(0x0DE1,0x2800,0x2601);glTexParameteri(0x0DE1,0x2802,0x812F);glTexParameteri(0x0DE1,0x2803,0x812F);UpdateTexture(t,image);return t;}
+    public uint SolidCube(byte red,byte green,byte blue,byte alpha)
+    {
+        glGenTextures(1,out uint texture);textures.Add(texture);Fn<One>("glActiveTexture")(0x84C0);glBindTexture(0x8513,texture);
+        byte* color=stackalloc byte[]{red,green,blue,alpha};
+        for(uint face=0;face<6;face++)glTexImage2D(0x8515+face,0,0x8058,1,1,0,0x1908,0x1401,(nint)color);
+        glTexParameteri(0x8513,0x2801,0x2601);glTexParameteri(0x8513,0x2800,0x2601);
+        glTexParameteri(0x8513,0x2802,0x812F);glTexParameteri(0x8513,0x2803,0x812F);glTexParameteri(0x8513,0x8072,0x812F);
+        glBindTexture(0x8513,0);return texture;
+    }
     public uint UploadUnity(Pixels image,int filter,int wrapU,int wrapV,int mipCount)
     {
         if(filter is <0 or >2||wrapU is <0 or >2||wrapV is <0 or >2)throw new ArgumentException("Unsupported Unity texture sampler");
@@ -235,6 +244,14 @@ public sealed unsafe class OffscreenGl : IDisposable
         glTexParameteri(0x0DE1,0x2800,filter==0?0x2600:0x2601);
         glTexParameteri(0x0DE1,0x2801,mipCount>1?filter==0?0x2700:filter==1?0x2701:0x2703:filter==0?0x2600:0x2601);
         glTexParameteri(0x0DE1,0x2802,wrap[wrapU]);glTexParameteri(0x0DE1,0x2803,wrap[wrapV]);return texture;
+    }
+    public void SetTextureSampler(uint texture,int minFilter,int magFilter,int wrapU,int wrapV,bool generateMipmaps=false)
+    {
+        if(minFilter is not (0x2600 or 0x2601 or 0x2700 or 0x2701 or 0x2702 or 0x2703)||magFilter is not (0x2600 or 0x2601)||wrapU is not (0x2901 or 0x812F or 0x8370)||wrapV is not (0x2901 or 0x812F or 0x8370))throw new ArgumentException("Invalid OpenGL texture sampler");
+        TextureUnit(0,texture);
+        if(generateMipmaps)Fn<One>("glGenerateMipmap")(0x0DE1);
+        glTexParameteri(0x0DE1,0x2801,minFilter);glTexParameteri(0x0DE1,0x2800,magFilter);
+        glTexParameteri(0x0DE1,0x2802,wrapU);glTexParameteri(0x0DE1,0x2803,wrapV);
     }
     public void UpdateTexture(uint texture,Pixels image){TextureUnit(0,texture);fixed(byte* p=image.Rgba)glTexImage2D(0x0DE1,0,0x8058,image.Width,image.Height,0,0x1908,0x1401,image.Rgba.Length==0?0:(nint)p);}
     public void RepeatTexture(uint texture){TextureUnit(0,texture);glTexParameteri(0x0DE1,0x2802,0x2901);glTexParameteri(0x0DE1,0x2803,0x2901);}

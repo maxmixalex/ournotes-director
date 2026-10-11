@@ -104,6 +104,15 @@ public sealed class AdvPostFx
         var dst=Target("motionBlur",source.Width,source.Height);
         Blit("Hidden/Universal Render Pipeline/CameraMotionBlur",(int)N(b,"quality"),dst,new(){["_BlitTexture_TexelSize"]=Texel(source),["_SourceSize"]=Size(source),["_Intensity"]=[N(b,"intensity")],["_Clamp"]=[N(b,"clamp")],["_ViewProjM"]=motion!,["_PrevViewProjM"]=previousMotion!,["unity_MatrixInvVP"]=inverse,["_CameraDepthTexture_TexelSize"]=[1,1,1,1]},new(){["_BlitTexture"]=source.Texture,["_CameraDepthTexture"]=depth},0,"_ENABLE_ALPHA_OUTPUT");return dst;
     }
+    // Home scenes use the same colour/bloom chain but have no ADV camera or camera-depth effects.
+    public void RenderColor(JsonNode stack,int frame)
+    {
+        if(N(stack["DepthOfField"]!,"mode")!=0||N(stack["MotionBlur"]!,"intensity")>0||N(stack["AdvCurvedLens"]!,"intensity")>0)
+            throw new NotSupportedException("Home depth of field, motion blur and curved lens are unsupported.");
+        var source=gl.CurrentSurface;BuildLut(stack);var b=stack["Bloom"]!;
+        var bloom=N(b,"intensity")>0?Bloom(b,source):new Surface(black,0,1,1);
+        var output=Target("post",source.Width,source.Height);Uber(stack,source,bloom,output,frame);gl.CopySurface(output,source);
+    }
     public void Render(JsonNode stack,AdvCamera camera,int frame,float curvedLensRate=1)
     {
         var source=gl.CurrentSurface;AdvanceCamera(camera,frame);

@@ -96,15 +96,15 @@ public sealed class AdvStoryRenderer : IDisposable
         try{File.WriteAllBytes(temp,Png.Encode(new(outWidth,outHeight,pixels)));File.Move(temp,output,overwrite);}finally{if(File.Exists(temp))File.Delete(temp);}
         return JsonOutput.Object(("output", output), ("width", outWidth), ("height", outHeight), ("cells", cells), ("performance", JsonOutput.Object(("wallSeconds", wall.Elapsed.TotalSeconds), ("cpuSubmissionMilliseconds", renderer.Timings))));
     }
-    public static object Run(Archive archive,string site,string dll,string id,string language,string? script,string mode,string output,int width,int height,double time,double duration,string codec,bool clean,bool overwrite,string ffmpeg,int supersample=2,bool untilEnd=false,double speed=1)
+    public static object Run(Archive archive,string site,string dll,string id,string language,string? script,string mode,string output,int width,int height,double time,double duration,string codec,bool clean,bool overwrite,string ffmpeg,int supersample=2,bool untilEnd=false,double speed=1,string cineformQuality=VideoEncoding.DefaultCineFormQuality)
     {
         if(mode is not ("frame" or "clip"))throw new ArgumentException("Story output must be frame or clip");
         if(untilEnd&&mode!="clip")throw new ArgumentException("--until-end requires story clip");
         if(!double.IsFinite(speed)||speed<.25||speed>4)throw new ArgumentException("Export speed must be between 0.25 and 4");
         if(mode!="clip"&&speed!=1)throw new ArgumentException("--speed requires story clip");
         if(!double.IsFinite(time)||time<0||!double.IsFinite(duration)||duration<=0||time+duration>36000)throw new ArgumentException("Invalid time/duration; maximum ten hours");
-        if(codec is not ("h264" or "prores" or "ffv1"))throw new ArgumentException("Unknown video codec");
-        if(mode=="clip"&&codec=="h264"&&(width%2!=0||height%2!=0))throw new ArgumentException("H264 requires even dimensions");
+        codec=VideoEncoding.NormalizeCodec(codec);
+        if(mode=="clip"){VideoEncoding.Validate(codec,width,height,cineformQuality);VideoEncoding.ValidateOutputPath(codec,output);}
         output=Path.GetFullPath(output);if(File.Exists(output)&&!overwrite)throw new IOException("Output exists; use --overwrite");Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         string prefix=Path.Combine(Path.GetDirectoryName(output)!,".adv-"+Guid.NewGuid().ToString("N")),video=prefix+".video",audio=prefix+".f32",mux=prefix+".mux";
         Process? encoder=null;Task<string>? errors=null;int start=(int)Math.Floor(time*30+1e-8),count=(int)Math.Ceiling(duration*30),written=0;bool finished=false;var wall=Stopwatch.StartNew();double encodeMs=0,audioMs=0;
@@ -112,16 +112,14 @@ public sealed class AdvStoryRenderer : IDisposable
             using var renderer=new AdvStoryRenderer(archive,site,dll,id,language,width,height,script,ffmpeg,supersample);
             double initializationMs=wall.Elapsed.TotalMilliseconds;
             if(mode=="frame"){File.WriteAllBytes(mux,Png.Encode(renderer.Frame(start,clean)));File.Move(mux,output,overwrite);return JsonOutput.Object(("output", output), ("frame", start));}
-            var info=new ProcessStartInfo(ffmpeg){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardError=true};
-            string format=codec=="h264"?"mp4":codec=="prores"?"mov":"matroska";
-            string[] coding=codec switch{"prores"=>["-c:v","prores_ks","-profile:v","4","-pix_fmt","yuva444p10le"],"ffv1"=>["-c:v","ffv1","-level","3","-pix_fmt","bgra"],_=>["-c:v","libx264","-crf","16","-pix_fmt","yuv420p"]};
-            foreach(var a in new[]{"-v","error","-y","-f","rawvideo","-pixel_format","rgba","-video_size",$"{width}x{height}","-framerate",(30*speed).ToString("R",CultureInfo.InvariantCulture),"-i","pipe:0","-an"}.Concat(coding).Concat(new[]{"-f",format,video}))info.ArgumentList.Add(a);
+            var info=VideoEncoding.RawVideoStartInfo(ffmpeg,codec,width,height,30*speed,video,cineformQuality);
+            string format=VideoEncoding.Format(codec);
             encoder=Process.Start(info)??throw new IOException("Cannot start video encoder");errors=encoder.StandardError.ReadToEndAsync();
             void EncodeQueued(){var pixels=renderer.ReadQueuedFrame();long stamp=Stopwatch.GetTimestamp();encoder.StandardInput.BaseStream.Write(pixels.Rgba);encodeMs+=Stopwatch.GetElapsedTime(stamp).TotalMilliseconds;}
             var mixedPcm=new float[AdvAudio.SamplesPerFrame*2];
             using(var pcm=File.Create(audio))for(int i=0;i<count;i++){
                 renderer.QueueFrame(start+i,clean);if(renderer.PendingFrames>=3)EncodeQueued();
-                if(codec=="h264"&&renderer.Scene.DirectorTransparent)throw new ArgumentException("Transparent scenes require --codec prores or ffv1");
+                if(codec=="h264"&&renderer.Scene.DirectorTransparent)throw new ArgumentException("Transparent scenes require --codec cineform, prores, or ffv1");
                 long stamp=Stopwatch.GetTimestamp();renderer.Audio.MixFrame(mixedPcm);pcm.Write(MemoryMarshal.AsBytes(mixedPcm.AsSpan()));audioMs+=Stopwatch.GetElapsedTime(stamp).TotalMilliseconds;
                 written++;finished=renderer.Player.Finished;
                 if(i%30==0)Console.Error.WriteLine($"story render {i+1}/{count}");
@@ -137,7 +135,7 @@ public sealed class AdvStoryRenderer : IDisposable
             mergeArgs.AddRange(["-c:a",codec=="h264"?"aac":"pcm_s24le","-t",outputDuration.ToString("R",CultureInfo.InvariantCulture),"-f",format,mux]);
             foreach(var a in mergeArgs)merge.ArgumentList.Add(a);
             using var joined=Process.Start(merge)??throw new IOException("Cannot start audio mux");var err=joined.StandardError.ReadToEndAsync();joined.WaitForExit();if(joined.ExitCode!=0)throw new IOException(err.GetAwaiter().GetResult());File.Move(mux,output,overwrite);
-            return JsonOutput.Object(("output", output), ("frames", written), ("width", width), ("height", height), ("supersample", supersample), ("fps", 30*speed), ("speed", speed), ("sourceDuration", written/30d), ("duration", outputDuration), ("audioHz", 48000), ("finished", finished), ("performance", JsonOutput.Object(("Device", renderer.Device), ("initializationMilliseconds", initializationMs), ("wallSeconds", wall.Elapsed.TotalSeconds), ("framesPerSecond", written/wall.Elapsed.TotalSeconds), ("cpuSubmissionMilliseconds", renderer.Timings), ("encoderWriteMilliseconds", encodeMs), ("audioMixMilliseconds", audioMs))));
+            return JsonOutput.Object(("output", output), ("frames", written), ("width", width), ("height", height), ("supersample", supersample), ("fps", 30*speed), ("speed", speed), ("sourceDuration", written/30d), ("duration", outputDuration), ("audioHz", 48000), ("codec", codec), ("cineformQuality", codec=="cineform"?VideoEncoding.NormalizeCineFormQuality(cineformQuality):null), ("alpha", codec=="h264"?"none":"straight"), ("finished", finished), ("performance", JsonOutput.Object(("Device", renderer.Device), ("initializationMilliseconds", initializationMs), ("wallSeconds", wall.Elapsed.TotalSeconds), ("framesPerSecond", written/wall.Elapsed.TotalSeconds), ("cpuSubmissionMilliseconds", renderer.Timings), ("encoderWriteMilliseconds", encodeMs), ("audioMixMilliseconds", audioMs))));
         }finally{if(encoder is not null){if(!encoder.HasExited)encoder.Kill(true);encoder.Dispose();}foreach(var path in new[]{video,audio,mux})if(File.Exists(path))File.Delete(path);}
     }
 }

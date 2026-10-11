@@ -39,6 +39,12 @@ def check_package(directory, scratch, harness):
     rid = "win-x64" if windows else "linux-x64"
     executable = directory / ("advkit.exe" if windows else "advkit")
     check(executable.is_file(), "release contains the native CLI")
+    spine_license = directory / "licenses" / "Spine-Runtimes.txt"
+    spine_origin = directory / "licenses" / "Spine-Runtimes-Origin.md"
+    check(spine_license.is_file() and spine_origin.is_file()
+          and "Spine Runtimes License Agreement" in spine_license.read_text(encoding="utf-8")
+          and "e7dc1435fa4a0083ab431f1b28e083c14a1f5c68" in spine_origin.read_text(encoding="utf-8"),
+          "the compiled Spine runtime carries its separate license and pinned upstream origin")
     manifest = json.loads((directory / "native-dependencies.json").read_text(encoding="utf-8"))
     check(manifest["schema"] == "ournotes-native-dependencies/1" and manifest["runtimeIdentifier"] == rid,
           "native dependency manifest matches the target")
@@ -135,6 +141,48 @@ def check_package(directory, scratch, harness):
     check(len(decoded) == len(rgba) and max(abs(a - b) for a, b in zip(decoded[3::4], rgba[3::4])) <= 1,
           "ProRes 4444 retains transparent and partially transparent pixels")
 
+    cineform = scratch / "cineform 12-bit alpha.mov"
+    ff([*raw_input, "-frames:v", "6", "-vf", "format=rgba64le", "-c:v", "cfhd", "-pix_fmt", "gbrap12le", "-quality", "film1",
+        "-tag:v", "CFHD", "-threads", "1", cineform])
+    info = json.loads(run([ffprobe, "-v", "error", "-show_streams", "-of", "json", cineform], elsewhere, environment))
+    stream = info["streams"][0]
+    check(stream["codec_name"] == "cfhd" and stream["codec_tag_string"] == "CFHD"
+          and stream["pix_fmt"] == "gbrap12le" and int(stream["nb_frames"]) == 6,
+          "packaged CineForm creates a six-frame RGB 12-bit + alpha MOV with the native CFHD tag")
+    decoded = ff(["-xerror", "-i", cineform, "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
+    alpha_errors = [abs(a - b) for a, b in zip(decoded[3::4], (rgba * 6)[3::4])]
+    check(len(decoded) == len(rgba) * 6 and max(alpha_errors) <= 8
+          and sum(alpha_errors) / len(alpha_errors) <= 2,
+          "CineForm film1 fully decodes with bounded alpha error, including transparent and fractional coverage")
+    rgb_errors = [abs(a - b) for i, (a, b) in enumerate(zip(decoded, rgba * 6)) if i % 4 != 3]
+    check(max(rgb_errors) <= 4 and sum(rgb_errors) / len(rgb_errors) <= 1,
+          "CineForm keeps straight RGB values through semitransparent pixels without introducing a black matte")
+
+    # Constant alpha planes catch a swscale conversion bias hidden by ordinary
+    # lossy-error tolerances: direct RGBA8 -> GBRAP12 maps empty alpha to 8/4095.
+    endpoint_pixels = b"".join(bytes((192, 64, 128, alpha)) * (64 * 64) for alpha in (0, 128, 255))
+    endpoint_raw = scratch / "alpha endpoint rgba.bin"
+    endpoint_raw.write_bytes(endpoint_pixels)
+    endpoint_input = ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", "64x64", "-r", "30", "-i", endpoint_raw]
+    endpoint_lossless = scratch / "alpha endpoints.mkv"
+    ff([*endpoint_input, "-c:v", "ffv1", "-level", "3", "-pix_fmt", "bgra", "-threads", "1", endpoint_lossless])
+
+    def check_alpha_endpoints(decoded, description):
+        frame_bytes = 64 * 64 * 4
+        check(len(decoded) == frame_bytes * 3
+              and set(decoded[3:frame_bytes:4]) == {0}
+              and set(decoded[frame_bytes * 2 + 3::4]) == {255}
+              and max(abs(alpha - 128) for alpha in decoded[frame_bytes + 3:frame_bytes * 2:4]) <= 2
+              and max(abs(value - endpoint_pixels[i]) for i, value in enumerate(decoded) if i % 4 != 3) <= 2,
+              description)
+
+    for quality in ("film1", "high"):
+        endpoint_movie = scratch / f"CineForm {quality} alpha endpoints.mov"
+        ff([*endpoint_input, "-vf", "format=rgba64le", "-c:v", "cfhd", "-pix_fmt", "gbrap12le",
+            "-quality", quality, "-tag:v", "CFHD", "-threads", "1", endpoint_movie])
+        endpoint_decoded = ff(["-xerror", "-i", endpoint_movie, "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
+        check_alpha_endpoints(endpoint_decoded, f"CineForm {quality} preserves empty/opaque alpha endpoints and straight semitransparent RGB")
+
     png = scratch / "static alpha.png"
     ff([*raw_input, "-frames:v", "1", "-c:v", "png", "-threads", "1", png])
     decoded = ff(["-xerror", "-i", png, "-frames:v", "1", "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
@@ -159,26 +207,50 @@ def check_package(directory, scratch, harness):
     ff(["-xerror", "-i", clip, "-f", "null", "-"])
     probe = json.loads(run([ffprobe, "-v", "error", "-show_streams", "-of", "json", clip], elsewhere, environment))
     check(probe["streams"][0]["codec_name"] == "prores", "the CLI-produced ProRes clip completely decodes")
+    for quality in ("film1", "high"):
+        alpha_clip = scratch / f"CLI CineForm {quality} clip.mov"
+        quality_options = [] if quality == "film1" else ["--cineform-quality", quality]
+        info = json.loads(run([executable, "media", "clip", lossless, "--archive", archive, "--duration", "0.1",
+                               "--codec", "cineform", *quality_options, "-o", alpha_clip], elsewhere, environment))
+        check(info["ok"] and info["result"]["cineformQuality"] == quality and alpha_clip.is_file(),
+              "CLI media clip uses CineForm's default film1 quality" if quality == "film1"
+              else "CLI media clip accepts an explicit CineForm high quality")
+        clip_rgba = ff(["-xerror", "-i", alpha_clip, "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
+        check(len(clip_rgba) == len(rgba) * 3
+              and max(abs(a - b) for a, b in zip(clip_rgba[3::4], (rgba * 3)[3::4])) <= 10,
+              f"CLI CineForm {quality} trimming preserves all three frames and actual alpha")
+        endpoint_clip = scratch / f"CLI CineForm {quality} alpha endpoints.mov"
+        endpoint_info = json.loads(run([executable, "media", "clip", endpoint_lossless, "--archive", archive,
+                                       "--duration", "0.1", "--codec", "cineform", *quality_options, "-o", endpoint_clip], elsewhere, environment))
+        check(endpoint_info["ok"] and endpoint_clip.is_file(), f"CLI CineForm {quality} converts a lossless source with alpha endpoints")
+        endpoint_decoded = ff(["-xerror", "-i", endpoint_clip, "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
+        check_alpha_endpoints(endpoint_decoded, f"CLI CineForm {quality} preserves empty/opaque alpha and straight RGB through shared encoding")
     subtitles = scratch / "multilingual subtitles.srt"
     subtitle_text = "日本語の字幕・中文字幕"
     subtitles.write_text(f"1\n00:00:00,000 --> 00:00:00,350\n{subtitle_text}\n\n", encoding="utf-8")
-    for extension, audio_codec, subtitle_codec in (("mp4", "aac", "mov_text"), ("mkv", "pcm_s16le", "subrip")):
+    for extension, audio_codec, subtitle_codec in (("mp4", "aac", "mov_text"), ("mkv", "pcm_s16le", "subrip"), ("mov", "pcm_s24le", "mov_text")):
         muxed = scratch / ("CLI subtitles." + extension)
-        result = json.loads(run([executable, "media", "mux", video, "--archive", archive,
+        source_video = cineform if extension == "mov" else video
+        result = json.loads(run([executable, "media", "mux", source_video, "--archive", archive,
                                  "--audio", wav, "--subtitles", subtitles, "-o", muxed], elsewhere, environment))
         check(result["ok"] and muxed.is_file(), f"CLI media mux creates a subtitled {extension.upper()} using packaged tools")
         info = json.loads(run([ffprobe, "-v", "error", "-show_streams", "-of", "json", muxed], elsewhere, environment))
         streams = {stream["codec_type"]: stream for stream in info["streams"]}
         check(len(info["streams"]) == 3 and set(streams) == {"video", "audio", "subtitle"}
-              and streams["video"]["codec_name"] == "h264"
+              and streams["video"]["codec_name"] == ("cfhd" if extension == "mov" else "h264")
               and streams["audio"]["codec_name"] == audio_codec
               and streams["audio"]["sample_rate"] == "48000" and streams["audio"]["channels"] == 2
               and streams["subtitle"]["codec_name"] == subtitle_codec,
-              f"{extension.upper()} contains copied H.264, {audio_codec} stereo audio and a {subtitle_codec} subtitle track")
+              f"{extension.upper()} contains copied video, {audio_codec} stereo audio and a {subtitle_codec} subtitle track")
         ff(["-xerror", "-i", muxed, "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
         decoded_subtitles = ff(["-xerror", "-i", muxed, "-map", "0:s:0", "-c:s", "srt", "-f", "srt", "-"])
         check(subtitle_text in decoded_subtitles and "00:00:00,350" not in decoded_subtitles,
               f"{extension.upper()} audio/video fully decode and multilingual subtitles round trip with duration clipping")
+        if extension == "mov":
+            original_pixels = ff(["-xerror", "-i", source_video, "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
+            muxed_pixels = ff(["-xerror", "-i", muxed, "-pix_fmt", "rgba", "-f", "rawvideo", "-"], binary=True)
+            check(streams["video"]["pix_fmt"] == "gbrap12le" and muxed_pixels == original_pixels,
+                  "MOV audio/subtitle mux keeps CineForm RGB and alpha pixels exactly unchanged")
     if harness:
         print(run([harness, "--runtime-package", directory], elsewhere, environment), end="")
         check(True, "Native AOT harness loads the packaged SDK and exercises the supported lip-sync backend")

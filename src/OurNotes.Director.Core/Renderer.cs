@@ -44,7 +44,7 @@ public sealed class Renderer : IDisposable
     public object Provenance()=>JsonOutput.Object(("tool", "ournotes-director/2"), ("backend", "native-cubism-wgl-director"), ("device", Device), ("archive", archive.Root), ("site", site), ("shotPath", shotPath), ("shot", shot), ("shotSha256", Archive.Hash(File.ReadAllBytes(shotPath))), ("coreSha256", Archive.Hash(File.ReadAllBytes(dll))), ("coreVersion", actors.First().Core.Version), ("rendererSha256", BuildIdentity.Sha256()), ("models", actors.Select(a=>JsonOutput.Object(("id", a.Spec.Model), ("manifestSha256", Archive.Hash(File.ReadAllBytes(archive.SitePath(site,$"models/{a.Spec.Model}.json")))), ("files", a.Manifest["files"])))), ("backgroundSource", backgroundSource), ("simulationHz", 30), ("alpha", "straight"), ("color", "RGBA8 gamma-space"), ("fidelity", "director: standard Cubism compositing; not game Lit-URP/ADV pixel parity"));
     public void Dispose(){foreach(var a in actors)a.Dispose();gl.Dispose();}
 
-    public static object Run(Archive archive,string site,string dll,string mode,string shotPath,string output,double time,string codec,bool overwrite,bool resume,string ffmpeg="ffmpeg")
+    public static object Run(Archive archive,string site,string dll,string mode,string shotPath,string output,double time,string codec,bool overwrite,bool resume,string ffmpeg="ffmpeg",string cineformQuality=VideoEncoding.DefaultCineFormQuality)
     {
         var shot=Shot.Read(shotPath);shot.Validate();if(mode is not ("frame" or "sequence" or "clip" or "contact"))throw new ArgumentException("render mode must be frame, sequence, clip or contact");
         if(!double.IsFinite(time)||time<0||time>=shot.Duration)throw new ArgumentException("--time must lie inside the shot");
@@ -52,8 +52,8 @@ public sealed class Renderer : IDisposable
         var sidecar=sequence?Path.Combine(output,"render.json"):output+".render.json";
         if(!overwrite&&!resume&&(File.Exists(output)||Directory.Exists(output)||File.Exists(sidecar)))throw new IOException("Output exists; use --overwrite or --resume (sequence only)");
         if(resume&&!sequence)throw new ArgumentException("--resume is only available for PNG sequences");
-        if(mode=="clip"&&codec is not ("prores" or "ffv1" or "h264"))throw new ArgumentException("--codec must be prores, ffv1, or h264");
-        if(mode=="clip"&&codec=="h264"&&(shot.Background[3]<1||shot.Output.Width%2!=0||shot.Output.Height%2!=0))throw new ArgumentException("h264 requires opaque background color and even dimensions; use prores/ffv1 for alpha");
+        if(mode=="clip"){codec=VideoEncoding.NormalizeCodec(codec);VideoEncoding.Validate(codec,shot.Output.Width,shot.Output.Height,cineformQuality);VideoEncoding.ValidateOutputPath(codec,output);}
+        if(mode=="clip"&&codec=="h264"&&shot.Background[3]<1)throw new ArgumentException("h264 requires opaque background color; use cineform/prores/ffv1 for alpha");
         Directory.CreateDirectory(sequence?output:Path.GetDirectoryName(output)!);
         using var renderer=new Renderer(archive,site,dll,shot,shotPath);var provenance=renderer.Provenance();var jobHash=Archive.Hash(JsonOutput.SerializeToUtf8Bytes(provenance,Shot.JsonOptions));
         var hashes=new Dictionary<int,string>();
@@ -61,7 +61,7 @@ public sealed class Renderer : IDisposable
         else if(resume&&Directory.EnumerateFiles(output).Any())throw new InvalidDataException("Cannot resume without render.json");
         var watch=Stopwatch.StartNew();int total=(int)Math.Round(shot.Duration*30),written=0,reused=0;bool complete=false;string? temporary=null;Process? encoder=null;Task<string>? errorTask=null;
         if(sequence&&Directory.EnumerateFiles(output,"*.png").Any(p=>int.TryParse(Path.GetFileNameWithoutExtension(p),out var n)&&n>=total))throw new IOException("Sequence directory contains frames beyond this shot's duration; choose a new output directory");
-        object Report()=>JsonOutput.Object(("provenance", provenance), ("jobHash", jobHash), ("complete", complete), ("frameCount", mode is "frame"?1:mode=="contact"?Math.Min(9,total):total), ("simulationFrames", renderer.currentFrame+1), ("warmupFrames", shot.WarmupFrames), ("output", output), ("sidecar", sidecar), ("frameHashes", hashes), ("stateHashes", renderer.StateHashes), ("geometryHashes", renderer.GeometryHashes), ("written", written), ("reused", reused), ("elapsedSeconds", watch.Elapsed.TotalSeconds), ("codec", mode=="clip"?codec:null));
+        object Report()=>JsonOutput.Object(("provenance", provenance), ("jobHash", jobHash), ("complete", complete), ("frameCount", mode is "frame"?1:mode=="contact"?Math.Min(9,total):total), ("simulationFrames", renderer.currentFrame+1), ("warmupFrames", shot.WarmupFrames), ("output", output), ("sidecar", sidecar), ("frameHashes", hashes), ("stateHashes", renderer.StateHashes), ("geometryHashes", renderer.GeometryHashes), ("written", written), ("reused", reused), ("elapsedSeconds", watch.Elapsed.TotalSeconds), ("codec", mode=="clip"?codec:null), ("cineformQuality", mode=="clip"&&codec=="cineform"?VideoEncoding.NormalizeCineFormQuality(cineformQuality):null));
         void SaveReport(){var tmp=sidecar+".tmp";File.WriteAllText(tmp,JsonOutput.Serialize(Report(),Shot.JsonOptions));File.Move(tmp,sidecar,true);}
         void Atomic(string path,byte[] bytes){string tmp=path+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllBytes(tmp,bytes);File.Move(tmp,path,overwrite||resume);}finally{if(File.Exists(tmp))File.Delete(tmp);}}
         try{
@@ -73,10 +73,8 @@ public sealed class Renderer : IDisposable
             else{
                 if(mode=="clip"){
                     temporary=Path.Combine(Path.GetDirectoryName(output)!,Path.GetFileNameWithoutExtension(output)+"."+Guid.NewGuid().ToString("N")+Path.GetExtension(output));
-                    var start=new ProcessStartInfo(ffmpeg){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardError=true,RedirectStandardOutput=true};
-                    string[] a=["-v","error","-nostdin","-y","-f","rawvideo","-pixel_format","rgba","-video_size",$"{shot.Output.Width}x{shot.Output.Height}","-framerate","30","-i","pipe:0","-an"];
-                    foreach(var arg in a)start.ArgumentList.Add(arg);
-                    string[] encoding=codec switch{"prores"=>["-c:v","prores_ks","-profile:v","4","-pix_fmt","yuva444p10le","-f","mov"],"ffv1"=>["-c:v","ffv1","-level","3","-pix_fmt","bgra","-f","matroska"],_=>["-c:v","libx264","-crf","16","-preset","medium","-pix_fmt","yuv420p","-f","mp4"]};foreach(var arg in encoding)start.ArgumentList.Add(arg);start.ArgumentList.Add(temporary);encoder=Process.Start(start)??throw new IOException("Cannot start ffmpeg");errorTask=encoder.StandardError.ReadToEndAsync();_ = encoder.StandardOutput.ReadToEndAsync();
+                    var start=VideoEncoding.RawVideoStartInfo(ffmpeg,codec,shot.Output.Width,shot.Output.Height,30,temporary,cineformQuality);
+                    encoder=Process.Start(start)??throw new IOException("Cannot start ffmpeg");errorTask=encoder.StandardError.ReadToEndAsync();
                 }
                 for(int f=0;f<total;f++){
                     string path=Path.Combine(output,$"{f:D6}.png");if(sequence&&resume&&hashes.TryGetValue(f,out var hash)&&File.Exists(path)&&Archive.Hash(File.ReadAllBytes(path))==hash){renderer.Advance(f);reused++;continue;}

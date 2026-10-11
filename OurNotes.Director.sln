@@ -15,6 +15,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OurNotes.Director.NativeTests", "tests\OurNotes.Director.NativeTests\OurNotes.Director.NativeTests.csproj", "{F50663B8-82BF-43D2-818F-0F2A59A48FA3}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "third_party", "third_party", "{0DC175A4-010F-A5A8-72A9-B7A5E3C716E6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Spine.Runtime", "third_party\Spine.Runtime\Spine.Runtime.csproj", "{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -73,6 +77,18 @@ Global
 		{F50663B8-82BF-43D2-818F-0F2A59A48FA3}.Release|x64.Build.0 = Release|Any CPU
 		{F50663B8-82BF-43D2-818F-0F2A59A48FA3}.Release|x86.ActiveCfg = Release|Any CPU
 		{F50663B8-82BF-43D2-818F-0F2A59A48FA3}.Release|x86.Build.0 = Release|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Debug|x64.Build.0 = Debug|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Debug|x86.Build.0 = Debug|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Release|x64.ActiveCfg = Release|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Release|x64.Build.0 = Release|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Release|x86.ActiveCfg = Release|Any CPU
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -82,5 +98,6 @@ Global
 		{EAEC8C9B-0FC9-448C-BBE1-2776663050A4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{B59F13F3-F64A-4C74-9608-97D8B4097620} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{F50663B8-82BF-43D2-818F-0F2A59A48FA3} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{D3FAC168-D6FC-4929-A3C3-0ABF9B44A9EA} = {0DC175A4-010F-A5A8-72A9-B7A5E3C716E6}
 	EndGlobalSection
 EndGlobal

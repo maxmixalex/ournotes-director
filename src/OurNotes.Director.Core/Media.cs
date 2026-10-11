@@ -29,11 +29,12 @@ public static class Media
         if(new[]{video,audio,subtitles}.Any(p=>string.Equals(p,output,StringComparison.OrdinalIgnoreCase)))throw new ArgumentException("Output must differ from source files");
         if(!overwrite&&(File.Exists(output)||File.Exists(output+".source.json")))throw new IOException("Output exists");
         var extension=Path.GetExtension(output).ToLowerInvariant();
-        if(extension is not (".mp4" or ".mkv"))throw new ArgumentException("media mux outputs .mp4 or .mkv");
+        if(extension is not (".mp4" or ".mkv" or ".mov"))throw new ArgumentException("media mux outputs .mp4, .mkv, or .mov");
         var info=Probe(video,ffprobe);
         var v=info.GetProperty("streams").EnumerateArray().FirstOrDefault(s=>s.GetProperty("codec_type").GetString()=="video");
         if(v.ValueKind==JsonValueKind.Undefined)throw new ArgumentException("No video stream");
         if(extension==".mp4"&&v.GetProperty("codec_name").GetString() is not ("h264" or "hevc"))throw new ArgumentException("Use .mkv for this video codec; .mp4 mux supports H.264/HEVC");
+        if(extension==".mov"&&v.GetProperty("codec_name").GetString() is not ("cfhd" or "prores" or "h264" or "hevc"))throw new ArgumentException(".mov mux supports CineForm, ProRes, H.264, or HEVC; use .mkv for this codec");
         if(!Probe(audio,ffprobe).GetProperty("streams").EnumerateArray().Any(s=>s.GetProperty("codec_type").GetString()=="audio"))throw new ArgumentException("No audio stream");
         var durationText=v.TryGetProperty("duration",out var streamDuration)?streamDuration.GetString():null;
         if(durationText is null or "N/A")durationText=info.GetProperty("format").GetProperty("duration").GetString();
@@ -52,8 +53,8 @@ public static class Media
                 arguments.AddRange(["-i",clippedSubtitles]);
             }
             arguments.AddRange(["-map","0:v:0","-map","1:a:0"]);
-            if(subtitles is not null)arguments.AddRange(["-map","2:s:0","-c:s",extension==".mp4"?"mov_text":"srt"]);
-            arguments.AddRange(["-c:v","copy","-af","apad,atrim=duration="+length,"-ar","48000","-ac","2","-c:a",extension==".mp4"?"aac":"pcm_s16le"]);
+            if(subtitles is not null)arguments.AddRange(["-map","2:s:0","-c:s",extension is ".mp4" or ".mov"?"mov_text":"srt"]);
+            arguments.AddRange(["-c:v","copy","-af","apad,atrim=duration="+length,"-ar","48000","-ac","2","-c:a",extension==".mp4"?"aac":extension==".mov"?"pcm_s24le":"pcm_s16le"]);
             if(extension==".mp4")arguments.AddRange(["-b:a","256k","-movflags","+faststart"]);
             arguments.AddRange(["-t",length,"-avoid_negative_ts","disabled",temporary]);
             Run(ffmpeg,arguments);
@@ -61,7 +62,7 @@ public static class Media
         }
         finally {if(File.Exists(temporary))File.Delete(temporary);if(File.Exists(clippedSubtitles))File.Delete(clippedSubtitles);}
         static string Fingerprint(string path){using var stream=File.OpenRead(path);return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));}
-        var result=JsonOutput.Object(("output", output), ("duration", duration), ("video", JsonOutput.Object(("path", video), ("sha256", Fingerprint(video)), ("codec", "copy"))), ("audio", JsonOutput.Object(("path", audio), ("sha256", Fingerprint(audio)), ("policy", "Replace original audio; pad silence or trim to video duration"), ("codec", extension==".mp4"?"aac":"pcm_s16le"))), ("subtitles", subtitles is null?null:JsonOutput.Object(("path", subtitles), ("sha256", Fingerprint(subtitles)), ("mode", "selectable track; not burned in"))));
+        var result=JsonOutput.Object(("output", output), ("duration", duration), ("video", JsonOutput.Object(("path", video), ("sha256", Fingerprint(video)), ("codec", "copy"))), ("audio", JsonOutput.Object(("path", audio), ("sha256", Fingerprint(audio)), ("policy", "Replace original audio; pad silence or trim to video duration"), ("codec", extension==".mp4"?"aac":extension==".mov"?"pcm_s24le":"pcm_s16le"))), ("subtitles", subtitles is null?null:JsonOutput.Object(("path", subtitles), ("sha256", Fingerprint(subtitles)), ("mode", "selectable track; not burned in"))));
         File.WriteAllText(output+".source.json",JsonOutput.Serialize(result,Shot.JsonOptions));return result;
     }
     public static string ClipSrt(string source,double duration)
@@ -88,12 +89,19 @@ public static class Media
         if(count==0)throw new ArgumentException("No subtitle cues within video duration");
         return result.ToString();
     }
-    public static object Clip(string path,string output,double start,double duration,bool overwrite,string ffmpeg,string ffprobe)
+    public static object Clip(string path,string output,double start,double duration,bool overwrite,string ffmpeg,string ffprobe,string codec="prores",string cineformQuality=VideoEncoding.DefaultCineFormQuality)
     {
         path=Path.GetFullPath(path);output=Path.GetFullPath(output);if(start<0||duration<=0||!double.IsFinite(start)||!double.IsFinite(duration))throw new ArgumentException("Invalid media start/duration");if(!overwrite&&(File.Exists(output)||File.Exists(output+".source.json")))throw new IOException("Output exists");
-        if(!output.EndsWith(".mov",StringComparison.OrdinalIgnoreCase))throw new ArgumentException("media clip outputs ProRes .mov");var info=Probe(path,ffprobe);if(!info.GetProperty("streams").EnumerateArray().Any(s=>s.GetProperty("codec_type").GetString()=="video"))throw new ArgumentException("No video stream");
+        codec=VideoEncoding.NormalizeCodec(codec);
+        if(codec is not ("prores" or "cineform"))throw new ArgumentException("media clip supports --codec prores or cineform");
+        if(!output.EndsWith(".mov",StringComparison.OrdinalIgnoreCase))throw new ArgumentException("media clip outputs a .mov file");
+        if(string.Equals(path,output,StringComparison.OrdinalIgnoreCase))throw new ArgumentException("Output must differ from source file");
+        var info=Probe(path,ffprobe);var video=info.GetProperty("streams").EnumerateArray().FirstOrDefault(s=>s.GetProperty("codec_type").GetString()=="video");if(video.ValueKind==JsonValueKind.Undefined)throw new ArgumentException("No video stream");
+        VideoEncoding.Validate(codec,video.GetProperty("width").GetInt32(),video.GetProperty("height").GetInt32(),cineformQuality);
         var length=double.Parse(info.GetProperty("format").GetProperty("duration").GetString()!,CultureInfo.InvariantCulture);if(start+duration>length+.001)throw new ArgumentException("Requested media range exceeds source duration");
-        Directory.CreateDirectory(Path.GetDirectoryName(output)!);string temp=Path.Combine(Path.GetDirectoryName(output)!,Guid.NewGuid()+".mov");try{Run(ffmpeg,["-v","error","-nostdin","-y","-i",path,"-ss",start.ToString(CultureInfo.InvariantCulture),"-t",duration.ToString(CultureInfo.InvariantCulture),"-map","0:v:0","-an","-c:v","prores_ks","-profile:v","3","-pix_fmt","yuv422p10le",temp]);File.Move(temp,output,overwrite);}finally{if(File.Exists(temp))File.Delete(temp);}
-        var result=JsonOutput.Object(("source", path), ("start", start), ("duration", duration), ("output", output), ("codec", "prores_ks HQ"), ("audio", false), ("sourceLength", new FileInfo(path).Length), ("sourceLastWriteUtc", File.GetLastWriteTimeUtc(path)));File.WriteAllText(output+".source.json",JsonOutput.Serialize(result,Shot.JsonOptions));return result;
+        // Preserve the existing ProRes HQ default; CineForm is always RGB+alpha.
+        string[] encoding=codec=="cineform"?VideoEncoding.Arguments(codec,cineformQuality):["-c:v","prores_ks","-profile:v","3","-pix_fmt","yuv422p10le"];
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);string temp=Path.Combine(Path.GetDirectoryName(output)!,Guid.NewGuid()+".mov");try{Run(ffmpeg,new[]{"-v","error","-nostdin","-y","-i",path,"-ss",start.ToString(CultureInfo.InvariantCulture),"-t",duration.ToString(CultureInfo.InvariantCulture),"-map","0:v:0","-an"}.Concat(encoding).Concat(["-f","mov",temp]));File.Move(temp,output,overwrite);}finally{if(File.Exists(temp))File.Delete(temp);}
+        var result=JsonOutput.Object(("source", path), ("start", start), ("duration", duration), ("output", output), ("codec", codec=="cineform"?"cfhd":"prores_ks HQ"), ("cineformQuality", codec=="cineform"?VideoEncoding.NormalizeCineFormQuality(cineformQuality):null), ("alpha", codec=="cineform"?"preserved from source":"none"), ("audio", false), ("sourceLength", new FileInfo(path).Length), ("sourceLastWriteUtc", File.GetLastWriteTimeUtc(path)));File.WriteAllText(output+".source.json",JsonOutput.Serialize(result,Shot.JsonOptions));return result;
     }
 }

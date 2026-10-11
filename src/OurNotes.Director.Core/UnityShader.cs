@@ -107,7 +107,7 @@ public sealed unsafe class UnityShader : IDisposable
     {
         Fn<One>("glUseProgram")(program);int unit=0;
         foreach(var u in uniforms){
-            if(u.Type==0x8B5E){if(!textures.TryGetValue(u.Name,out uint texture))throw new InvalidDataException(Label+": missing texture "+u.Name);Fn<One>("glActiveTexture")((uint)(0x84C0+unit));glBindTexture(0x0DE1,texture);Fn<UniformInt>("glUniform1i")(u.Location,unit++);continue;}
+            if(u.Type is 0x8B5E or 0x8B60){if(!textures.TryGetValue(u.Name,out uint texture))throw new InvalidDataException(Label+": missing texture "+u.Name);Fn<One>("glActiveTexture")((uint)(0x84C0+unit));glBindTexture(u.Type==0x8B60?0x8513u:0x0DE1u,texture);Fn<UniformInt>("glUniform1i")(u.Location,unit++);continue;}
             if(!values.TryGetValue(u.Name,out var value))throw new InvalidDataException(Label+": missing property "+u.Name);
             if(uniformCache.TryGetValue(u.Location,out var previous)&&previous.AsSpan().SequenceEqual(value))continue;
             if(previous is not null&&previous.Length==value.Length)value.CopyTo(previous,0);else uniformCache[u.Location]=(float[])value.Clone();
@@ -122,24 +122,26 @@ public sealed unsafe class UnityShader : IDisposable
 
 public sealed class UnityShaderLibrary : IDisposable
 {
-    readonly Archive archive;readonly string site,prefix;readonly string? language;readonly JsonNode manifest,index;readonly Dictionary<string,UnityShader> compiled=[];
+    readonly Func<string,byte[]> read;readonly string prefix;readonly JsonNode index;readonly Dictionary<string,UnityShader> compiled=[];
     readonly Dictionary<string,JsonNode> definitions=[];
     readonly Dictionary<string,UnityShader> requested=[];
     readonly Dictionary<string,Dictionary<string,float[]>> defaultValues=[];
-    public UnityShaderLibrary(Archive archive,string site,JsonNode manifest,string prefix="shaders/",string? language=null){this.archive=archive;this.site=site;this.manifest=manifest;this.prefix=prefix;this.language=language;index=JsonNode.Parse(archive.Logical(site,manifest,prefix+"shaders.json",language))!;}
+    public UnityShaderLibrary(Archive archive,string site,JsonNode manifest,string prefix="shaders/",string? language=null)
+        :this(path=>archive.Logical(site,manifest,path,language),prefix){}
+    public UnityShaderLibrary(Func<string,byte[]> read,string prefix="shaders/"){this.read=read;this.prefix=prefix;index=JsonNode.Parse(read(prefix+"shaders.json"))!;}
     public Dictionary<string,float[]> Defaults(string name)
     {
         if(defaultValues.TryGetValue(name,out var cached))return cached.ToDictionary(p=>p.Key,p=>(float[])p.Value.Clone());
         var definition=Definition(name);
         defaultValues[name]=definition["properties"]!.AsArray().OfType<JsonNode>().Where(p=>Actor.N(p["m_Type"])!=4).ToDictionary(p=>Archive.S(p,"m_Name"),p=>Enumerable.Range(0,4).Select(i=>Actor.N(p[$"m_DefValue[{i}]"])).ToArray());return Defaults(name);
     }
-    JsonNode Definition(string name)
+    public JsonNode Definition(string name)
     {
         if(definitions.TryGetValue(name,out var definition))return definition;
         var entry=index.AsArray().OfType<JsonNode>().Single(n=>Archive.S(n,"name")==name);
-        return definitions[name]=JsonNode.Parse(archive.Logical(site,manifest,prefix+Archive.S(entry,"parsed"),language))!;
+        return definitions[name]=JsonNode.Parse(read(prefix+Archive.S(entry,"parsed")))!;
     }
-    public JsonNode State(string name,int pass=0)=>Definition(name)["subShaders"]![0]!["passes"]![pass]!["state"]!;
+    public JsonNode State(string name,int pass=0,int subShader=0)=>Definition(name)["subShaders"]![subShader]!["passes"]![pass]!["state"]!;
     public int Queue(string name)
     {
         var tags=Definition(name)["subShaders"]![0]!["tags"]?["tags"]?.AsArray();
@@ -158,7 +160,7 @@ public sealed class UnityShaderLibrary : IDisposable
         var variants=entry["variants"]!.AsArray().OfType<JsonNode>().Where(v=>Actor.N(v["subShader"])==subShader&&Actor.N(v["pass"])==pass).ToArray();
         var declared=variants.SelectMany(v=>v["keywords"]!.AsArray().Select(k=>k!.ToString())).ToHashSet();var wanted=keywords.Where(declared.Contains).ToHashSet();
         var variant=variants.FirstOrDefault(v=>wanted.SetEquals(v["keywords"]!.AsArray().Select(k=>k!.ToString())))??throw new NotSupportedException("Missing shader variant: "+name);
-        string path=prefix+Archive.S(variant,"file");if(!compiled.TryGetValue(path,out var program))compiled[path]=program=new(name+" pass "+pass,Encoding.UTF8.GetString(archive.Logical(site,manifest,path,language)));requested[request]=program;return program;
+        string path=prefix+Archive.S(variant,"file");if(!compiled.TryGetValue(path,out var program))compiled[path]=program=new(name+" pass "+pass,Encoding.UTF8.GetString(read(path)));requested[request]=program;return program;
     }
     public void Dispose(){foreach(var program in compiled.Values)program.Dispose();}
 }

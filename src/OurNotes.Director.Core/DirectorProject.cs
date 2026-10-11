@@ -17,13 +17,14 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
         string adv=Archive.S(source,"adv");if(string.IsNullOrWhiteSpace(adv))throw new ArgumentException("Project source.adv is required");
         var output=root["output"] as JsonObject??new JsonObject();
         if(root["output"] is not null&&root["output"] is not JsonObject)throw new ArgumentException("Project output must be an object");
-        CheckKeys(output,["width","height","supersample","codec","clean","letterbox"],"output");
+        CheckKeys(output,["width","height","supersample","codec","cineformQuality","clean","letterbox"],"output");
         foreach(string key in new[]{"width","height","supersample"})if(output[key] is {} value){
             if(!int.TryParse(value.ToString(),out int n)||n<(key=="supersample"?1:16)||n>(key=="supersample"?4:key=="width"?7680:4320))throw new ArgumentException("Invalid project output."+key);
         }
         if(output["clean"] is JsonValue clean&&!clean.TryGetValue<bool>(out _))throw new ArgumentException("Project output.clean must be boolean");
         if(output["clean"] is not null&&output["clean"] is not JsonValue)throw new ArgumentException("Project output.clean must be boolean");
-        if(output["codec"] is not null&&Archive.S(output,"codec") is not ("h264" or "prores" or "ffv1"))throw new ArgumentException("Invalid project output.codec");
+        if(output["codec"] is not null)_=VideoEncoding.NormalizeCodec(Archive.S(output,"codec"));
+        if(output["cineformQuality"] is not null)_=VideoEncoding.NormalizeCineFormQuality(Archive.S(output,"cineformQuality"));
         if(output["letterbox"] is not null&&Archive.S(output,"letterbox") is not ("game" or "none"))throw new ArgumentException("Project output.letterbox must be game or none");
         foreach(string section in new[]{"initialize","commands","finalize"}){
             if(root[section] is null)continue;
