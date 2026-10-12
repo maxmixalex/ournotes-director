@@ -441,7 +441,7 @@ public static class EngineRunnerTests
         File.WriteAllText(path, "{ damaged settings"); restored = DesktopSettings.Load(path);
         check(restored.LoadWarning is { Length: > 0 } && File.ReadAllText(path) == "{ damaged settings", "desktop malformed settings retain the original file and explain default fallback");
         string targetDirectory = Path.Combine(folder, "settings-directory"); Directory.CreateDirectory(targetDirectory);
-        check(Throws<IOException>(() => DesktopSettings.AtomicWrite(targetDirectory, "new data")) && Directory.Exists(targetDirectory) &&
+        check(ThrowsWriteFailure(() => DesktopSettings.AtomicWrite(targetDirectory, "new data")) && Directory.Exists(targetDirectory) &&
             !Directory.EnumerateFiles(folder, "settings-directory.tmp-*").Any(), "desktop failed atomic settings write cleans only its own temporary file");
     }
 
@@ -585,6 +585,12 @@ public static class EngineRunnerTests
         ["workingDirectory"] = Path.GetTempPath(), ["outputKind"] = "Json", ["elapsedSeconds"] = 0,
         ["result"] = Envelope(new JsonObject()), ["exitCode"] = 0
     };
+    static bool ThrowsWriteFailure(Action action)
+    {
+        try { action(); return false; }
+        // Replacing a directory is IOException on Unix and UnauthorizedAccessException on Windows.
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
+    }
     static bool Throws<T>(Action action) where T : Exception
     {
         try { action(); return false; }

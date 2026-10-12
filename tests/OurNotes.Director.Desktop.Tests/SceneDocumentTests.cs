@@ -250,8 +250,9 @@ public static class SceneDocumentTests
             "scene Save As rebases known local references while leaving the source document and source image intact");
         opened.SetOutput(width: 1280);
         string before = opened.Text, identity = opened.FilePath!;
-        check(Throws<IOException>(() => opened.Save(original)) && opened.Text == before && opened.FilePath == identity && opened.IsModified,
-            "scene failed save leaves editor content, path and dirty state unchanged");
+        check(ThrowsWriteFailure(() => opened.Save(original)) && opened.Text == before && opened.FilePath == identity && opened.IsModified &&
+            Directory.Exists(original) && File.ReadAllBytes(image).SequenceEqual(new byte[] { 1, 2, 3 }) && !Directory.EnumerateFiles(folder, ".scene-save-*.tmp").Any(),
+            "scene failed save preserves editor state and original files while cleaning its temporary file");
 
         var legacy = SceneTemplates.Create("legacy-shot", "42", "model");
         var legacyRoot = legacy.Root;
@@ -291,6 +292,13 @@ public static class SceneDocumentTests
 
     static SceneDocument Project(string properties, string? baseDirectory = null) => SceneDocument.Parse(
         "{\"format\":\"ournotes-director/project\",\"version\":1," + properties + "}", baseDirectory: baseDirectory);
+
+    static bool ThrowsWriteFailure(Action action)
+    {
+        try { action(); return false; }
+        // Replacing a directory is IOException on Unix and UnauthorizedAccessException on Windows.
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
+    }
 
     static bool Throws<T>(Action action) where T : Exception
     {
