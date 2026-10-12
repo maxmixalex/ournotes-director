@@ -69,18 +69,6 @@ public partial class App : Application
         try
         {
             TraceStartup("OnLaunched");
-            // Hosted Windows runners have no graphics adapter. Only this explicit test
-            // invocation may select the CI-installed Mesa driver; normal launches use
-            // the user's system OpenGL driver. No driver is added to the release ZIP.
-            if (smokeReportPath is not null && Environment.GetEnvironmentVariable("OURNOTES_TEST_OPENGL") is { Length: > 0 } driver)
-            {
-                if (!Path.IsPathFullyQualified(driver) || !File.Exists(driver)) throw new FileNotFoundException("The selected test graphics driver does not exist.", driver);
-                smokeGraphicsDriver = LoadLibraryEx(driver, 0, 0x00000100 | 0x00001000);
-                if (smokeGraphicsDriver == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot load the CI graphics driver.");
-                NativeLibrary.SetDllImportResolver(typeof(OurNotes.Director.Core.OffscreenGl).Assembly,
-                    (name, _, _) => name == "opengl32.dll" ? smokeGraphicsDriver : 0);
-                TraceStartup("Test graphics driver loaded");
-            }
             window = TraceConstruction("MainWindow", () => new MainWindow());
             if (smokeReportPath is not null)
             {
@@ -133,6 +121,7 @@ public partial class App : Application
             };
             Directory.CreateDirectory(Path.GetDirectoryName(smokeReportPath)!);
             captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "startup.png")));
+            LoadSmokeGraphicsDriver();
             await window.RunSmokeTestAsync(smokeReportPath);
             captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "ready.png")));
             window.Navigate("scenes");
@@ -154,6 +143,19 @@ public partial class App : Application
             WriteFailure(exception);
             Environment.Exit(1);
         }
+    }
+
+    private void LoadSmokeGraphicsDriver()
+    {
+        // Let WinUI initialize its own compositor before bringing in the CI-only Mesa
+        // module and its dependencies. Normal launches always use the system driver.
+        if (smokeReportPath is null || Environment.GetEnvironmentVariable("OURNOTES_TEST_OPENGL") is not { Length: > 0 } driver) return;
+        if (!Path.IsPathFullyQualified(driver) || !File.Exists(driver)) throw new FileNotFoundException("The selected test graphics driver does not exist.", driver);
+        smokeGraphicsDriver = LoadLibraryEx(driver, 0, 0x00000100 | 0x00001000);
+        if (smokeGraphicsDriver == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot load the CI graphics driver.");
+        NativeLibrary.SetDllImportResolver(typeof(OurNotes.Director.Core.OffscreenGl).Assembly,
+            (name, _, _) => name == "opengl32.dll" ? smokeGraphicsDriver : 0);
+        TraceStartup("Test graphics driver loaded");
     }
 
     private static async Task<JsonObject> CaptureAsync(FrameworkElement root, string path)
@@ -217,6 +219,7 @@ public partial class App : Application
                 report["managedStack"] = Environment.StackTrace;
                 report["startupTrace"] = startupTrace.DeepClone();
                 report["interfaceFailures"] = interfaceFailures.DeepClone();
+                report["graphicsModules"] = GraphicsModules();
                 report["startup"] = startupEvidence?.DeepClone();
                 report["captures"] = captures.DeepClone();
                 Directory.CreateDirectory(Path.GetDirectoryName(smokeReportPath)!);
@@ -232,6 +235,25 @@ public partial class App : Application
             }
         }
         catch { /* Preserve the original startup failure if its diagnostic destination is unavailable. */ }
+    }
+
+    private static JsonArray GraphicsModules()
+    {
+        var result = new JsonArray();
+        try
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            foreach (var module in process.Modules.Cast<System.Diagnostics.ProcessModule>())
+            {
+                string name = module.ModuleName;
+                if (!name.StartsWith("Microsoft.UI.", StringComparison.OrdinalIgnoreCase)
+                    && !new[] { "opengl", "gallium", "dxgi", "dxcore", "d3d", "dcomp", "dwrite", "Windows.UI.Composition" }
+                        .Any(part => name.Contains(part, StringComparison.OrdinalIgnoreCase))) continue;
+                result.Add(new JsonObject { ["name"] = name, ["path"] = module.FileName, ["version"] = module.FileVersionInfo.FileVersion });
+            }
+        }
+        catch (Exception error) { result.Add(new JsonObject { ["diagnosticError"] = error.Message }); }
+        return result;
     }
 
     private static string? ReadSmokeReportPath()

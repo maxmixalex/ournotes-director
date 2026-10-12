@@ -6,31 +6,34 @@ using Windows.UI;
 namespace OurNotes.Director.WinUI;
 
 /// <summary>The two studios share the same editing surface and panel proportions.</summary>
-internal sealed class StudioLayout : Grid
+internal sealed class StudioLayout : UserControl
 {
     internal StudioLayout(FrameworkElement left, FrameworkElement viewport, FrameworkElement right,
         FrameworkElement timeline, FrameworkElement toolbar)
     {
-        RowSpacing = 8;
-        RowDefinitions.Add(new() { Height = GridLength.Auto });
-        RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star), MinHeight = 160 });
-        RowDefinitions.Add(new() { Height = new(184), MinHeight = 144 });
-        Children.Add(toolbar);
+        HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        VerticalContentAlignment = VerticalAlignment.Stretch;
+        var root = new Grid { RowSpacing = 8 };
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star), MinHeight = 160 });
+        root.RowDefinitions.Add(new() { Height = new(184), MinHeight = 144 });
+        root.Children.Add(toolbar);
         var body = new Grid { ColumnSpacing = 8 };
         body.ColumnDefinitions.Add(new() { Width = new(194), MinWidth = 160 });
         body.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 240 });
         body.ColumnDefinitions.Add(new() { Width = new(250), MinWidth = 210 });
         var leftFrame = Panel(left); var rightFrame = Panel(right);
         body.Children.Add(leftFrame); body.Children.Add(viewport); body.Children.Add(rightFrame);
-        SetColumn(viewport, 1); SetColumn(rightFrame, 2); SetRow(body, 1); Children.Add(body);
+        Grid.SetColumn(viewport, 1); Grid.SetColumn(rightFrame, 2); Grid.SetRow(body, 1); root.Children.Add(body);
         var timelineFrame = Panel(timeline, 0);
-        SetRow(timelineFrame, 2); Children.Add(timelineFrame);
+        Grid.SetRow(timelineFrame, 2); root.Children.Add(timelineFrame);
+        Content = root;
         SizeChanged += (_, args) =>
         {
             bool compact = args.NewSize.Width < 1100;
             body.ColumnDefinitions[0].Width = new(compact ? 170 : 206);
             body.ColumnDefinitions[2].Width = new(compact ? 218 : 260);
-            RowDefinitions[2].Height = new(args.NewSize.Height < 650 ? 160 : 200);
+            root.RowDefinitions[2].Height = new(args.NewSize.Height < 650 ? 160 : 200);
         };
     }
 

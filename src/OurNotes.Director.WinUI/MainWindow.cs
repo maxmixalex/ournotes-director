@@ -20,7 +20,8 @@ public sealed class MainWindow : Window
     internal TaskQueue Jobs { get; private set; }
     internal EngineRunner Engine => new(Settings.ResolveEngine());
     private readonly Grid _root = new();
-    private readonly ContentControl _content = new();
+    private readonly ContentControl _content = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly Dictionary<string, FrameworkElement> _pages = new(StringComparer.Ordinal);
     private readonly ToggleButton _sceneTab = new() { Content = "场景工作台", Padding = new(22, 9, 22, 9) };
     private readonly ToggleButton _homeTab = new() { Content = "主页工作台", Padding = new(22, 9, 22, 9) };
@@ -29,7 +30,8 @@ public sealed class MainWindow : Window
     private readonly TextBlock _archiveStatus = Ui.Text("", 12, true);
     private readonly Border _drawer = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right,
         BorderThickness = new(1, 0, 0, 0), BorderBrush = new SolidColorBrush(Color.FromArgb(55, 128, 128, 128)), Padding = new(16) };
-    private readonly ContentControl _drawerContent = new();
+    private readonly ContentControl _drawerContent = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly TextBlock _drawerTitle = new() { FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private string? _drawerKey;
     private SceneStudioPage? _scene;
@@ -195,6 +197,7 @@ public sealed class MainWindow : Window
         }, "\uE8B7"), StudioLayout.Tool("下载 / 更新素材", () => Navigate("archive"), "\uE896")),
             new Expander { Header = "素材检索与其他工具", HorizontalAlignment = HorizontalAlignment.Stretch,
                 Content = Ui.Stack(8, StudioLayout.Tool("剧情与对白", () => Navigate("stories")), StudioLayout.Tool("模型与动作", () => Navigate("models")),
+                    StudioLayout.Tool("场景检查与续渲", () => Navigate("scene-tools")), StudioLayout.Tool("主页素材与批量处理", () => Navigate("home-tools")),
                     StudioLayout.Tool("场景素材", () => Navigate("assets")), StudioLayout.Tool("媒体处理", () => Navigate("media")), StudioLayout.Tool("运行诊断", () => Navigate("diagnostics"))) });
         ShowDrawer("resources", "素材库", panel);
     }

@@ -44,6 +44,7 @@ internal sealed class StudioTimeline : UserControl
 
     internal StudioTimeline()
     {
+        HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch;
         _play = StudioLayout.Tool("播放", () => PlayPauseRequested?.Invoke(), "\uE768");
         var transport = new Grid { Padding = new(9, 6, 9, 6), ColumnSpacing = 8 };
         transport.ColumnDefinitions.Add(new() { Width = GridLength.Auto });

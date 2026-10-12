@@ -50,6 +50,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     {
         App.TraceStartup("SceneStudioPage fields initialized");
         _window = window;
+        HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch;
         var file = new DropDownButton { Content = new FontIcon { Glyph = "\uE8E5", FontSize = 15 }, Padding = new(10, 7, 10, 7) };
         var menu = new MenuFlyout();
         Menu("新建场景", () => NewAsync(false)); Menu("打开原剧情", () => NewAsync(true));
@@ -601,7 +602,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         dialog.PrimaryButtonClick += (_, args) =>
         {
             try { replacement = StudioSceneDocument.FromSceneDocument(SceneDocument.Parse(input.Text, _document?.Document.FilePath, _document?.Document.BaseDirectory)); }
-            catch (Exception error) when (error is FormatException or ArgumentException or InvalidOperationException)
+            catch (Exception error) when (error is FormatException or ArgumentException or InvalidOperationException or InvalidDataException or OverflowException)
             { args.Cancel = true; message.Title = "JSON 需要调整"; message.Message = error.Message; message.IsOpen = true; }
         };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary && replacement is not null)

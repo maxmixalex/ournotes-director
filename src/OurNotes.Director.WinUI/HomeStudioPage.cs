@@ -74,7 +74,8 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         var footer = Ui.Stack(8, previewOnly, sourceLabel); left.Children.Add(footer); Grid.SetRow(footer, 2);
         welcome = Ui.Stack(13, new TextBlock { Text = "让主页动起来", FontSize = 21, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center },
             Ui.Text("选择主页，在画布中摆放角色，用时间轴编排动作。", 13, true),
-            Ui.Row(8, StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5", true), StudioLayout.AsyncTool("打开项目", () => OpenAsync(), "\uE8E5")));
+            Ui.Row(8, StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5", true), StudioLayout.AsyncTool("打开项目", () => OpenAsync(), "\uE8E5")),
+            StudioLayout.AsyncTool("粘贴主页 JSON", ShowJsonAsync, "\uE77F"));
         welcome.HorizontalAlignment = HorizontalAlignment.Center; welcome.VerticalAlignment = VerticalAlignment.Center;
         foreach (var label in welcome.Children.OfType<TextBlock>()) label.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 220, 230, 241));
         var center = new Grid(); center.Children.Add(viewport); center.Children.Add(welcome);
@@ -127,7 +128,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
     async Task SafeAsync(Func<Task> action)
     { try { if (!disposed) await action(); } catch (OperationCanceledException) { } catch (Exception error) { if (!disposed) Notice(error.Message); } }
     void Notice(string message, bool error = true)
-    { notice.Title = error ? "需要调整" : "主页提示"; notice.Message = message; notice.Severity = error ? InfoBarSeverity.Warning : InfoBarSeverity.Informational; notice.IsOpen = true; }
+    { notice.ActionButton = null; notice.Title = error ? "需要调整" : "主页提示"; notice.Message = message; notice.Severity = error ? InfoBarSeverity.Warning : InfoBarSeverity.Informational; notice.IsOpen = true; }
     void Pause() { playbackRequested = false; viewport.Pause(); timeline.IsPlaying = false; }
     async Task ActivateAsync()
     {
@@ -479,18 +480,38 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
     { CommitDrag(); if (document is not null) { Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead); } }
     async Task ShowJsonAsync()
     {
-        if (document is null) return; CommitDrag(); Pause();
-        var original = document; var input = new TextBox { Text = original.ToJson(), AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, Height = 400,
+        CommitDrag(); Pause();
+        var original = document; var input = new TextBox { Text = original?.ToJson() ?? "", PlaceholderText = "粘贴完整的主页项目 JSON（ournotes-home-project/1）", AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, Height = 400,
             FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas"), IsSpellCheckEnabled = false };
         var error = Ui.Text("", 12); HomeProject? replacement = null;
         var content = Ui.Stack(10, Ui.Text("高级项目编辑；应用后，画布、时间轴和导出使用同一份内容。", 13, true),
             Ui.Row(8, StudioLayout.Tool("复制项目", () => MainWindow.Copy(input.Text)), StudioLayout.AsyncTool("粘贴", async () => { var data = Clipboard.GetContent(); if (data.Contains(StandardDataFormats.Text)) input.Text = await data.GetTextAsync(); })), input, error);
         var dialog = new ContentDialog { XamlRoot = window.RootXaml, Title = "主页项目 JSON", Content = content, PrimaryButtonText = "应用", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Primary };
         dialog.PrimaryButtonClick += (_, args) => { try { replacement = HomeProject.Parse(Unfence(input.Text)); } catch (Exception failure) { args.Cancel = true; error.Text = failure.Message; } };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || replacement is null || document != original) return;
-        bool reload = replacement.Source != original.Project.Source || replacement.Output != original.Project.Output || replacement.Duration != original.Project.Duration;
-        document.ReplaceText(replacement.ToJson().ToJsonString()); RefreshHeader(); RefreshObjects(); RefreshTimeline(); BuildProperties(); SaveDraft();
-        if (reload) await LoadMetadataAndPreviewAsync(); else { QueuePreview(); await ApplyPreviewAsync(); }
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || replacement is null || document != original || disposed) return;
+        bool reload = original is null || !previewLoaded || metadata is null || replacement.Source != original.Project.Source
+            || replacement.Output != original.Project.Output || replacement.Duration != original.Project.Duration;
+        if (original is null) SetDocument(new HomeStudioDocument(replacement));
+        else
+        {
+            original.ReplaceText(replacement.ToJson().ToJsonString());
+            if (reload) { viewport.InvalidateSource(); previewLoaded = false; metadata = null; loadVersion++; }
+            RefreshHeader(); RefreshObjects(); RefreshTimeline(); BuildProperties();
+        }
+        SaveDraft();
+        if (!reload) { QueuePreview(); await ApplyPreviewAsync(); return; }
+        if (string.IsNullOrWhiteSpace(ArchivePath))
+        {
+            Notice("主页项目已保留。选择素材目录后即可继续预览，也可以先保存项目文件。", false);
+            notice.ActionButton = StudioLayout.AsyncTool("选择素材目录", async () =>
+            {
+                if (await window.PickFolderAsync() is not { } path || disposed) return;
+                window.Settings.ArchivePath = path; window.SaveSettings(); window.ApplySettings();
+                await SafeAsync(LoadMetadataAndPreviewAsync);
+            }, "\uE8B7");
+            return;
+        }
+        await LoadMetadataAndPreviewAsync();
     }
     static string Unfence(string text)
     {
