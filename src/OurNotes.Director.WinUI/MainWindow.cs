@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using OurNotes.Director.Desktop.Core;
@@ -31,7 +33,20 @@ public sealed class MainWindow : Window
     {
         Current = this; Title = "OurNotes Director";
         Settings = DesktopSettings.Load(); Jobs = new TaskQueue(Engine); Jobs.Changed += TaskChanged;
-        AppWindow.Resize(new SizeInt32(1380, 920));
+        bool positioned = false;
+        try
+        {
+            var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
+            if (area?.WorkArea is { Width: > 0, Height: > 0 } work)
+            {
+                int width = Math.Min(1380, work.Width), height = Math.Min(920, work.Height);
+                AppWindow.MoveAndResize(new RectInt32(work.X + (work.Width - width) / 2,
+                    work.Y + (work.Height - height) / 2, width, height));
+                positioned = true;
+            }
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException or NotSupportedException) { }
+        if (!positioned) AppWindow.Resize(new SizeInt32(960, 640));
         _navigation.IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed;
         _navigation.IsSettingsVisible = false;
         _navigation.PaneDisplayMode = NavigationViewPaneDisplayMode.Auto;

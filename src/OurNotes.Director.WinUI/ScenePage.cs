@@ -17,7 +17,7 @@ internal sealed partial class ScenePage : UserControl
     {
         AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, FontFamily = new FontFamily("Cascadia Mono, Consolas"),
         FontSize = 14, PlaceholderText = "把 agent 生成的场景 JSON 粘贴到这里，或从文件、模板开始。",
-        MinHeight = 340, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
+        MinHeight = 0, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
         AllowDrop = true
     };
     private readonly TextBlock _documentTitle = Ui.Text("未命名场景", 13, true);
