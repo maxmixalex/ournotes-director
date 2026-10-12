@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using OurNotes.Director.Core;
 
 namespace OurNotes.Director.Desktop.Core;
 
@@ -126,6 +127,21 @@ public static class CommandLineBuilder
         // Reading only local JSON lets validation respect project settings without loading an archive,
         // graphics driver or native SDK. The CLI remains authoritative for full project validation.
         var project = ReadProject(command, resolved, errors);
+        if (commandId.StartsWith("home.", StringComparison.Ordinal) && project.SourceSpot is { Length: > 0 } homeSpot)
+        {
+            if (resolved.TryGetValue("spotId", out var selectedSpot) && selectedSpot != homeSpot)
+                errors.Add(new("spotId", "主页项目的编号为 " + homeSpot + "，与所选主页不一致。"));
+            else resolved["spotId"] = homeSpot;
+            if (supplied.TryGetValue("site", out var selectedSite) && !string.IsNullOrWhiteSpace(selectedSite) && selectedSite.Trim() != project.SourceSite)
+                errors.Add(new("site", "主页项目的来源站点为 " + project.SourceSite + "，请选择相同站点。"));
+            else if (project.SourceSite is not null) resolved["site"] = project.SourceSite;
+            if (project.SourceAdv is not null)
+            {
+                if (resolved.TryGetValue("adv", out var selectedAdv) && selectedAdv != project.SourceAdv)
+                    errors.Add(new("adv", "主页项目的来源剧情为 " + project.SourceAdv + "，与所选来源不一致。"));
+                else resolved["adv"] = project.SourceAdv;
+            }
+        }
         if (commandId.StartsWith("story.", StringComparison.Ordinal) && project.SourceSite is { Length: > 0 } sourceSite)
         {
             // A script's declared site identifies its assets. A global UI default must not
@@ -139,7 +155,7 @@ public static class CommandLineBuilder
         string Effective(string key, string fallback = "")
         {
             if (resolved.TryGetValue(key, out string? selected) && selected.Length > 0) return selected;
-            if (commandId.StartsWith("render.", StringComparison.Ordinal) && project.Defaults.TryGetValue(key, out string? inherited)) return inherited;
+            if ((commandId.StartsWith("render.", StringComparison.Ordinal) || commandId.StartsWith("home.", StringComparison.Ordinal)) && project.Defaults.TryGetValue(key, out string? inherited)) return inherited;
             return fields.GetValueOrDefault(key)?.DefaultValue ?? fallback;
         }
 
@@ -198,7 +214,10 @@ public static class CommandLineBuilder
         {
             double time = Parse("time", 0);
             double? duration = resolved.ContainsKey("duration") ? Parse("duration", 0)
-                : home ? null : Enabled("until-end") ? 3600 : project.LegacyDuration ?? 10;
+                : home ? project.SourceSpot is not null && project.LegacyDuration is { } projectDuration ? projectDuration - time : null
+                : Enabled("until-end") ? 3600 : project.LegacyDuration ?? 10;
+            if (home && command.CommandTokens.Last() is "clip" or "sequence" or "export" && duration is <= 0)
+                errors.Add(new("time", "开始时间必须早于主页项目结束时间。"));
             if (command.CommandTokens.Last() == "state") duration = null;
             if (time > 36000 || duration is { } seconds && time + seconds > 36000)
                 errors.Add(new("duration", "开始时间与时长之和不能超过 36000 秒。"));
@@ -335,7 +354,7 @@ public static class CommandLineBuilder
     private static int SafeInt(double number) => number is < int.MinValue or > int.MaxValue ? 0 : (int)number;
 
     private sealed record ProjectFacts(IReadOnlyDictionary<string, string> Defaults, string? SourceAdv = null,
-        double? LegacyDuration = null, bool Transparent = false, string? SourceSite = null, string? SourceLanguage = null);
+        double? LegacyDuration = null, bool Transparent = false, string? SourceSite = null, string? SourceLanguage = null, string? SourceSpot = null);
 
     private static ProjectFacts ReadProject(CommandDefinition command, IReadOnlyDictionary<string, string> values,
         List<CommandValidationError> errors)
@@ -354,6 +373,19 @@ public static class CommandLineBuilder
             if (document is not JsonObject root)
             { errors.Add(new(key, "项目或指令文件必须为 JSON 对象。")); return new(new Dictionary<string, string>()); }
             var defaults = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (command.Id.StartsWith("home.", StringComparison.Ordinal))
+            {
+                var home = HomeProject.FromJson(root);
+                defaults["width"] = home.Output.Width.ToString(CultureInfo.InvariantCulture);
+                defaults["height"] = home.Output.Height.ToString(CultureInfo.InvariantCulture);
+                defaults["supersample"] = home.Output.Supersample.ToString(CultureInfo.InvariantCulture);
+                defaults["fps"] = home.Output.Fps.ToString(CultureInfo.InvariantCulture);
+                defaults["codec"] = VideoEncoding.NormalizeCodec(home.Output.Codec);
+                defaults["cineform-quality"] = VideoEncoding.NormalizeCineFormQuality(home.Output.CineformQuality);
+                defaults["framing"] = home.EditState.Framing;
+                return new(defaults, home.Source.AdvId?.ToString(CultureInfo.InvariantCulture), home.Duration, !home.EditState.Background,
+                    home.Source.Site, SourceSpot: home.Source.SpotId.ToString(CultureInfo.InvariantCulture));
+            }
             bool unified = root["format"]?.ToString() == "ournotes-director/project";
             bool legacy = root["format"] is null && root["actors"] is JsonArray;
             if (command.Id.StartsWith("render.", StringComparison.Ordinal) && !unified && !legacy)
@@ -409,7 +441,7 @@ public static class CommandLineBuilder
             }
             return new(defaults, sourceAdv, duration, transparent, sourceSite, sourceLanguage);
         }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException or FormatException)
+        catch (Exception exception) when (exception is JsonException or IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or FormatException or ArgumentException)
         {
             errors.Add(new(key, "无法读取项目或指令文件：" + exception.Message));
             return new(new Dictionary<string, string>());

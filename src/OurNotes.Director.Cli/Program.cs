@@ -12,7 +12,7 @@ try
 {
     var options = new Dictionary<string, string>(); var positional = new List<string>();
     var flags = new HashSet<string> { "json", "with-voice", "overwrite", "help", "resume", "clean", "until-end", "debug", "no-deep", "loop", "no-background" };
-    var allowed = new HashSet<string> { "archive", "band", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "cineform-quality", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries", "animation", "framing", "fps" };
+    var allowed = new HashSet<string> { "archive", "band", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "cineform-quality", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries", "animation", "framing", "fps", "project" };
     for (var i = 0; i < args.Length; i++)
     {
         var a = args[i];
@@ -42,6 +42,7 @@ try
             "home list | home show <spot-id> | home animations <spot-id> [--character KEY] (discover archived home scenes, grouped characters, source animations and durations)",
             "home export <spot-id|all> -o NEW_DIRECTORY [--character KEY|all --codec cineform --cineform-quality film1 --fps 30 --width 1920 --height 1080 --supersample 2] (complete scene plus each transparent character; default full animation including its end pose)",
             "home frame|contact|sequence|clip <spot-id> [--character KEY --animation NAME --loop --framing scene|fit --no-background --time 0 --duration SECONDS --fps 30] -o OUTPUT (native Spine; fitted characters use one stable crop over the animation; scene preserves camera coordinates)",
+            "home frame|contact|sequence|clip|export [spot-id] --project home-project.json -o OUTPUT (saved native home composition; transforms, animation cues, visibility, room and grade timeline; explicit output options override project defaults)",
             "story commands <adv-id> [--offset 0 --limit 50] (lossless episode rows)",
             "story frame|clip <adv-id> --time 0 --duration 10 --width 1920 --height 1080 --supersample 2 [--script FILE --clean --lang zh-Hans --codec h264|cineform|prores|ffv1] -o FILE (native game primitives; supersample 1..4)",
             "story clip <adv-id> [--speed 1] --until-end [--duration 3600] -o FILE (duration is a safety cap; unfinished output is rejected)",
@@ -65,6 +66,7 @@ try
         }), ("options", "--archive PATH --site intl --lang zh-Hans --speaker hotaru --with-voice --limit 50 --offset 0 --json --overwrite"), ("output", "JSON envelope; exit 0 success, 2 invalid request, 3 IO/data failure, 4 unsupported feature. Extract never overwrites without --overwrite."), ("rendering", "Native Cubism and Spine 4.2 + offscreen OpenGL; 30Hz game-command simulation, home animations at configurable fps, original materials and postprocessing, PNG/CineForm/ProRes/FFV1/H264, 1..4x supersampling. Complete game parity remains in progress; unsupported features fail explicitly.")), json));
         return 0;
     }
+    if (options.ContainsKey("project") && command != "home") throw new ArgumentException("--project is supported only by home; unified render takes a positional project path.");
     if (command == "archive") return await ArchiveCommand.RunAsync(options, positional, json);
     foreach (var key in new[] { "band", "sites", "languages", "concurrency", "retries", "no-deep" })
         if (options.ContainsKey(key)) throw new ArgumentException($"--{key} is only supported by archive");

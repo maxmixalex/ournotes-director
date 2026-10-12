@@ -28,18 +28,40 @@ public sealed class HomeResources(HomeScene scene)
 /// <summary>Mutable animation state, independent of the graphics context and encoder.</summary>
 public sealed class HomeAnimation
 {
-    public sealed record Part(string Path, SpineActor Actor, float[] World, int SortingOrder, int Queue, bool DepthWrite, bool? StraightAlphaInput);
+    public sealed class Part(string path, SpineActor actor, float[] world, int sortingOrder, int queue, bool depthWrite, bool? straightAlphaInput)
+    {
+        public string Path { get; } = path;
+        public SpineActor Actor { get; internal set; } = actor;
+        public float[] World { get; } = world;
+        public int SortingOrder { get; } = sortingOrder;
+        public int Queue { get; } = queue;
+        public bool DepthWrite { get; } = depthWrite;
+        public bool? StraightAlphaInput { get; } = straightAlphaInput;
+        public string? CharacterKey { get; internal init; }
+        public int SourceOrder { get; internal init; }
+        internal JsonNode SourceAnimation { get; init; } = new JsonObject();
+        internal IReadOnlySet<string>? IncludedSlots { get; init; }
+        internal HomeAnimationCue? CurrentCue { get; set; }
+    }
+    readonly IReadOnlyList<Part> sourceParts;
+    IReadOnlyList<Part>? editableParts;
+    readonly string? animationOverride;
+    readonly bool? loopOverride;
+    HomeEditState? editState;
+    readonly Dictionary<float, IReadOnlyDictionary<string, Vector2>> pivots = [];
     public HomeResources Resources { get; }
     public HomeScene Scene => Resources.Scene;
     public HomeCharacter? Character { get; }
     public HomeCamera Camera { get; }
-    public IReadOnlyList<Part> Parts { get; }
-    public double Duration => Parts.Max(p => p.Actor.Duration);
-    public bool AllLooping => Parts.All(p => p.Actor.Loop);
+    public IReadOnlyList<Part> Parts => editState is null ? sourceParts : editableParts!;
+    public IReadOnlyList<Part> SourceParts => sourceParts;
+    public double Duration => sourceParts.Max(p => p.Actor.Duration);
+    public bool AllLooping => sourceParts.All(p => p.Actor.Loop);
 
     public HomeAnimation(HomeResources resources, HomeCharacter? character = null, string? animation = null, bool? loop = null)
     {
         Resources = resources; Character = character; Camera = new(Scene.Home, Scene.Spot);
+        animationOverride = animation; loopOverride = loop;
         var extras = (Scene.Home["spineCharacters"] as JsonArray ?? []).OfType<JsonObject>()
             .ToDictionary(p => Archive.S(p, "path"), StringComparer.Ordinal);
         var materials = Scene.Home["spineMaterials"] as JsonObject ?? new JsonObject();
@@ -71,14 +93,134 @@ public sealed class HomeAnimation
             }
             var mode = modes.FirstOrDefault();
             result.Add(new(path, actor, AdvMatrix.Multiply(Camera.Root, HomeCamera.Matrix(part["world"])),
-                (int)Actor.N(extra?["sortingOrder"] ?? part["sortingOrder"]), mode.Queue < 0 || modes.Length == 0 ? 3000 : mode.Queue, mode.Depth, mode.Straight));
+                (int)Actor.N(extra?["sortingOrder"] ?? part["sortingOrder"]), mode.Queue < 0 || modes.Length == 0 ? 3000 : mode.Queue, mode.Depth, mode.Straight)
+            { SourceOrder = result.Count, CharacterKey = character?.Key, IncludedSlots = includedSlots, SourceAnimation = part["animation"]!.DeepClone() });
         }
         if (result.Count == 0) throw new InvalidDataException("The selected home animation contains no renderable skeletons.");
-        Parts = result.AsReadOnly();
+        sourceParts = result.AsReadOnly();
     }
 
-    public void Advance(int frame, int fps) { foreach (var part in Parts) part.Actor.Advance(frame, fps); }
-    public void Reset() { foreach (var part in Parts) part.Actor.Reset(); }
+    public void SetEditState(HomeEditState? state)
+    {
+        if (state is not null)
+        {
+            HomeProject.ValidateEdits(state);
+            foreach (var entry in state.Characters)
+            {
+                if (!Scene.Characters.Any(c => c.Key == entry.Key)) throw new ArgumentException("主页项目包含不存在的角色：" + entry.Key);
+                var character = Scene.Characters.Single(c => c.Key == entry.Key);
+                foreach (var cue in entry.Value.Animations.Where(c => c.Name is not null))
+                    foreach (var part in character.Parts)
+                    {
+                        if (Scene.IncludedSlots(character, part) is { Count: 0 }) continue;
+                        var asset = Resources.Skeleton(Archive.S(part, "skeletonData"));
+                        if (!asset.Animations.Any(a => a.Name == cue.Name))
+                            throw new ArgumentException($"角色 {entry.Key} 的 {asset.Name} 没有动作 {cue.Name}。");
+                    }
+            }
+            EnsureEditableParts();
+        }
+        editState = state;
+    }
+
+    void EnsureEditableParts()
+    {
+        if (editableParts is not null) return;
+        var result = new List<Part>();
+        foreach (var original in sourceParts)
+        {
+            var source = Scene.SpineParts.Single(p => Archive.S(p, "path") == original.Path);
+            var owners = Character is not null ? new[] { Character } : Scene.Characters.Where(c => c.Parts.Contains(source)).ToArray();
+            var covered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var owner in owners)
+            {
+                var slots = Scene.IncludedSlots(owner, source);
+                if (slots is { Count: 0 }) continue;
+                var names = slots ?? original.Actor.Asset.Slots.Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
+                if (covered.Overlaps(names)) throw new InvalidDataException("角色的 Spine 槽位重叠：" + original.Path);
+                covered.UnionWith(names);
+                result.Add(CopyPart(original, owner.Key, slots));
+            }
+            if (Character is null)
+            {
+                var remaining = original.Actor.Asset.Slots.Select(s => s.Name).Where(name => !covered.Contains(name)).ToHashSet(StringComparer.Ordinal);
+                if (remaining.Count > 0) result.Add(CopyPart(original, null, covered.Count == 0 ? null : remaining));
+            }
+        }
+        editableParts = result.AsReadOnly();
+    }
+    Part CopyPart(Part source, string? character, IReadOnlySet<string>? includedSlots)
+        => new(source.Path, new SpineActor(source.Actor.Asset, source.SourceAnimation, animationOverride, loopOverride, includedSlots), source.World,
+            source.SortingOrder, source.Queue, source.DepthWrite, source.StraightAlphaInput)
+        { CharacterKey = character, SourceOrder = source.SourceOrder, SourceAnimation = source.SourceAnimation, IncludedSlots = includedSlots };
+
+    public void Advance(int frame, int fps)
+    {
+        foreach (var part in sourceParts) part.Actor.Advance(frame, fps);
+        if (editState is null) return;
+        double time = frame / (double)fps;
+        foreach (var part in editableParts!)
+        {
+            var cue = part.CharacterKey is not null && editState.Characters.TryGetValue(part.CharacterKey, out var track) ? track.AnimationAt(time) : null;
+            if (part.CurrentCue != cue)
+            {
+                part.Actor = new(part.Actor.Asset, part.SourceAnimation, cue?.Name ?? animationOverride, cue?.Loop ?? loopOverride, part.IncludedSlots);
+                part.CurrentCue = cue;
+            }
+            double local = cue is null ? time : cue.SourceTime + Math.Max(0, time - cue.Time) * cue.Speed;
+            part.Actor.Advance(checked((int)Math.Floor(local * fps + 1e-8)), fps);
+        }
+    }
+    public void Reset()
+    {
+        foreach (var part in sourceParts) part.Actor.Reset();
+        foreach (var part in editableParts ?? []) part.Actor.Reset();
+    }
+    public HomeTransform TransformFor(Part part, double time) => part.CharacterKey is not null && editState?.Characters.TryGetValue(part.CharacterKey, out var track) == true ? track.At(time) : new();
+
+    /// <summary>The pivot is the original end-pose center and remains fixed while scrubbing or editing.</summary>
+    public IReadOnlyDictionary<string, Vector2> CharacterPivots(float aspect)
+    {
+        if (pivots.TryGetValue(aspect, out var cached)) return cached;
+        EnsureEditableParts();
+        var projection = Camera.ViewProjection(aspect);
+        var bounds = new Dictionary<string, (Vector2 Min, Vector2 Max)>(StringComparer.Ordinal);
+        foreach (var part in editableParts!)
+        {
+            if (part.CharacterKey is null) continue;
+            // Use an independent source actor so inspecting a pivot never changes a running clip.
+            var actor = new SpineActor(part.Actor.Asset, part.SourceAnimation, animationOverride, loopOverride, part.IncludedSlots);
+            actor.ApplyEndState();
+            var matrix = AdvMatrix.Multiply(projection, part.World);
+            foreach (var batch in actor.Mesh.Batches)
+                for (int i = 0; i < batch.Positions.Length; i += 3)
+                {
+                    var p = AdvMatrix.Transform(matrix, new(batch.Positions[i], batch.Positions[i + 1], batch.Positions[i + 2], 1));
+                    if (p.W <= 0) continue;
+                    var point = new Vector2(p.X / p.W, p.Y / p.W);
+                    var b = bounds.GetValueOrDefault(part.CharacterKey, (new(float.PositiveInfinity), new(float.NegativeInfinity)));
+                    bounds[part.CharacterKey] = (Vector2.Min(b.Item1, point), Vector2.Max(b.Item2, point));
+                }
+        }
+        var result = bounds.ToDictionary(p => p.Key, p => (p.Value.Min + p.Value.Max) / 2, StringComparer.Ordinal);
+        pivots[aspect] = result; return result;
+    }
+
+    public float[] EditedMatrix(Part part, float[] projection, float aspect, double time)
+    {
+        var matrix = AdvMatrix.Multiply(projection, part.World);
+        var transform = TransformFor(part, time);
+        if (part.CharacterKey is null || transform.X == 0 && transform.Y == 0 && transform.Scale == 1) return matrix;
+        var pivot = CharacterPivots(aspect).GetValueOrDefault(part.CharacterKey);
+        // Projection includes a possible fixed fit crop. Convert the source pivot through that crop.
+        var sourceProjection = Camera.ViewProjection(aspect);
+        var crop = AdvMatrix.Multiply(projection, HomeCamera.Inverse(sourceProjection));
+        var p = AdvMatrix.Transform(crop, new(pivot.X, pivot.Y, 0, 1));
+        var screen = AdvMatrix.Identity(); screen[0] = screen[5] = (float)transform.Scale;
+        screen[12] = (float)(2 * transform.X + (1 - transform.Scale) * p.X);
+        screen[13] = (float)(-2 * transform.Y + (1 - transform.Scale) * p.Y);
+        return AdvMatrix.Multiply(screen, matrix);
+    }
     public JsonObject Describe() => new()
     {
         ["site"] = Scene.Site, ["spotId"] = Scene.SpotId, ["advId"] = Scene.AdvId, ["character"] = Character?.Key,
@@ -97,7 +239,6 @@ public sealed class HomeAnimation
     {
         if (!float.IsFinite(margin) || margin < 0 || margin >= .5f) throw new ArgumentOutOfRangeException(nameof(margin));
         var projection = Camera.ViewProjection(aspect);
-        var matrices = Parts.Select(p => AdvMatrix.Multiply(projection, p.World)).ToArray();
         var min = new Vector2(float.PositiveInfinity); var max = new Vector2(float.NegativeInfinity);
         bool visible = false;
         try
@@ -106,14 +247,18 @@ public sealed class HomeAnimation
             {
                 Advance(f, fps);
                 for (int i = 0; i < Parts.Count; i++)
+                {
+                    if (!TransformFor(Parts[i], f / (double)fps).Visible) continue;
+                    var matrix = EditedMatrix(Parts[i], projection, aspect, f / (double)fps);
                     foreach (var batch in Parts[i].Actor.Mesh.Batches)
                         for (int v = 0; v < batch.Positions.Length; v += 3)
                         {
-                            var p = AdvMatrix.Transform(matrices[i], new(batch.Positions[v], batch.Positions[v + 1], batch.Positions[v + 2], 1));
+                            var p = AdvMatrix.Transform(matrix, new(batch.Positions[v], batch.Positions[v + 1], batch.Positions[v + 2], 1));
                             if (p.W <= 0) throw new NotSupportedException("Cannot fit home geometry crossing behind the scene camera; use --framing scene.");
                             var point = new Vector2(p.X / p.W, p.Y / p.W);
                             min = Vector2.Min(min, point); max = Vector2.Max(max, point); visible = true;
                         }
+                }
             }
         }
         finally { Reset(); }

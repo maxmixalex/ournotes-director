@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Imaging;
@@ -16,30 +17,68 @@ public partial class App : Application
     private bool smokeStarted;
     private JsonObject? startupEvidence;
     private readonly JsonArray captures = [];
+    private readonly JsonArray startupTrace = [];
+    private readonly JsonArray interfaceFailures = [];
+    private static App? instance;
+    private nint smokeGraphicsDriver;
+
+    [DllImport("kernel32.dll", EntryPoint = "LoadLibraryExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint LoadLibraryEx(string name, nint file, uint flags);
 
     public App()
     {
+        instance = this;
         smokeReportPath = ReadSmokeReportPath();
+        if (smokeReportPath is not null)
+            AppDomain.CurrentDomain.FirstChanceException += (_, args) =>
+            {
+                if (args.Exception is not InvalidCastException || interfaceFailures.Count >= 8) return;
+                interfaceFailures.Add(new JsonObject
+                {
+                    ["exception"] = args.Exception.ToString(),
+                    ["managedStack"] = Environment.StackTrace
+                });
+            };
         UnhandledException += (_, args) =>
         {
-            WriteFailure(args.Exception);
+            WriteFailure(args.Exception, args.Message);
             if (smokeReportPath is not null) Environment.Exit(1);
         };
+        TraceStartup("App.InitializeComponent");
         InitializeComponent();
+        TraceStartup("App initialized");
+    }
+
+    internal static void TraceStartup(string stage)
+    {
+        if (instance is not { smokeReportPath: not null } app) return;
+        app.startupTrace.Add(new JsonObject { ["stage"] = stage, ["utc"] = DateTimeOffset.UtcNow.ToString("O") });
+        Console.Error.WriteLine("[startup] " + stage);
+    }
+
+    internal static T TraceConstruction<T>(string name, Func<T> create)
+    {
+        TraceStartup(name + " constructing");
+        T result = create();
+        TraceStartup(name + " constructed");
+        return result;
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         try
         {
-            window = new MainWindow();
+            TraceStartup("OnLaunched");
+            window = TraceConstruction("MainWindow", () => new MainWindow());
             if (smokeReportPath is not null)
             {
                 if (window.Content is not FrameworkElement root)
                     throw new InvalidOperationException("The main window has no FrameworkElement content to verify.");
                 root.Loaded += OnSmokeRootLoaded;
             }
+            TraceStartup("Window.Activate");
             window.Activate();
+            TraceStartup("Window activated");
         }
         catch (Exception exception)
         {
@@ -54,11 +93,14 @@ public partial class App : Application
         smokeStarted = true;
         try
         {
+            TraceStartup("Root.Loaded");
             if (window is null || smokeReportPath is null || sender is not FrameworkElement root)
                 throw new InvalidOperationException("The smoke test was invoked without a loaded main window.");
             root.Loaded -= OnSmokeRootLoaded;
             root.UpdateLayout();
+            TraceStartup("Root arranged");
             var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            TraceStartup("Window handle obtained");
             if (handle == IntPtr.Zero || root.ActualWidth <= 0 || root.ActualHeight <= 0)
                 throw new InvalidOperationException("The main window did not create a visible, arranged XAML surface.");
             using var process = System.Diagnostics.Process.GetCurrentProcess();
@@ -79,8 +121,12 @@ public partial class App : Application
             };
             Directory.CreateDirectory(Path.GetDirectoryName(smokeReportPath)!);
             captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "startup.png")));
+            LoadSmokeGraphicsDriver();
             await window.RunSmokeTestAsync(smokeReportPath);
             captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "ready.png")));
+            window.Navigate("scenes");
+            await Task.Delay(100);
+            captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "scene.png")));
 
             var report = JsonNode.Parse(await File.ReadAllTextAsync(smokeReportPath)) as JsonObject
                 ?? throw new InvalidDataException("The UI smoke test did not write a JSON object report.");
@@ -88,6 +134,7 @@ public partial class App : Application
                 throw new InvalidDataException("The UI smoke test did not report success.");
             report["startup"] = startupEvidence.DeepClone();
             report["captures"] = captures.DeepClone();
+            report["startupTrace"] = startupTrace.DeepClone();
             await File.WriteAllTextAsync(smokeReportPath, report.ToJsonString(ReportOptions), new UTF8Encoding(false));
             Environment.Exit(0);
         }
@@ -96,6 +143,19 @@ public partial class App : Application
             WriteFailure(exception);
             Environment.Exit(1);
         }
+    }
+
+    private void LoadSmokeGraphicsDriver()
+    {
+        // Let WinUI initialize its own compositor before bringing in the CI-only Mesa
+        // module and its dependencies. Normal launches always use the system driver.
+        if (smokeReportPath is null || Environment.GetEnvironmentVariable("OURNOTES_TEST_OPENGL") is not { Length: > 0 } driver) return;
+        if (!Path.IsPathFullyQualified(driver) || !File.Exists(driver)) throw new FileNotFoundException("The selected test graphics driver does not exist.", driver);
+        smokeGraphicsDriver = LoadLibraryEx(driver, 0, 0x00000100 | 0x00001000);
+        if (smokeGraphicsDriver == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot load the CI graphics driver.");
+        NativeLibrary.SetDllImportResolver(typeof(OurNotes.Director.Core.OffscreenGl).Assembly,
+            (name, _, _) => name == "opengl32.dll" ? smokeGraphicsDriver : 0);
+        TraceStartup("Test graphics driver loaded");
     }
 
     private static async Task<JsonObject> CaptureAsync(FrameworkElement root, string path)
@@ -143,7 +203,7 @@ public partial class App : Application
         };
     }
 
-    private void WriteFailure(Exception exception)
+    private void WriteFailure(Exception exception, string? message = null)
     {
         try
         {
@@ -155,6 +215,11 @@ public partial class App : Application
                 report["schema"] ??= "ournotes-director/desktop-smoke/1";
                 report["ok"] = false;
                 report["exception"] = exception.ToString();
+                report["message"] = message;
+                report["managedStack"] = Environment.StackTrace;
+                report["startupTrace"] = startupTrace.DeepClone();
+                report["interfaceFailures"] = interfaceFailures.DeepClone();
+                report["graphicsModules"] = GraphicsModules();
                 report["startup"] = startupEvidence?.DeepClone();
                 report["captures"] = captures.DeepClone();
                 Directory.CreateDirectory(Path.GetDirectoryName(smokeReportPath)!);
@@ -170,6 +235,25 @@ public partial class App : Application
             }
         }
         catch { /* Preserve the original startup failure if its diagnostic destination is unavailable. */ }
+    }
+
+    private static JsonArray GraphicsModules()
+    {
+        var result = new JsonArray();
+        try
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            foreach (var module in process.Modules.Cast<System.Diagnostics.ProcessModule>())
+            {
+                string name = module.ModuleName;
+                if (!name.StartsWith("Microsoft.UI.", StringComparison.OrdinalIgnoreCase)
+                    && !new[] { "opengl", "gallium", "dxgi", "dxcore", "d3d", "dcomp", "dwrite", "Windows.UI.Composition" }
+                        .Any(part => name.Contains(part, StringComparison.OrdinalIgnoreCase))) continue;
+                result.Add(new JsonObject { ["name"] = name, ["path"] = module.FileName, ["version"] = module.FileVersionInfo.FileVersion });
+            }
+        }
+        catch (Exception error) { result.Add(new JsonObject { ["diagnosticError"] = error.Message }); }
+        return result;
     }
 
     private static string? ReadSmokeReportPath()

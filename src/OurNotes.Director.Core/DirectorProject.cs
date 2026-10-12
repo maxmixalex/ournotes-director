@@ -32,7 +32,9 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
             for(int i=0;i<rows.Count;i++){
                 var row=rows[i] as JsonObject??throw new ArgumentException($"Project {section}[{i}] must be an object");
                 string cmd=Archive.S(row,"cmd");
-                DirectorValidation.Check(AdvProgram.Row(row,$"{section}[{i}]"));
+                var command=AdvProgram.Row(row,$"{section}[{i}]");
+                DirectorValidation.Check(command);
+                if(!command.Ignored)_=AdvPlayback.FixedDelayFrames(command);
             }
         }
         if(root["text"] is not null&&root["text"] is not JsonObject)throw new ArgumentException("Project text must be an object");

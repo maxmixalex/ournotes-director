@@ -54,7 +54,11 @@ public sealed class SpineDrawing : IDisposable
     {
         if (localToClip.Length != 16 || localToClip.Any(v => !float.IsFinite(v))) throw new ArgumentException("Spine projection must be a finite 4x4 column-major matrix");
         foreach (var batch in actor.Mesh.Batches)
-        {
+            DrawBatch(batch, localToClip, depthTest, depthWrite, straightAlphaInput);
+    }
+
+    public void DrawBatch(SpineMeshBatch batch, float[] localToClip, bool depthTest = true, bool depthWrite = false, bool? straightAlphaInput = null)
+    {
             int count = batch.Positions.Length / 3;
             var positions = new float[count * 4];
             for (int i = 0; i < count; i++)
@@ -76,7 +80,6 @@ public sealed class SpineDrawing : IDisposable
             int dst = blend switch { BlendMode.Normal => 10, BlendMode.Additive => 1, BlendMode.Multiply => 10, BlendMode.Screen => 6, _ => throw new NotSupportedException("Unknown Spine blend mode") };
             gl.GameMaterial32(shader, values, images, vertices, batch.Indices, src, dst, 1, 10,
                 state: new(DepthTest: depthTest ? 4 : 0, DepthWrite: depthWrite));
-        }
     }
 
     uint Texture(SpineTexture texture)

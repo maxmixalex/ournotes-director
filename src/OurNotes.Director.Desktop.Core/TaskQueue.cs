@@ -47,7 +47,8 @@ public sealed class TaskQueue : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         int projectIndex = request.CommandId.StartsWith("render.", StringComparison.Ordinal) || request.CommandId == "shot.validate" ? 2
-            : request.CommandId.StartsWith("story.", StringComparison.Ordinal) ? request.Arguments.ToList().IndexOf("--script") + 1 : -1;
+            : request.CommandId.StartsWith("story.", StringComparison.Ordinal) ? request.Arguments.ToList().IndexOf("--script") + 1
+            : request.CommandId.StartsWith("home.", StringComparison.Ordinal) ? request.Arguments.ToList().IndexOf("--project") + 1 : -1;
         if (projectIndex > 0)
         {
             // Persist the exact queued input for history/retry. Local asset paths are

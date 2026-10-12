@@ -10,6 +10,8 @@ void Check(bool passed, string message)
 }
 CommandCatalogTests.Run(Check);
 SceneDocumentTests.Run(Check);
+StudioSceneDocumentTests.Run(Check);
+HomeStudioDocumentTests.Run(Check);
 ResultRowTests.Run(Check);
 await EngineRunnerTests.RunAsync(Check);
 Console.WriteLine($"Passed {count} desktop command, JSON document, result and task execution checks.");

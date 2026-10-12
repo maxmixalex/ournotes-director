@@ -9,38 +9,67 @@ public sealed class HomeRenderer : IDisposable
 {
     readonly OffscreenGl gl;
     readonly SpineDrawing drawing;
-    readonly HomeRoom? room;
-    readonly HomePostFx? post;
+    HomeRoom? room;
+    HomePostFx? post;
     readonly HomeAnimation animation;
     readonly int width, height, supersample, fps;
-    readonly float[] projection;
+    float[] projection;
+    readonly HomeTiming timing;
+    HomeEditState? editState;
+    string framing;
+    bool background;
+    IReadOnlyList<PreviewTarget> targets = [];
     public string Device => gl.Device;
-    public float[] Crop { get; }
-    public bool Transparent { get; }
+    public float[] Crop { get; private set; }
+    public bool Transparent => animation.Character is not null || !background;
     public int PendingFrames => gl.PendingPixels;
-    public int RoomMeshCount => room?.VisibleMeshes ?? 0;
-    public bool PostProcessing => post is not null;
+    public int RoomMeshCount => Transparent ? 0 : room?.VisibleMeshes ?? 0;
+    public bool PostProcessing => !Transparent && (editState?.PostProcessing ?? true) && post is not null;
 
-    public HomeRenderer(HomeAnimation animation, int width, int height, int supersample, HomeTiming timing, string framing = "scene", bool background = true)
+    public HomeRenderer(HomeAnimation animation, int width, int height, int supersample, HomeTiming timing, string framing = "scene", bool background = true, HomeEditState? editState = null)
     {
         ValidateDimensions(width, height, supersample);
         if (framing is not ("scene" or "fit")) throw new ArgumentException("Home --framing must be scene or fit.");
         this.animation = animation; this.width = width; this.height = height; this.supersample = supersample; fps = timing.Fps;
-        Transparent = animation.Character is not null || !background;
+        this.timing = timing; this.framing = editState?.Framing ?? framing; this.background = editState?.Background ?? background;
+        // Fitting establishes one source crop. Subsequent edits remain deliberate screen-space moves
+        // and do not make the viewport chase a dragged character or change the zoom while playing.
+        framing = this.framing;
         Crop = framing == "fit" ? animation.Fit(width / (float)height, timing.FirstFrame, timing.FrameCount, fps) : AdvMatrix.Identity();
         projection = AdvMatrix.Multiply(Crop, animation.Camera.ViewProjection(width / (float)height));
         gl = new(width * supersample, height * supersample);
         try
         {
             drawing = new(gl);
-            if (!Transparent)
-            {
-                room = new(gl, animation.Scene.Home, animation.Camera, animation.Resources.Read);
-                if (HomePostFx.Stack(animation.Scene.Home) is { } stack) post = new(gl, animation.Resources, stack);
-            }
+            if (editState is not null) SetEditState(editState);
+            else EnsureRoom();
         }
         catch { post?.Dispose(); room?.Dispose(); drawing?.Dispose(); gl.Dispose(); throw; }
     }
+
+    void EnsureRoom()
+    {
+        if (Transparent) return;
+        room ??= new(gl, animation.Scene.Home, animation.Camera, animation.Resources.Read);
+        if ((editState?.PostProcessing ?? true) && post is null && HomePostFx.Stack(animation.Scene.Home) is { } stack)
+            post = new(gl, animation.Resources, stack);
+    }
+
+    public void SetEditState(HomeEditState state)
+    {
+        if (PendingFrames > 0) throw new InvalidOperationException("Read queued home frames before changing the composition.");
+        HomeProject.ValidateEdits(state);
+        if (framing != state.Framing)
+        {
+            animation.SetEditState(null);
+            Crop = state.Framing == "fit" ? animation.Fit(width / (float)height, timing.FirstFrame, timing.FrameCount, fps) : AdvMatrix.Identity();
+            projection = AdvMatrix.Multiply(Crop, animation.Camera.ViewProjection(width / (float)height));
+            framing = state.Framing;
+        }
+        animation.SetEditState(state); editState = state; background = state.Background; EnsureRoom();
+    }
+
+    public IReadOnlyList<PreviewTarget> PreviewTargets() => targets;
 
     public static void ValidateDimensions(int width, int height, int supersample)
     {
@@ -53,17 +82,42 @@ public sealed class HomeRenderer : IDisposable
     {
         animation.Advance(frame, fps);
         gl.Begin(Transparent ? [0, 0, 0, 0] : animation.Camera.ClearColor);
-        var items = room?.Items(projection, frame, fps).ToList() ?? [];
-        foreach (var part in animation.Parts)
+        double time = frame / (double)fps;
+        var items = Transparent ? [] : room?.Items(projection, frame, fps).ToList() ?? [];
+        var targetBounds = new Dictionary<string, (Vector2 Min, Vector2 Max)>(StringComparer.Ordinal);
+        foreach (var group in animation.Parts.GroupBy(p => p.SourceOrder))
         {
-            if (part.Actor.Bounds is not { } bounds) continue;
-            var p = AdvMatrix.Transform(part.World, new(bounds.Center, 1));
-            var matrix = AdvMatrix.Multiply(projection, part.World);
-            items.Add(new(part.Queue, part.SortingOrder, Vector3.Distance(animation.Camera.Position, new(p.X, p.Y, p.Z)), items.Count,
-                () => drawing.Draw(part.Actor, matrix, true, part.DepthWrite, part.StraightAlphaInput)));
+            var source = animation.SourceParts[group.Key];
+            var center = source.Actor.Bounds?.Center ?? Vector3.Zero;
+            var p = AdvMatrix.Transform(source.World, new(center, 1));
+            var batches = new List<(HomeAnimation.Part Part, SpineMeshBatch Batch, float[] Matrix)>();
+            foreach (var part in group)
+            {
+                if (!animation.TransformFor(part, time).Visible) continue;
+                var matrix = animation.EditedMatrix(part, projection, width / (float)height, time);
+                foreach (var batch in part.Actor.Mesh.Batches)
+                {
+                    batches.Add((part, batch, matrix));
+                    if (part.CharacterKey is null) continue;
+                    for (int i = 0; i < batch.Positions.Length; i += 3)
+                    {
+                        var projected = AdvMatrix.Transform(matrix, new(batch.Positions[i], batch.Positions[i + 1], batch.Positions[i + 2], 1));
+                        if (projected.W <= 0) continue;
+                        var point = new Vector2((projected.X / projected.W + 1) / 2, (1 - projected.Y / projected.W) / 2);
+                        var bounds = targetBounds.GetValueOrDefault(part.CharacterKey, (new(float.PositiveInfinity), new(float.NegativeInfinity)));
+                        targetBounds[part.CharacterKey] = (Vector2.Min(bounds.Item1, point), Vector2.Max(bounds.Item2, point));
+                    }
+                }
+            }
+            if (batches.Count == 0) continue;
+            items.Add(new(source.Queue, source.SortingOrder, Vector3.Distance(animation.Camera.Position, new(p.X, p.Y, p.Z)), items.Count,
+                () => { foreach (var current in batches.OrderBy(b => b.Batch.DrawOrder)) drawing.DrawBatch(current.Batch, current.Matrix, true, current.Part.DepthWrite, current.Part.StraightAlphaInput); }));
         }
         foreach (var item in HomeRoom.Sort(items)) item.Draw();
-        post?.Render(frame);
+        if (PostProcessing) post!.Render(frame);
+        if (editState is not null) gl.GradeScene(editState.GradeAt(time).ToGradeSpec());
+        targets = targetBounds.Select(pair => new PreviewTarget(pair.Key, animation.Scene.Characters.First(c => c.Key == pair.Key).Name,
+            pair.Value.Min.X, pair.Value.Min.Y, pair.Value.Max.X - pair.Value.Min.X, pair.Value.Max.Y - pair.Value.Min.Y)).ToArray();
     }
     public Pixels Frame(int frame) { Draw(frame); return gl.Present(width, height, supersample, 0, static (_, _, _) => { }, true); }
     public void QueueFrame(int frame)
@@ -79,10 +133,11 @@ public static class HomeExport
 {
     public static JsonObject Run(HomeAnimation animation, string mode, string output, HomeTiming timing, int width = 1920, int height = 1080,
         int supersample = 2, string framing = "scene", bool background = true, string codec = "cineform", string quality = VideoEncoding.DefaultCineFormQuality,
-        bool overwrite = false, string? ffmpeg = null, double[]? times = null, int columns = 3)
+        bool overwrite = false, string? ffmpeg = null, double[]? times = null, int columns = 3, HomeEditState? editState = null)
     {
         if (mode is not ("frame" or "contact" or "clip" or "sequence")) throw new ArgumentException("Unknown home export mode: " + mode);
         HomeRenderer.ValidateDimensions(width, height, supersample);
+        if (editState is not null) { background = editState.Background; framing = editState.Framing; }
         bool transparent = animation.Character is not null || !background;
         codec = VideoEncoding.NormalizeCodec(codec);
         if (mode == "clip")
@@ -113,7 +168,7 @@ public static class HomeExport
                 int last = mode == "frame" ? timing.FirstFrame : (int)Math.Floor(times!.Max() * timing.Fps + 1e-8);
                 fitTiming = new(0, Math.Max(natural.FrameCount, last + 1), timing.Fps);
             }
-            using var renderer = new HomeRenderer(animation, width, height, supersample, fitTiming, framing, background);
+            using var renderer = new HomeRenderer(animation, width, height, supersample, fitTiming, framing, background, editState);
             var result = animation.Describe();
             result["output"] = output; result["mode"] = mode; result["width"] = width; result["height"] = height; result["supersample"] = supersample;
             result["fps"] = timing.Fps; result["firstFrame"] = timing.FirstFrame; result["frameCount"] = mode == "frame" ? 1 : timing.FrameCount;
@@ -122,6 +177,7 @@ public static class HomeExport
             result["background"] = !renderer.Transparent; result["alpha"] = mode == "clip" && codec == "h264" ? "none" : "straight";
             result["roomMeshes"] = renderer.RoomMeshCount; result["device"] = renderer.Device;
             result["postProcessing"] = renderer.PostProcessing;
+            result["edited"] = editState is not null;
             double lastTime = mode == "frame" ? timing.FirstFrame / (double)timing.Fps
                 : mode == "contact" ? Math.Floor(times!.Max() * timing.Fps + 1e-8) / timing.Fps : timing.LastFrame / (double)timing.Fps;
             result["includesSourceEnd"] = lastTime + 1e-7 >= animation.Duration;

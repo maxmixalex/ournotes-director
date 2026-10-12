@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Directory')] [string] $Directory,
     [Parameter(Mandatory, ParameterSetName = 'Package')] [string] $Package,
     [string] $ReportDirectory = 'artifacts/desktop-smoke',
+    [string] $FixtureDirectory,
+    [string] $OpenGLDriver,
     [ValidateRange(10, 300)] [int] $TimeoutSeconds = 120
 )
 
@@ -62,6 +64,14 @@ try {
     $startInfo.Environment['OURNOTES_DIRECTOR_DATA'] = Join-Path $scratch 'desktop profile'
     $startInfo.Environment['OURNOTES_ARCHIVE'] = Join-Path $scratch 'no-game-archive'
     $startInfo.Environment['PATH'] = "$env:WINDIR\System32;$env:WINDIR"
+    if ($FixtureDirectory) {
+        $startInfo.Environment['OURNOTES_STUDIO_FIXTURE'] = (Resolve-Path -LiteralPath $FixtureDirectory).Path
+    }
+    if ($OpenGLDriver) {
+        $startInfo.Environment['OURNOTES_TEST_OPENGL'] = (Resolve-Path -LiteralPath $OpenGLDriver).Path
+        $startInfo.Environment['GALLIUM_DRIVER'] = 'llvmpipe'
+        $startInfo.Environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
+    }
     foreach ($name in @('CUBISM_NATIVE_SDK', 'CUBISM_MOTIONSYNC_DLL', 'FFMPEG_PATH', 'FFPROBE_PATH')) {
         [void] $startInfo.Environment.Remove($name)
     }
@@ -95,6 +105,9 @@ try {
     $checkCount = @($report.checks).Count
     if ($report.checks -isnot [Array] -or $report.pages -isnot [Array] -or $checkCount -eq 0 -or @($report.pages).Count -eq 0) {
         throw 'No actual page and command checks were reported.'
+    }
+    if (@($report.pages).Count -ne 2 -or $report.pages -notcontains 'scenes' -or $report.pages -notcontains 'home') {
+        throw 'The application must expose exactly the scene and home studios as primary pages.'
     }
     if (@($report.captures).Count -lt 2) { throw 'The smoke test did not capture its initial and final WinUI surfaces.' }
     foreach ($capture in $report.captures) {

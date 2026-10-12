@@ -107,7 +107,7 @@ public static class EngineRunnerTests
         if (Opt("--gate") is { } gate) await UntilAsync(() => File.Exists(gate));
         if (mode == "input")
         {
-            string input = args.FirstOrDefault() == "render" ? args[2] : Opt("--script") ?? throw new ArgumentException("fixture input missing");
+            string input = args.FirstOrDefault() == "render" ? args[2] : Opt("--script") ?? Opt("--project") ?? throw new ArgumentException("fixture input missing");
             result["inputPath"] = input; result["input"] = JsonNode.Parse(File.ReadAllText(input));
         }
         if (mode is "file-fail" or "directory-fail") { WriteError("fixture 写入之后失败"); return 3; }
@@ -392,6 +392,21 @@ public static class EngineRunnerTests
             check(scriptResult.Success && scriptTask.Request.Arguments[4] != script &&
                 scriptResult.Result!["input"]![0]!["Values"]!["backgroundImage"]!["path"]!.GetValue<string>() == image,
                 "desktop queue preserves native top-level command-array scripts and rebases their known local images");
+
+            var home = new HomeStudioDocument(new OurNotes.Director.Core.HomeProject(new(77)));
+            home.SetTransform("alice", 1, new(.2, -.1, 1.4));
+            DesktopTask homeTask;
+            using (var snapshot = home.CreateSnapshot(snapshotFolder))
+            {
+                homeTask = queue.Enqueue(new("home.frame", "home project fixture",
+                    ["home", "frame", "77", "--project", snapshot.FilePath, WorkerFlag, "input"], folder));
+                check(homeTask.Request.Arguments[4] != snapshot.FilePath && File.Exists(homeTask.Request.Arguments[4]),
+                    "home export takes ownership of its queued project before the editor snapshot is disposed");
+            }
+            home.SetTransform("alice", 1, new(.8, .3, 2));
+            var homeResult = await homeTask.Completion.WaitAsync(Timeout);
+            check(homeResult.Success && (double?)homeResult.Result!["input"]!["characters"]!["alice"]!["keys"]![0]!["x"] == .2,
+                "home queued exports preserve the authored transform despite later editor changes");
         }
         finally { await queue.DisposeAsync(); }
         int count = queue.Tasks.Count;

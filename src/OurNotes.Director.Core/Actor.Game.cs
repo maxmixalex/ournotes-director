@@ -17,4 +17,10 @@ public sealed unsafe partial class Actor
     public void ToggleRim(float[] color,float shadow){if(gameDrawing is null)throw new InvalidOperationException("Game materials not initialized");gameDrawing.RimEnabled=!gameDrawing.RimEnabled;gameDrawing.RimColor=color;gameDrawing.ShadowIntensity=Math.Clamp(shadow,0,1);}
     public bool GameLighting{set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
     public void SetDirectorTint(float[] tint,float brightness){if(gameDrawing is null)throw new InvalidOperationException("Game drawing not initialized");gameDrawing.DirectorTint=tint;gameDrawing.DirectorBrightness=brightness;}
+    public PreviewTarget? PreviewBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,viewProjection);
+    internal void RefreshPreviewParameters()
+    {
+        foreach(var (id,value) in DirectorParameters)Values[ids[id]]=Math.Clamp(value,Core.Min[ids[id]],Core.Max[ids[id]]);
+        Core.Update(Values);
+    }
 }

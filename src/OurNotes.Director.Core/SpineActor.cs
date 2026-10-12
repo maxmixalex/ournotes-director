@@ -11,7 +11,7 @@ public readonly record struct SpineBounds(Vector3 Min, Vector3 Max)
 }
 
 public sealed record SpineMeshBatch(SpineTexture Texture, int BlendMode, float[] Positions, float[] UVs,
-    float[] Colors, float[] DarkColors, uint[] Indices);
+    float[] Colors, float[] DarkColors, uint[] Indices, int DrawOrder = 0);
 public sealed record SpineMesh(IReadOnlyList<SpineMeshBatch> Batches, SpineBounds? Bounds);
 
 // Each instance is a real SkeletonAnimation component, including a character's separate shadow/back/prop skeleton.
@@ -138,7 +138,13 @@ public sealed class SpineActor
                 if (attachment is ClippingAttachment clip) { clipper.ClipStart(slot, clip); continue; }
                 // Shared home skeletons can contain several characters. Their complete animation and constraint
                 // state is preserved; only renderable slots are filtered, without changing clipping end markers.
-                if (includedSlots is not null && !includedSlots.Contains(slot.Data.Name)) { clipper.ClipEnd(slot); continue; }
+                if (includedSlots is not null && !includedSlots.Contains(slot.Data.Name))
+                {
+                    // A separately edited character may be interleaved with another character's slots.
+                    // End the contiguous batch so callers can merge their original draw-order ranges.
+                    if (current is not null) { batches.Add(current.Finish()); current = null; }
+                    clipper.ClipEnd(slot); continue;
+                }
                 int vertexCount;
                 float[] uvs;
                 int[] triangles;
@@ -185,7 +191,7 @@ public sealed class SpineActor
                 if (current is null || current.Texture != texture || current.BlendMode != blend)
                 {
                     if (current is not null) batches.Add(current.Finish());
-                    current = new(texture, blend);
+                    current = new(texture, blend, order);
                 }
                 // Spine-Unity's MeshGenerator writes Color32 after alpha premultiplication.
                 float alphaByte = Byte(alpha * 255);
@@ -222,7 +228,7 @@ public sealed class SpineActor
     static float Byte(float value) => Math.Clamp(MathF.Truncate(value), 0, 255);
     void EnsureWorld(int length) { if (world.Length < length) Array.Resize(ref world, Math.Max(length, world.Length * 2)); }
 
-    sealed class Batch(SpineTexture texture, int blendMode)
+    sealed class Batch(SpineTexture texture, int blendMode, int drawOrder)
     {
         public SpineTexture Texture { get; } = texture;
         public int BlendMode { get; } = blendMode;
@@ -231,6 +237,6 @@ public sealed class SpineActor
         public List<float> Colors { get; } = [];
         public List<float> DarkColors { get; } = [];
         public List<uint> Indices { get; } = [];
-        public SpineMeshBatch Finish() => new(Texture, BlendMode, Positions.ToArray(), UVs.ToArray(), Colors.ToArray(), DarkColors.ToArray(), Indices.ToArray());
+        public SpineMeshBatch Finish() => new(Texture, BlendMode, Positions.ToArray(), UVs.ToArray(), Colors.ToArray(), DarkColors.ToArray(), Indices.ToArray(), drawOrder);
     }
 }

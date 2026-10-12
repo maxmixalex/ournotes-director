@@ -29,10 +29,13 @@ public sealed unsafe class UnityShader : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]delegate void Delete(int count,ref uint id);
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]delegate void Data(uint target,nint size,nint data,uint usage);
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]delegate void Pointer(uint index,int size,uint type,byte normalized,int stride,nint offset);
-    static readonly Dictionary<string,Delegate> functions=[];
+    // Each live studio owns a GL context on its own thread. Driver entry points and
+    // lazy dictionary writes must not be shared between those rendering threads.
+    [ThreadStatic]static Dictionary<string,Delegate>? functions;
     static T Fn<T>(string name)where T:Delegate
     {
-        if(!functions.TryGetValue(name,out var f)){nint p=OperatingSystem.IsLinux()?LinuxGlContext.Proc(name):wglGetProcAddress(name);if(p is 0 or 1 or 2 or 3 or -1)throw new NotSupportedException("Missing desktop GL function: "+name);functions[name]=f=Marshal.GetDelegateForFunctionPointer<T>(p);}return(T)f;
+        var cache=functions??=[];
+        if(!cache.TryGetValue(name,out var f)){nint p=OperatingSystem.IsLinux()?LinuxGlContext.Proc(name):wglGetProcAddress(name);if(p is 0 or 1 or 2 or 3 or -1)throw new NotSupportedException("Missing desktop GL function: "+name);cache[name]=f=Marshal.GetDelegateForFunctionPointer<T>(p);}return(T)f;
     }
     readonly uint program,vao;readonly List<uint> buffers=[];
     readonly List<(string Name,int Components,uint Buffer,float[] Default)> attributes=[];
