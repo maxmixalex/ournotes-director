@@ -118,6 +118,11 @@ public sealed partial class StudioSceneDocument
                     && int.TryParse(key[(Marker.Length + 9)..], NumberStyles.None, CultureInfo.InvariantCulture, out int end) && end is >= 1 and <= 1080000)
                 { declared = Math.Max(declared, cursorKnown ? cursor : end); continue; }
                 if (TryReadKey(row, start, cursorKnown, out var parsed)) { keys.Add(parsed!); last = Math.Max(last, parsed!.Frame); continue; }
+                if (key.StartsWith(Marker, StringComparison.Ordinal))
+                {
+                    timingKnown = false;
+                    timingMessage = "工作台标记与原生指令不一致。为了保留高级 JSON 修改，视觉轨道暂为只读；可继续原生预览与导出。";
+                }
                 var original = RestoreTiming(row);
                 int originalSpan = ignored ? 0 : KnownTiming(original, command, out int value) ? value : span;
                 int originalEnd = start + originalSpan - (originalSpan > 0 && command.StartsWith("Director.", StringComparison.Ordinal) && start > 0 && !rowAfterTweens ? 1 : 0);
@@ -128,6 +133,28 @@ public sealed partial class StudioSceneDocument
         if (!timingKnown && document.Kind == SceneDocumentKind.LegacyShot && Number(root["duration"], 3) is double legacyDuration)
             durationFrames = ToFrame(Math.Clamp(legacyDuration, 1d / FramesPerSecond, 36000), positive: true);
         frame = Math.Min(frame, durationFrames);
+        // Sparse keys are the editable source; bake rows are their derived native playback cache.
+        // Rebuild only after all markers and timing have been accepted. Preserve untouched source
+        // text on an ordinary round trip, but never publish stale cached frames after a key edit.
+        if (timingKnown && keys.Count > 0)
+        {
+            var baseline = EvaluateOriginal(0, includeEvents: false);
+            var tracks = keys.Where(key => key.Numeric).Select(key => (key.Target, Property: CanonicalProperty(key.Property))).Distinct().ToArray();
+            bool overlaps = tracks.Any(left => tracks.Any(right => left.Target == right.Target && left.Property != right.Property
+                && left.Property.StartsWith(right.Property + ".", StringComparison.Ordinal)));
+            bool invalidActorSpace = keys.Where(key => key.Track.StartsWith("actor.", StringComparison.Ordinal)).Any(key =>
+                !baseline.Actors.TryGetValue(key.Target, out var actor) || actor.Space is not ("world" or "screen")
+                || Text(key.Row["Space"]) is { Length: > 0 } space && space != actor.Space
+                || key.Property == "position" && key.Value is JsonArray position && position.Count != (actor.Space == "world" ? 3 : 2)
+                || originals.Any(row => row.Command == "Director.Actor" && Text(row.Data["TargetName"]) == key.Target
+                    && Text(row.Data["Space"]) is { Length: > 0 } laterSpace && laterSpace != actor.Space));
+            if (overlaps || invalidActorSpace || keys.Select(key => key.Id).Distinct(StringComparer.Ordinal).Count() != keys.Count)
+            {
+                timingKnown = false;
+                timingMessage = "关键帧包含重叠属性、变化的坐标空间或重复标识。为了保留原生结果，视觉轨道暂为只读；可继续预览与导出。";
+            }
+            else Compile(preserveEquivalentText: true);
+        }
     }
 
     static bool KnownTiming(JsonObject row, string command, out int span)
@@ -176,7 +203,7 @@ public sealed partial class StudioSceneDocument
         originals.Add(new(NewId(), "commands", originals.Count, command, row, at, at + span, nextOrder++, true));
     }
 
-    void Compile()
+    void Compile(bool preserveEquivalentText = false)
     {
         EnsureTimeline();
         InvalidateSamples();
@@ -249,7 +276,9 @@ public sealed partial class StudioSceneDocument
             commands.Add((JsonNode)item.Row); cursor = item.Frame;
         }
         root["commands"] = commands;
-        document.ReplaceText(root.ToJsonString(DesktopSettings.JsonOptions)); InvalidateSamples();
+        if (!preserveEquivalentText || !EquivalentCompilation(root, document.Root))
+            document.ReplaceText(root.ToJsonString(DesktopSettings.JsonOptions));
+        InvalidateSamples();
         frame = Math.Min(frame, durationFrames);
     }
 
@@ -298,6 +327,19 @@ public sealed partial class StudioSceneDocument
         var copy = (JsonObject)row.DeepClone(); copy.Remove("Key");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(copy.ToJsonString())));
     }
+    static bool EquivalentCompilation(JsonObject compiled, JsonObject existing)
+    {
+        var left = (JsonObject)compiled.DeepClone();
+        // Track grouping can change object property order after keys are read in time order.
+        // With overlapping tracks excluded, that does not change playback. Existing valid row
+        // digests may therefore differ solely because their object's property order differs.
+        foreach (var root in new[] { left, existing })
+            if (root["commands"] is JsonArray commands)
+                foreach (var row in commands.OfType<JsonObject>())
+                    if (Text(row["Key"]) is var key && key.StartsWith(Marker + "bake/", StringComparison.Ordinal))
+                        row["Key"] = key[..(key.LastIndexOf('/') + 1)];
+        return JsonNode.DeepEquals(left, existing);
+    }
     static bool TryReadKey(JsonObject row, int actualFrame, bool known, out TimelineKey? key)
     {
         key = null; string marker = Text(row["Key"]), prefix = Marker + "key/";
@@ -308,7 +350,7 @@ public sealed partial class StudioSceneDocument
             if (parts.Length != 5 || parts[0].Length == 0 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int at) || at is < 0 or > 1080000) return false;
             string track = Uri.UnescapeDataString(parts[2]), target = Uri.UnescapeDataString(parts[3]), ease = Uri.UnescapeDataString(parts[4]);
             CheckEase(ease);
-            if (Number(row["Duration"]) != 0 || !Flag(row["IsNoWait"])) return false;
+            if (Ignored(row) || Number(row["Duration"]) != 0 || !Flag(row["IsNoWait"])) return false;
             var candidate = new TimelineKey(parts[0], target, track, known ? actualFrame : at, ease, (JsonObject)row.DeepClone());
             if (candidate.Value is null || Target(row) != target) return false;
             if (track.StartsWith("actor.", StringComparison.Ordinal) && Command(row) != "Director.Actor"
@@ -316,6 +358,10 @@ public sealed partial class StudioSceneDocument
                 || track.StartsWith("scene.", StringComparison.Ordinal) && Command(row) != "Director.Scene"
                 || track == "motion" && Command(row) != "Motion" || track == "expression" && Command(row) != "Expression") return false;
             if (!candidate.IsEvent && track.IndexOf('.') < 0) return false;
+            if (!candidate.IsEvent && (Category(Command(row)) is not ("actor" or "camera" or "scene")
+                || track[..track.IndexOf('.')] != Category(Command(row)))) return false;
+            if (!candidate.IsEvent && (row["Values"] is not JsonObject values
+                || Leaves(values).Count() != 1 || Leaves(values).Single().Path != candidate.Property)) return false;
             key = candidate; return true;
         }
         catch (Exception error) when (error is ArgumentException or FormatException or InvalidOperationException) { return false; }

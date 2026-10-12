@@ -10,6 +10,7 @@ public static class StudioSceneDocumentTests
     {
         Basics(check);
         Timeline(check);
+        ImportedKeySynchronization(check);
         OriginalCommands(check);
         HistoryAndFiles(check);
         NativeFrameClock(check);
@@ -164,6 +165,89 @@ public static class StudioSceneDocumentTests
         var talk = StudioSceneDocument.Parse(json.Replace("\"cmd\":\"Motion\"", "\"cmd\":\"Talk\"", StringComparison.Ordinal));
         check(!talk.CanEditTimeline && talk.RawCommands.Any(row => row.Command == "Talk"),
             "studio leaves resource-dependent dialogue timing as complete raw instructions");
+    }
+    static void ImportedKeySynchronization(Action<bool, string> check)
+    {
+        var source = StudioSceneDocument.Create(new("42", "intl", "zh-Hans"), 1);
+        string actor = source.AddActor("fixture-model");
+        source.SetActorTransform(actor, .2, .4, .8, 0, 0, false);
+        source.SetActorTransform(actor, .8, .4, .8, 0, 1, true);
+        string original = source.Document.Text;
+        string spaced = " \n" + original + "\n ";
+        var unchanged = StudioSceneDocument.Parse(spaced);
+        check(unchanged.Document.Text == spaced && unchanged.Keyframes.Count == source.Keyframes.Count,
+            "studio reopening a synchronized key/cache document preserves its literal text and sparse key relationships");
+        var reorderedTracks = StudioSceneDocument.Parse(original); reorderedTracks.SetActorOpacity(actor, .5, .5, true);
+        string reorderedText = reorderedTracks.Document.Text;
+        check(StudioSceneDocument.Parse(reorderedText).Document.Text == reorderedText,
+            "studio reopening tracks created in a different order from their key times preserves valid cache hashes and literal JSON");
+        var input = source.Document.Root;
+        var key = input["commands"]!.AsArray().OfType<JsonObject>().Single(row =>
+            row["Key"]?.ToString().StartsWith("ournotes-studio/1/key/", StringComparison.Ordinal) == true
+            && row["Values"]?["position"] is not null);
+        key["Values"]!["position"]![0] = .4;
+        input["text"] = new JsonObject { ["precise"] = JsonNode.Parse("123456789012345678901234567890") };
+        string edited = input.ToJsonString();
+        var stale = Playback(input); stale.Player.Start(); for (int frame = 0; frame < 15; frame++) stale.Player.Step();
+        check(Near(stale.X, .5), "studio synchronization fixture actually contains old native frames after a sparse endpoint edit");
+        var imported = StudioSceneDocument.Parse(edited);
+        var native = Playback(imported.Document.Root); native.Player.Start();
+        check(imported.CanEditTimeline && imported.Document.Text != edited && imported.Document.Root["text"]!["precise"]!.ToJsonString() == "123456789012345678901234567890",
+            "studio importing a changed sparse key replaces stale native frames while preserving unrelated exact JSON data");
+        for (int frame = 0; frame <= 30; frame++)
+        {
+            if (frame > 0) native.Player.Step();
+            double expected = .2 + .2 * frame / 30;
+            check(Near(native.X, expected) && Near(imported.Sample(frame / 30d).Actors[0].Transform.X, expected),
+                "studio imported sparse values match regenerated native playback and the expected curve at frame " + frame);
+        }
+        source.ReplaceJson(edited);
+        var replaced = Playback(source.Document.Root); replaced.Player.Start(); for (int frame = 0; frame < 15; frame++) replaced.Player.Step();
+        check(Near(replaced.X, .3) && Near(source.Sample(.5).Actors[0].Transform.X, .3),
+            "studio ReplaceJson synchronizes native playback before returning to the editor");
+        check(source.Undo() && source.Document.Text == original && source.Redo() && Near(source.Sample(.5).Actors[0].Transform.X, .3),
+            "studio synchronization remains one reversible JSON edit");
+        string folder = Path.Combine(Path.GetTempPath(), "ournotes-studio-sync-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string cleanPath = Path.Combine(folder, "clean.json"), stalePath = Path.Combine(folder, "stale.json");
+            File.WriteAllText(cleanPath, spaced); File.WriteAllText(stalePath, edited);
+            var clean = StudioSceneDocument.Open(cleanPath); var loaded = StudioSceneDocument.Open(stalePath);
+            check(!clean.Document.IsModified && clean.Document.Text == spaced,
+                "studio opening a synchronized saved file does not mark it modified");
+            var loadedNative = Playback(loaded.Document.Root); loadedNative.Player.Start(); for (int frame = 0; frame < 15; frame++) loadedNative.Player.Step();
+            check(loaded.Document.IsModified && Near(loadedNative.X, .3) && File.ReadAllText(stalePath) == edited,
+                "studio opening stale saved frames repairs the in-memory project and marks it unsaved without rewriting the source file");
+        }
+        finally { Directory.Delete(folder, true); }
+        var manual = (JsonObject)input.DeepClone();
+        var bake = manual["commands"]!.AsArray().OfType<JsonObject>().Single(row =>
+            row["Key"]?.ToString().StartsWith("ournotes-studio/1/bake/15/", StringComparison.Ordinal) == true);
+        bake["Values"]!["position"]![0] = .9;
+        string manualText = manual.ToJsonString(); var protectedManual = StudioSceneDocument.Parse(manualText);
+        var manualNative = Playback(protectedManual.Document.Root); manualNative.Player.Start(); for (int frame = 0; frame < 15; frame++) manualNative.Player.Step();
+        check(!protectedManual.CanEditTimeline && protectedManual.Document.Text == manualText && Near(manualNative.X, .9),
+            "studio stale-key synchronization never overwrites a manually modified native bake row");
+        var additional = (JsonObject)input.DeepClone();
+        additional["commands"]!.AsArray().OfType<JsonObject>().Single(row => row["Key"]?.ToString() == key["Key"]!.ToString())["Values"]!["opacity"] = .25;
+        string additionalText = additional.ToJsonString(); var protectedAdditional = StudioSceneDocument.Parse(additionalText);
+        check(!protectedAdditional.CanEditTimeline && protectedAdditional.Document.Text == additionalText,
+            "studio preserves native properties added to a sparse row instead of silently discarding unmodeled edits");
+        var ignored = (JsonObject)input.DeepClone();
+        ignored["commands"]!.AsArray().OfType<JsonObject>().Single(row => row["Key"]?.ToString() == key["Key"]!.ToString())["IgnoreData"] = true;
+        string ignoredText = ignored.ToJsonString(); var protectedIgnored = StudioSceneDocument.Parse(ignoredText);
+        check(!protectedIgnored.CanEditTimeline && protectedIgnored.Document.Text == ignoredText,
+            "studio ignored sparse rows cannot drive editable curves or overwrite native playback during synchronization");
+        var changedSpace = (JsonObject)input.DeepClone();
+        changedSpace["commands"]!.AsArray().OfType<JsonObject>().Single(row => row["Key"]?.ToString() == key["Key"]!.ToString())["Space"] = "world";
+        string changedSpaceText = changedSpace.ToJsonString(); var protectedSpace = StudioSceneDocument.Parse(changedSpaceText);
+        check(!protectedSpace.CanEditTimeline && protectedSpace.Document.Text == changedSpaceText,
+            "studio keeps native coordinate-space changes intact when sparse handle curves cannot represent them");
+        var unknown = (JsonObject)input.DeepClone(); unknown["commands"]!.AsArray().Add((JsonNode)new JsonObject { ["cmd"] = "Wait" });
+        string unknownText = unknown.ToJsonString(); var protectedUnknown = StudioSceneDocument.Parse(unknownText);
+        check(!protectedUnknown.CanEditTimeline && protectedUnknown.Document.Text == unknownText,
+            "studio cache synchronization keeps scripts with uncertain native timing completely unchanged");
     }
     static void HistoryAndFiles(Action<bool, string> check)
     {

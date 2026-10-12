@@ -182,7 +182,8 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     {
         if (!await ConfirmReplaceAsync()) return;
         SaveDraft(); var document = SceneDocument.Open(path);
-        SetDocument(StudioSceneDocument.FromSceneDocument(document)); _savedJson = _document!.ToJson();
+        string savedJson = document.ToJson();
+        SetDocument(StudioSceneDocument.FromSceneDocument(document)); _savedJson = savedJson; RefreshHeader();
         _window.Settings.RememberProject(path); _window.SaveSettings(); await ReloadAsync();
     }
     internal async Task SaveAsync(bool saveAs = false)
@@ -608,7 +609,17 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         if (await dialog.ShowAsync() == ContentDialogResult.Primary && replacement is not null)
         { SaveDraft(); if (_document is null) SetDocument(replacement); else { _document.ReplaceJson(replacement.ToJson()); RefreshObjects(); RefreshTimeline(); BuildProperties(); } await ReloadAsync(); }
     }
-    private string AgentInstructions() => "请为 OurNotes Director 生成场景 JSON，只返回一个 JSON 对象。格式为 ournotes-director/project，version 为 1。source 使用实际素材来源；output 使用 cineform、cineformQuality film1。角色用 Character 创建，再用 Director.Actor（Space=screen）摆放；position=[x,y] 从左上归一化，height 为画布比例。使用原生 Motion/Expression、Director.Camera、Director.Scene 和 Delay 编排时间，不要编造模型或动作。保留未要求更改的字段。以下是当前项目：\n" + (_document?.ToJson() ?? "请先向我确认实际素材编号。");
+    private string AgentInstructions() => """
+        请为 OurNotes Director 生成完整场景 JSON，只返回一个 JSON 对象。
+        格式为 ournotes-director/project，version 为 1；source 必须沿用实际素材来源，不能编造模型、动作或表情名。
+        新项目必须明确提供 initialize、commands、finalize；[] 表示空段，省略表示继承原剧情。output 使用 codec=cineform、cineformQuality=film1。
+        角色用 Character 创建，再用 Director.Actor（Space=screen）摆放；position=[x,y] 从左上归一化，height 为画布比例。
+        原生项目使用 Motion、Expression、Director.Camera、Director.Scene 和 Delay 编排；Delay.Frames 是 30 fps 的整数帧数，同一 Delay 不要同时提供非零 Duration。
+        如果当前项目含 Key 以 ournotes-studio/1/key/ 开头的工作台关键帧，可修改其 Values，动作和表情修改对应的 MotionName / ExpressionName。保留 Key 和其他行；工作台应用 JSON 时会重建派生中间帧。
+        不要修改、删除或重排 ournotes-studio/1/bake/ 行、删除生成的 wait/duration 行，或改动 i 中的原始时序记录。这些项目的关键帧时刻和插值请在时间轴调整。
+        保留未要求修改的字段。应用后先保存项目，再交给 CLI 或其他 agent 使用。
+        以下是当前项目：
+        """ + "\n" + (_document?.ToJson() ?? "请先向我确认实际素材编号。");
     private static string DraftPath => Path.Combine(DesktopSettings.DataDirectory, "studio-scene-draft.json");
     internal void SaveDraft()
     {
