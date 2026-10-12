@@ -1,6 +1,6 @@
 # OurNotes Director 使用指南
 
-本工具用于下载和更新 Our Notes 素材归档，并制作 MAD 镜头：检索素材、回放原剧情、用游戏指令重新编排演出，导出主页 Spine 的完整动画及独立角色视频。Windows 入口是 `advkit.exe`，Linux 入口是 `advkit`；两者来自同一套 C# 源码，发布程序不需要安装 .NET。
+本工具用于下载和更新 Our Notes 素材归档，并制作 MAD 镜头：检索素材、回放原剧情、用游戏指令重新编排演出，导出主页 Spine 的完整动画及独立角色视频。**Windows 图形界面入口为 `OurNotes.Director.exe`，使用方法见 [桌面工作台指南](DESKTOP.md)。** 本文介绍 CLI：Windows 入口是 `advkit.exe`，Linux 入口是 `advkit`；两者来自同一套 C# 源码，发布程序不需要安装 .NET。
 
 实现边界是 **ournotes-player 的普通剧情、已归档的主页 Spine 演出及 MAD 导出**，不是通用 Unity 引擎。运行时为 C# + 原生运行库 + 离屏 OpenGL；不启动浏览器，不执行 JavaScript，不使用 Python。
 

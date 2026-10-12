@@ -78,6 +78,8 @@ jobs:
         run: dotnet build OurNotes.Director.sln -c Release --nologo
       - name: Run core and archive tests
         run: dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore
+      - name: Run desktop command and JSON contract tests
+        run: dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release
       - name: Publish Native AOT
         run: dotnet publish src/OurNotes.Director.Cli -c Release -r ${{ matrix.rid }} -o artifacts/${{ matrix.rid }} --nologo
       - name: Stage native SDK runtimes and licenses
@@ -127,6 +129,10 @@ jobs:
           --fixture-writer artifacts/native-tests/OurNotes.Director.NativeTests
           --ffmpeg artifacts/linux-x64/tools/ffmpeg
           --ffprobe artifacts/linux-x64/tools/ffprobe
+      - name: Build and stage the self-contained WinUI frontend
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-desktop.ps1 -OutputDirectory artifacts/win-x64
       - name: Package executable and documentation
         shell: pwsh
         run: |
@@ -153,6 +159,22 @@ jobs:
           $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
           python tests/package-smoke.py --package "packages/ournotes-director-$rid.$extension" --native-tests $testBinary
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Launch and verify WinUI from the extracted Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./tests/desktop-smoke.ps1
+          -Package packages/ournotes-director-win-x64.zip
+          -ReportDirectory artifacts/desktop-smoke
+      - name: Upload actual WinUI screenshots and smoke report
+        if: always() && runner.os == 'Windows'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ournotes-director-winui-evidence
+          path: artifacts/desktop-smoke/*
+          if-no-files-found: ignore
+          retention-days: 30
       - uses: actions/upload-artifact@v7
         id: artifact
         continue-on-error: >-

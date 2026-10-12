@@ -74,6 +74,28 @@ try
         Console.WriteLine(JsonOutput.Serialize(JsonOutput.Object(("schema", "ournotes-director/1"), ("ok", true), ("result", runtime)), json));
         return 0;
     }
+    // Local media operations do not depend on a game archive. The desktop tools use
+    // these before a user has downloaded any game resources.
+    if ((command == "media" && verb is "probe" or "clip" or "mux") ||
+        (command == "image" && verb is "probe" or "compare"))
+    {
+        string LocalOutput() => Opt("out") is { Length: > 0 } path ? path : throw new ArgumentException("--out is required");
+        string LocalTool(string name) => NativeDependencies.MediaTool(name, options.GetValueOrDefault(name));
+        object localResult = (command, verb) switch
+        {
+            ("image", "probe") => ImageProbe.Inspect(Required(2)),
+            ("image", "compare") => ImageProbe.Compare(Required(2), Required(3)),
+            ("media", "probe") => Media.Probe(Required(2), LocalTool("ffprobe")),
+            ("media", "clip") => Media.Clip(Required(2), LocalOutput(), double.Parse(Opt("start", "0"), System.Globalization.CultureInfo.InvariantCulture),
+                double.Parse(Opt("duration", "5"), System.Globalization.CultureInfo.InvariantCulture), options.ContainsKey("overwrite"),
+                LocalTool("ffmpeg"), LocalTool("ffprobe"), Opt("codec", "prores"), Opt("cineform-quality", VideoEncoding.DefaultCineFormQuality)),
+            ("media", "mux") => Media.Mux(Required(2), Opt("audio") is { Length: > 0 } audio ? audio : throw new ArgumentException("--audio is required"),
+                Opt("subtitles") is { Length: > 0 } subtitles ? subtitles : null, LocalOutput(), options.ContainsKey("overwrite"), LocalTool("ffmpeg"), LocalTool("ffprobe")),
+            _ => throw new NotSupportedException("Unknown local media operation")
+        };
+        Console.WriteLine(JsonOutput.Serialize(JsonOutput.Object(("schema", "ournotes-director/1"), ("ok", true), ("result", localResult)), json));
+        return 0;
+    }
     // Both project files and adapted legacy Shot files use the native ADV executor.
     if(command=="render"){
         string projectPath=Required(2);
@@ -167,11 +189,6 @@ try
     }
     else if(command=="model"&&verb=="gallery")result=Gallery.Models(archive,site,NativeDll(),Required(2),Opt("kind","expression"),offset,Math.Min(limit,48),double.Parse(Opt("time","1"),System.Globalization.CultureInfo.InvariantCulture),Output(),options.ContainsKey("overwrite"));
     else if(command=="asset"&&verb=="gallery")result=Gallery.Assets(archive,site,Arg(2),offset,Math.Min(limit,48),Output(),options.ContainsKey("overwrite"));
-    else if(command=="media"&&verb=="probe")result=Media.Probe(Required(2),MediaTool("ffprobe"));
-    else if(command=="media"&&verb=="mux")result=Media.Mux(Required(2),Opt("audio") is {Length:>0} audio?audio:throw new ArgumentException("--audio is required"),Opt("subtitles") is {Length:>0} subs?subs:null,Output(),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"));
-    else if(command=="image"&&verb=="probe")result=ImageProbe.Inspect(Required(2));
-    else if(command=="image"&&verb=="compare")result=ImageProbe.Compare(Required(2),Required(3));
-    else if(command=="media"&&verb=="clip")result=Media.Clip(Required(2),Output(),double.Parse(Opt("start","0"),System.Globalization.CultureInfo.InvariantCulture),double.Parse(Opt("duration","5"),System.Globalization.CultureInfo.InvariantCulture),options.ContainsKey("overwrite"),MediaTool("ffmpeg"),MediaTool("ffprobe"),Opt("codec","prores"),Opt("cineform-quality",VideoEncoding.DefaultCineFormQuality));
     else if ((command == "model" && verb == "show") || (command == "probe" && verb == "model") || (command is "motion" or "expression" && verb == "list"))
     {
         var model = archive.Model(site, Required(2));

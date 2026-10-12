@@ -1,8 +1,8 @@
 # OurNotes Director / advkit
 
-**用户入口：[CLI 使用指南](USER_GUIDE.md)**。统一 `render` 接受原游戏指令及自由编排扩展，旧 Shot 自动适配到同一原生执行器。[主页 Spine 导出](HOME_SPINE.md)使用 `home`，支持完整场景及每个角色的动画；[CineForm 透明 MOV](CINEFORM.md)说明质量参数和 Premiere Pro 2015 的支持依据。本文保留较详细的素材与 Shot 格式说明。
+**用户入口：[Windows 桌面工作台](DESKTOP.md) · [CLI 使用指南](USER_GUIDE.md)**。Windows 包提供完整 WinUI 3 前端，可选择资源、编辑或粘贴场景 JSON、预览、导出并管理任务。统一 `render` 接受原游戏指令及自由编排扩展，旧 Shot 自动适配到同一原生执行器。[主页 Spine 导出](HOME_SPINE.md)支持完整场景及每个角色的动画；[CineForm 透明 MOV](CINEFORM.md)说明质量参数和 Premiere Pro 2015 的支持依据。本文保留较详细的素材与 Shot 格式说明。
 
-面向素材归档、检索和 MAD 镜头渲染的原生 CLI。Windows 和 Linux 共用 `src/` 下的同一套 C# 源码，由 `win-x64` / `linux-x64` 编译目标决定发布平台。正式发布使用 **.NET 10 Native AOT**，解压后直接运行 `advkit.exe` / `advkit`，用户机器不需要安装 .NET、Node.js 或 Python。
+面向素材归档、检索和 MAD 镜头渲染的工具。Windows 和 Linux 的执行器共用 `src/` 下的同一套 C# 源码，由 `win-x64` / `linux-x64` 编译目标决定发布平台。CLI 正式发布使用 **.NET 10 Native AOT**，入口是 `advkit.exe` / `advkit`。Windows 桌面入口是 **`OurNotes.Director.exe`**，WinUI 3 前端自带 .NET 与 Windows App SDK 运行时。两种入口均不需要用户另装 .NET、Node.js 或 Python。
 
 已能生成真实模型的透明角色、动作/表情动画、多角色构图、舞台背景镜头，以及主页 Spine 的完整动画和独立角色动画。输出包括 PNG 帧序列、CineForm RGB + alpha MOV、ProRes 4444、FFV1 和 H.264。`archive` 联网更新素材，检索和渲染使用本地归档。剧情固定 30 Hz 逐帧模拟；主页默认 30 fps，可显式指定 1–120 fps，渲染速度不改变片长。
 
@@ -11,6 +11,8 @@
 GitHub Actions 的 [**Build native executables** 工作流](https://github.com/maxmixalex/ournotes-director/actions/workflows/build.yml)在 GitHub 托管的 `ubuntu-24.04` 与 `windows-2022` 上分别构建、测试和发布。完成后下载 `ournotes-director-linux-x64` / `ournotes-director-win-x64` artifact，解开其中的平台压缩包；包内包含原生程序、原生运行库、音视频工具、使用指南、许可证和示例剧本。请保留整个解压目录，不能只复制 `advkit` 可执行文件。
 
 默认交付位置是 Actions artifacts。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会把各平台测试通过的包分别保存为独立的**草稿 Release**，下载链接见对应 job 的 Summary。草稿只有具有仓库写权限的人能查看；其他情况仍使用 artifacts。
+
+**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 在“开始”选择已有归档或下载素材，再进入“主页动画”或“场景工作台”。JSON 可以从剪贴板粘贴、拖入文件，或从模板创建；所有 71 项 CLI 操作都有对应页面与参数表单。工作台提供系统主题、文件选择、真实资源列表、透明图像预览、视频播放代理和可取消的后台任务。具体步骤见 [桌面使用说明](DESKTOP.md)。Linux 继续使用下面的 CLI。
 
 ```powershell
 # Windows：在解压后的目录中运行
