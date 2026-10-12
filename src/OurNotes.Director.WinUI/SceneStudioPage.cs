@@ -17,8 +17,8 @@ namespace OurNotes.Director.WinUI;
 internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
 {
     private readonly MainWindow _window;
-    private readonly NativeViewport _viewport = new();
-    private readonly StudioTimeline _timeline = new();
+    private readonly NativeViewport _viewport = App.TraceConstruction("Scene NativeViewport", () => new NativeViewport());
+    private readonly StudioTimeline _timeline = App.TraceConstruction("Scene StudioTimeline", () => new StudioTimeline());
     private readonly ListView _objects = new() { SelectionMode = ListViewSelectionMode.Single };
     private readonly Button _addActor;
     private readonly StackPanel _properties = Ui.Stack(12);
@@ -48,6 +48,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
 
     internal SceneStudioPage(MainWindow window)
     {
+        App.TraceStartup("SceneStudioPage fields initialized");
         _window = window;
         var file = new DropDownButton { Content = new FontIcon { Glyph = "\uE8E5", FontSize = 15 }, Padding = new(10, 7, 10, 7) };
         var menu = new MenuFlyout();
@@ -94,7 +95,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         var center = new Grid(); center.Children.Add(_viewport); center.Children.Add(_welcome);
         _notice.VerticalAlignment = VerticalAlignment.Top; _notice.Margin = new(8); center.Children.Add(_notice);
         var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("属性"), _autoKey, _properties, _hint));
-        Content = new StudioLayout(left, center, right, _timeline, toolbar);
+        Content = App.TraceConstruction("Scene StudioLayout", () => new StudioLayout(left, center, right, _timeline, toolbar));
         _properties.Children.Add(Ui.Text("在左侧或画布中选择角色、相机与画面。", 13, true));
 
         _timeline.SeekRequested += time => _ = SafeAsync(() => SeekAsync(time));
@@ -109,6 +110,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         _viewport.ObjectScaled += (_, scale) => _ = SafeAsync(() => ScaleAsync(scale));
         _viewport.FramePresented += (_, frame) => OnFrame(frame);
         _viewport.Failed += (_, error) => Notice(error.Message);
+        App.TraceStartup("SceneStudioPage dispatcher timers");
         _propertyTimer = DispatcherQueue.CreateTimer(); _propertyTimer.Interval = TimeSpan.FromMilliseconds(220);
         _propertyTimer.IsRepeating = false; _propertyTimer.Tick += (_, _) => FlushProperty();
         _draftTimer = DispatcherQueue.CreateTimer(); _draftTimer.Interval = TimeSpan.FromMilliseconds(800);
@@ -135,6 +137,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
             }
         };
         Unloaded += (_, _) => Deactivate();
+        App.TraceStartup("SceneStudioPage initialized");
     }
 
     private void Notice(string text, bool error = true)

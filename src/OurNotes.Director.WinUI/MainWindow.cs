@@ -41,9 +41,11 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
+        App.TraceStartup("MainWindow fields initialized");
         Current = this; Title = "OurNotes Director";
         _root.Style = (Style)Application.Current.Resources["WorkspaceRootStyle"];
         Settings = DesktopSettings.Load(); Jobs = new TaskQueue(Engine); Jobs.Changed += TaskChanged;
+        App.TraceStartup("MainWindow position");
         bool positioned = false;
         try
         {
@@ -55,8 +57,10 @@ public sealed class MainWindow : Window
                 positioned = true;
             }
         }
-        catch (Exception error) when (error is COMException or InvalidOperationException or NotSupportedException) { }
+        catch (Exception error) when (error is COMException or InvalidOperationException or NotSupportedException or InvalidCastException)
+        { App.TraceStartup("Display placement unavailable: " + error.Message); }
         if (!positioned) AppWindow.Resize(new(1100, 740));
+        App.TraceStartup("MainWindow chrome");
         _root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
         _root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -91,7 +95,11 @@ public sealed class MainWindow : Window
         _root.SizeChanged += (_, _) => _drawer.Width = Math.Min(820, Math.Max(460, _root.ActualWidth - 90));
         _root.ActualThemeChanged += (_, _) => _drawer.Background = new SolidColorBrush(_root.ActualTheme == ElementTheme.Dark
             ? Color.FromArgb(255, 32, 32, 32) : Color.FromArgb(255, 248, 248, 248));
-        Content = _root; ApplySettings(); Navigate("scenes");
+        App.TraceStartup("MainWindow attach root");
+        Content = _root; ApplySettings();
+        App.TraceStartup("MainWindow initial scene");
+        Navigate("scenes");
+        App.TraceStartup("MainWindow scene attached");
         AppWindow.Closing += async (_, args) =>
         {
             if (_closeApproved) return;

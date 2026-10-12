@@ -23,7 +23,8 @@ internal sealed class StudioLayout : Grid
         var leftFrame = Panel(left); var rightFrame = Panel(right);
         body.Children.Add(leftFrame); body.Children.Add(viewport); body.Children.Add(rightFrame);
         SetColumn(viewport, 1); SetColumn(rightFrame, 2); SetRow(body, 1); Children.Add(body);
-        SetRow(timeline, 2); Children.Add(Panel(timeline, 0));
+        var timelineFrame = Panel(timeline, 0);
+        SetRow(timelineFrame, 2); Children.Add(timelineFrame);
         SizeChanged += (_, args) =>
         {
             bool compact = args.NewSize.Width < 1100;
