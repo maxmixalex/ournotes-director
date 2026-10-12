@@ -32,6 +32,7 @@ public sealed class MainWindow : Window
     public MainWindow()
     {
         Current = this; Title = "OurNotes Director";
+        _root.Style = (Style)Application.Current.Resources["WorkspaceRootStyle"];
         Settings = DesktopSettings.Load(); Jobs = new TaskQueue(Engine); Jobs.Changed += TaskChanged;
         bool positioned = false;
         try

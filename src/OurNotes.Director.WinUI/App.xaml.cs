@@ -101,6 +101,9 @@ public partial class App : Application
     private static async Task<JsonObject> CaptureAsync(FrameworkElement root, string path)
     {
         root.UpdateLayout();
+        if (root is not Microsoft.UI.Xaml.Controls.Panel { Background: Microsoft.UI.Xaml.Media.SolidColorBrush background }
+            || background.Color.A != byte.MaxValue || background.Opacity != 1)
+            throw new InvalidOperationException("The workspace root must have an opaque theme background before capturing its real XAML surface.");
         var image = new RenderTargetBitmap();
         await image.RenderAsync(root);
         if (image.PixelWidth <= 0 || image.PixelHeight <= 0)
@@ -108,6 +111,11 @@ public partial class App : Application
         var pixelBuffer = await image.GetPixelsAsync();
         var pixels = new byte[checked((int)pixelBuffer.Length)];
         using (var reader = DataReader.FromBuffer(pixelBuffer)) reader.ReadBytes(pixels);
+        if (pixels.Length != checked(image.PixelWidth * image.PixelHeight * 4))
+            throw new InvalidDataException("WinUI returned an unexpected BGRA screenshot buffer length.");
+        int nonOpaquePixels = 0;
+        for (int i = 3; i < pixels.Length; i += 4)
+            if (pixels[i] != byte.MaxValue) nonOpaquePixels++;
 
         using var stream = new InMemoryRandomAccessStream();
         var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
@@ -121,11 +129,16 @@ public partial class App : Application
         var png = new byte[checked((int)length)];
         pngReader.ReadBytes(png);
         await File.WriteAllBytesAsync(path, png);
+        if (nonOpaquePixels != 0)
+            throw new InvalidOperationException($"The real WinUI screenshot contains {nonOpaquePixels} pixels with alpha below 255: {path}");
         return new JsonObject
         {
             ["path"] = Path.GetFullPath(path),
             ["width"] = image.PixelWidth,
             ["height"] = image.PixelHeight,
+            ["opaque"] = true,
+            ["pixelCount"] = pixels.Length / 4,
+            ["nonOpaquePixels"] = nonOpaquePixels,
             ["source"] = "WinUI RenderTargetBitmap"
         };
     }
