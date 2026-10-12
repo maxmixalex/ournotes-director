@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Imaging;
@@ -16,6 +17,10 @@ public partial class App : Application
     private bool smokeStarted;
     private JsonObject? startupEvidence;
     private readonly JsonArray captures = [];
+    private nint smokeGraphicsDriver;
+
+    [DllImport("kernel32.dll", EntryPoint = "LoadLibraryExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint LoadLibraryEx(string name, nint file, uint flags);
 
     public App()
     {
@@ -32,6 +37,17 @@ public partial class App : Application
     {
         try
         {
+            // Hosted Windows runners have no graphics adapter. Only this explicit test
+            // invocation may select the CI-installed Mesa driver; normal launches use
+            // the user's system OpenGL driver. No driver is added to the release ZIP.
+            if (smokeReportPath is not null && Environment.GetEnvironmentVariable("OURNOTES_TEST_OPENGL") is { Length: > 0 } driver)
+            {
+                if (!Path.IsPathFullyQualified(driver) || !File.Exists(driver)) throw new FileNotFoundException("The selected test graphics driver does not exist.", driver);
+                smokeGraphicsDriver = LoadLibraryEx(driver, 0, 0x00000100 | 0x00001000);
+                if (smokeGraphicsDriver == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot load the CI graphics driver.");
+                NativeLibrary.SetDllImportResolver(typeof(OurNotes.Director.Core.OffscreenGl).Assembly,
+                    (name, _, _) => name == "opengl32.dll" ? smokeGraphicsDriver : 0);
+            }
             window = new MainWindow();
             if (smokeReportPath is not null)
             {
@@ -81,6 +97,9 @@ public partial class App : Application
             captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "startup.png")));
             await window.RunSmokeTestAsync(smokeReportPath);
             captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "ready.png")));
+            window.Navigate("scenes");
+            await Task.Delay(100);
+            captures.Add(await CaptureAsync(root, Path.ChangeExtension(smokeReportPath, "scene.png")));
 
             var report = JsonNode.Parse(await File.ReadAllTextAsync(smokeReportPath)) as JsonObject
                 ?? throw new InvalidDataException("The UI smoke test did not write a JSON object report.");

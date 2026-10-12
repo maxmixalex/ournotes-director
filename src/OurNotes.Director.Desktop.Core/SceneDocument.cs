@@ -180,6 +180,15 @@ public sealed class SceneDocument
     public void Format() => Text = ToJson();
     public string ResolveAssetPath(string path) => Path.GetFullPath(path, BaseDirectory);
 
+    internal string TextAtDirectory(string directory)
+    {
+        string destination = Path.GetFullPath(directory);
+        if (SamePath(destination, BaseDirectory)) return Text;
+        var clone = (JsonObject)root.DeepClone();
+        return RewriteImagePaths(clone, original => Path.IsPathRooted(original) ? original
+            : Path.GetRelativePath(destination, ResolveAssetPath(original))) ? Serialize(clone) : Text;
+    }
+
     public void Save(string? path = null)
     {
         string destination = Path.GetFullPath(path ?? FilePath ?? throw new ArgumentException("新文档需要保存路径。", nameof(path)));
@@ -443,6 +452,7 @@ public sealed class SceneDocument
                 {
                     var command = AdvProgram.Row(row, path);
                     DirectorValidation.Check(command);
+                    if (!command.Ignored) _ = AdvPlayback.FixedDelayFrames(command);
                     if (command.Command == "Director.Actor" && !command.Ignored && row["Values"] is JsonObject actorValues)
                         ValidatePositionSpace(actorValues, Scalar(row["Space"]));
                     if (command.Command == "Director.Scene" && !command.Ignored && row["Values"] is JsonObject values)

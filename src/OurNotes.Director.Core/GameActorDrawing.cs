@@ -77,5 +77,28 @@ public sealed unsafe class GameActorDrawing : IDisposable
         var camera=globals.GetValueOrDefault("_WorldSpaceCameraPos")??[0,0,0];var cameraPosition=new System.Numerics.Vector3(camera[0],camera[1],camera[2]);
         return Enumerable.Range(0,n).Where(i=>alpha[i]>0&&meshes[i].Transform.ActiveInHierarchy).Select(i=>{var m=World(meshes[i].Transform);return new AdvRenderItem(baseOrder+order[i]+meshes[i].LocalOrder,System.Numerics.Vector3.DistanceSquared(new(m[12],m[13],m[14]),cameraPosition),()=>DrawMesh(i));}).ToArray();
     }
+    // Read the actual evaluated Cubism vertices and the same per-drawable world matrices
+    // used by Items. Editor bounds never substitute an estimated model rectangle for pixels.
+    public PreviewTarget? PreviewBounds(string id,string label,float[] viewProjection)
+    {
+        float left=float.PositiveInfinity,top=left,right=float.NegativeInfinity,bottom=right;
+        var alpha=core.Floats("DrawableOpacities",meshes.Length);
+        var positions=(nint*)core.Pointer("DrawableVertexPositions");
+        for(int i=0;i<meshes.Length;i++){
+            var mesh=meshes[i];
+            if(alpha[i]<=0||mesh.Tint[3]<=0||mesh.Indices.Length==0||!mesh.Transform.ActiveInHierarchy)continue;
+            var matrix=AdvMatrix.Multiply(viewProjection,mesh.Transform.WorldMatrix());
+            int count=mesh.Attributes["in_POSITION0"].Length/4;
+            var raw=new ReadOnlySpan<float>((void*)positions[i],count*2);
+            for(int j=0;j<count;j++){
+                var p=AdvMatrix.Transform(matrix,new(raw[j*2],raw[j*2+1],0,1));
+                if(p.W<=.00001f||!float.IsFinite(p.W))continue;
+                float x=(p.X/p.W+1)*.5f,y=(1-p.Y/p.W)*.5f;
+                if(!float.IsFinite(x)||!float.IsFinite(y))continue;
+                left=Math.Min(left,x);right=Math.Max(right,x);top=Math.Min(top,y);bottom=Math.Max(bottom,y);
+            }
+        }
+        return right>left&&bottom>top?new(id,label,left,top,right-left,bottom-top):null;
+    }
     public void Dispose()=>shaders.Dispose();
 }

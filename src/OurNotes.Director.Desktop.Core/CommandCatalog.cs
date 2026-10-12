@@ -339,6 +339,8 @@ public static class CommandCatalog
     private static CommandField[] HomeRenderFields(string verb)
     {
         var fields = new List<CommandField>(Dimensions(verb == "contact", true));
+        fields.Add(new("project", "主页项目", CommandFieldKind.InputFile, "可选；应用主页工作台保存的位置、缩放、动作编排、调色和输出默认设置。")
+        { Option = "--project", Advanced = true, FileExtensions = [".json"] });
         fields.Add(Integer("fps", "每秒帧数", "主页动画的固定模拟和输出帧率。", "30", 1, 120));
         fields.Add(Choice("framing", "构图方式", "留空时完整场景用原相机，独立角色用整段固定取景。", null,
             [new("scene", "原场景相机（便于多层对齐）"), new("fit", "整段固定取景（适合独立角色）")]));

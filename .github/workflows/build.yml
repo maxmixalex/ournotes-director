@@ -65,6 +65,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-nasm
             mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-mesa
       - name: Restore verified media build and SDK downloads
         id: dependency-cache
         uses: actions/cache/restore@v4
@@ -162,10 +163,14 @@ jobs:
       - name: Launch and verify WinUI from the extracted Windows package
         if: runner.os == 'Windows'
         shell: pwsh
-        run: >-
-          ./tests/desktop-smoke.ps1
-          -Package packages/ournotes-director-win-x64.zip
-          -ReportDirectory artifacts/desktop-smoke
+        run: |
+          & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --home-fixture artifacts/studio-fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --scene-fixture artifacts/studio-fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mesa = Get-ChildItem "$env:RUNNER_TEMP/msys64/ucrt64/bin/opengl32.dll", 'C:/msys64/ucrt64/bin/opengl32.dll', 'D:/a/_temp/msys64/ucrt64/bin/opengl32.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $mesa) { throw 'The MSYS2 Mesa test driver was not installed.' }
+          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -OpenGLDriver $mesa.FullName
       - name: Upload actual WinUI screenshots and smoke report
         if: always() && runner.os == 'Windows'
         continue-on-error: true

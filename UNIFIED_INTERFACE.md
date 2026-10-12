@@ -109,6 +109,10 @@ Actor.Values 使用 position、rotation、scale、opacity、visible、order 等�
 
 所有数值动画使用秒为单位的 `Duration`；默认 0（立即设置）。`IsNoWait:1` 并行执行，默认等待动画结束。`Ease` 默认 `Linear`，常用 `InOutSine`、`InOutQuad`。布尔、资源选择和排序立即生效，不做渐变。
 
+需要精确对齐场景工作台的 30 fps 时间轴时，`Delay` 还接受整数 `Frames`：`{"cmd":"Delay","Frames":30}` 等待 30 帧，`Frames:0` 不消耗一帧。不能将 `Frames` 与非零 `Duration` 混用；负数、小数和空值都会报错。已有 `Delay.Duration` 的执行语义不变。
+
+工作台保存的项目仍直接由原生执行器读取。编辑器会在允许的 `Key` 字段中保留可编辑关键帧标记，并在需要的位置生成逐帧即时指令；重新打开时恢复精简的时间轴。请保留这些标记与生成指令的对应关系。高级 JSON 修改了生成的中间帧时，编辑器会保留修改，并将无法安全还原的视觉轨道显示为只读。
+
 | 指令 | Values 字段及单位 |
 |---|---|
 | Director.Actor | screen 的 position 为 [x,y]，world 为 [x,y,z]；rotation 为 [x,y,z] 度；scale 为三轴倍率；height 为模型画布高度／输出高度（默认 .95）；opacity 为 0–1；tint 为 RGBA 四数；brightness 为非负倍率；visible 为布尔；order 为整数，越大越晚绘制 |

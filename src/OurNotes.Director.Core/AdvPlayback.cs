@@ -65,7 +65,7 @@ public sealed class AdvPlayback
     {
         Loop=loop;this.program=program;auto=autoPlay;
         for(int i=0;i<program.Rows.Length;i++){var key=program.Rows[i].Text("Key");if(key.Length>0)keys.TryAdd(key,i);}
-        Register("Delay",(c,p)=>p.VideoDelay?.Invoke(c,p)??p.DelayAdjusted(p.CalcDuration(c.Number("Duration"))));
+        Register("Delay",(c,p)=>FixedDelayFrames(c) is int frames?p.DelayFrames(frames):p.VideoDelay?.Invoke(c,p)??p.DelayAdjusted(p.CalcDuration(c.Number("Duration"))));
         Register("Wait",WaitCommand);
         Register("CancelDelay",(c,p)=>Immediate(()=>p.Loop.CancelDelays(p.delayGroup,true)));
         Register("ForceAuto",(c,p)=>Immediate(()=>p.ForcedAuto=!p.ForcedAuto));
@@ -93,6 +93,17 @@ public sealed class AdvPlayback
     public void Tap(){if(!ForcedAuto&&nextStep==1)nextStep=2;}
     public void Stop(){Cancelled=true;Loop.CancelDelays(delayGroup,false);Loop.CancelDelays(playbackDelayGroup,false);}
     public float CalcDuration(float duration,float fallback=0)=>(duration!=0?Math.Max(duration,0):fallback)/Speed;
+    // Explicit editor frame waits do not change the original game's duration/video timing.
+    public static int? FixedDelayFrames(AdvRow row)
+    {
+        if(row.Command!="Delay"||row.Data is not JsonObject fields||!fields.ContainsKey("Frames"))return null;
+        if(row.Data["Frames"] is not JsonValue value||!value.TryGetValue<int>(out int frames)||frames<0||frames>30*36000)
+            throw new ArgumentException("Delay.Frames must be an integer between 0 and 1080000");
+        if(row.Data["Duration"] is not null&&row.Number("Duration")!=0)
+            throw new ArgumentException("Delay must choose Frames or a nonzero Duration, not both");
+        return frames;
+    }
+    private IEnumerable<AdvWait> DelayFrames(int frames){if(frames>0)yield return Loop.DelayFrames(frames);}
     public AdvWait CommonDelay(double seconds)=>seconds>0?Loop.Delay(seconds,delayGroup):Loop.Ready();
     public AdvWait NoWait(AdvRow row,IEnumerable<AdvWait> routine)
     {

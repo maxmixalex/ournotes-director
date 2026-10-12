@@ -4,6 +4,51 @@
 
 主页使用编译进程序的 Spine C# runtime 和离屏 OpenGL，不需要 Cubism SDK、Unity、浏览器、Node.js 或 Python 运行环境。游戏素材仍需先用现有 `archive` 命令取得；主页所需的 `host/host.json`、`host/spot/spot.json`、Spine atlas／骨架／贴图和房间资源已经属于 story manifest，不需要迁移归档或新增下载命令。
 
+## 工作台项目与 JSON
+
+Windows 的 **主页工作台** 可以在原生窗口中实时播放、拖动角色、编排动作与位置关键帧，再保存同一份可导出的项目。操作步骤见 [DESKTOP.md](DESKTOP.md)。
+
+`home frame`、`home clip`、`home sequence` 和 `home export` 接受 `--project`。例如，先从工作台保存 `home-project.json`，再用 CLI 输出相同编排：
+
+```powershell
+./advkit.exe home clip 40005 --project home-project.json -o output/edited-home.mov
+./advkit.exe home export 40005 --project home-project.json -o output/edited-layers
+```
+
+项目格式为 `ournotes-home-project/1`，最小项目如下。`spotId` 应改为本地归档中实际存在的主页；如要固定某个剧情提供的资源，在 `source` 中增加 `advId`。
+
+```json
+{
+  "format": "ournotes-home-project/1",
+  "source": { "spotId": 40005, "site": "intl" },
+  "duration": 6,
+  "output": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "supersample": 2,
+    "codec": "cineform",
+    "cineformQuality": "film1"
+  },
+  "scene": { "background": true, "postProcessing": true, "framing": "scene" },
+  "characters": {}
+}
+```
+
+`characters` 以 `home show` 返回的真实角色 `key` 为键。每条角色轨道包含：
+
+| 字段 | 含义 |
+|---|---|
+| `transform` | 基础 `x`、`y`、`scale`、`visible` |
+| `keys` | 按时间递增的对象变换；每项含 `time` 和变换字段 |
+| `animations` | 动作事件；每项含 `time`、`name`、`loop`、`speed`、`sourceTime` |
+
+`x`、`y` 为相对画布的位移，正 Y 向下；`scale: 1` 为原始比例。数值关键帧线性插值，显示状态在关键帧处切换。动作名必须来自当前角色所有对应骨架均支持的列表；`name: null` 沿用原始动作，`loop: null` 沿用原始循环设置。
+
+`scene.grade` 可设置 `exposure`、`contrast`、`saturation`、`vignette`；`scene.gradeKeys` 的每一项包含 `time` 和上述调色字段。角色和调色关键帧不得超出项目时长，同一条轨道不能有重复时间。
+
+项目输出默认值由显式 CLI 输出选项覆盖；角色变换、动作与调色继续从项目读取。省略 `--project` 时沿用下面描述的原动画导出行为。预览与离线输出共用编辑状态的原生求值和绘制；单角色拆分仍受下文混合模式与共享骨架边界约束。
+
 ## 查找和快速导出
 
 以下采用 Windows 文件名，Linux 将 `./advkit.exe` 换成 `./advkit`。先用列表确认当前归档包含哪些主页；示例使用包含 Hotaru 的 spot ID `40005`；若当前归档没有该主页，应替换为列表中的 ID。

@@ -12,7 +12,7 @@ GitHub Actions 的 [**Build native executables** 工作流](https://github.com/m
 
 默认交付位置是 Actions artifacts。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会把各平台测试通过的包分别保存为独立的**草稿 Release**，下载链接见对应 job 的 Summary。草稿只有具有仓库写权限的人能查看；其他情况仍使用 artifacts。
 
-**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 在“开始”选择已有归档或下载素材，再进入“主页动画”或“场景工作台”。JSON 可以从剪贴板粘贴、拖入文件，或从模板创建；所有 71 项 CLI 操作都有对应页面与参数表单。工作台提供系统主题、文件选择、真实资源列表、透明图像预览、视频播放代理和可取消的后台任务。具体步骤见 [桌面使用说明](DESKTOP.md)。Linux 继续使用下面的 CLI。
+**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 主界面为“场景工作台”和“主页工作台”：在原生窗口实时播放，直接拖动角色，用时间轴编排位置、动作、相机与后处理，再通过共同的导出面板选择格式和画质。两者均支持粘贴 JSON；原有 CLI 工具从素材库中的高级工具打开。具体步骤见 [桌面使用说明](DESKTOP.md)。Linux 继续使用下面的 CLI。
 
 ```powershell
 # Windows：在解压后的目录中运行
