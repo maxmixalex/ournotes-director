@@ -35,4 +35,18 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
     <ProjectReference Include="../OurNotes.Director.Desktop.Core/OurNotes.Director.Desktop.Core.csproj" />
   </ItemGroup>
+  <!-- Keep the build-produced application PRI on the unpackaged publish path.
+       SDK import paths differ in PRI publish wiring; see WindowsAppSDK issue #6720.
+       Run after publish dependencies have collected their items and avoid duplicates. -->
+  <Target Name="IncludeApplicationPriInPublish" BeforeTargets="ComputeFilesToPublish"
+          Condition="'$(WindowsPackageType)' == 'None' and '$(CopyBuildOutputToPublishDirectory)' == 'true'">
+    <Error Condition="!Exists('$(ProjectPriFullPath)')"
+           Text="The application resource index was not generated: $(ProjectPriFullPath)" />
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(ProjectPriFullPath)" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>$(ProjectPriFileName)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>

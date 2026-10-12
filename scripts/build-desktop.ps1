@@ -48,9 +48,12 @@ try {
     foreach ($name in @(
         'OurNotes.Director.exe', 'OurNotes.Director.dll', 'OurNotes.Director.deps.json',
         'OurNotes.Director.runtimeconfig.json', 'coreclr.dll', 'hostfxr.dll',
-        'hostpolicy.dll', 'Microsoft.UI.Xaml.dll', 'resources.pri'
+        'hostpolicy.dll', 'Microsoft.UI.Xaml.dll', 'OurNotes.Director.pri'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $name) -PathType Leaf)) {
+            Write-Output 'Files actually produced by WinUI publish:'
+            Get-ChildItem -LiteralPath $publishDirectory -File -Recurse |
+                ForEach-Object { Write-Output ([IO.Path]::GetRelativePath($publishDirectory, $_.FullName)) }
             throw "The self-contained WinUI publish is incomplete: $name is missing."
         }
     }

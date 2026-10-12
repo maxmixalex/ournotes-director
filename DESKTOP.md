@@ -6,7 +6,7 @@ OurNotes Director 的 Windows 前端使用 WinUI 3 原生控件，提供场景 J
 
 下载 Windows 构建产物 `ournotes-director-win-x64`，完整解压其中的 `ournotes-director-win-x64.zip`，双击 **`OurNotes.Director.exe`**。命令行入口仍是同目录的 `advkit.exe`。
 
-发布包同时带有 .NET 运行时、Windows App SDK / WinUI 运行时、原生渲染库以及 FFmpeg / FFprobe。普通用户不需要另装 .NET、Windows App Runtime、开发 SDK、Node.js、Python 或浏览器环境。请保留整个解压目录，包括 `native/`、`tools/`、`licenses/`、运行时 DLL、`resources.pri` 和清单；单独复制主程序不足以运行。
+发布包同时带有 .NET 运行时、Windows App SDK / WinUI 运行时、原生渲染库以及 FFmpeg / FFprobe。普通用户不需要另装 .NET、Windows App Runtime、开发 SDK、Node.js、Python 或浏览器环境。请保留整个解压目录，包括 `native/`、`tools/`、`licenses/`、运行时 DLL、`OurNotes.Director.pri` 和清单；单独复制主程序不足以运行。
 
 目标平台为 Windows x64，最低 API 级别设为 Windows 10 1809（build 17763），支持 Windows 11。微软对 Windows App SDK 的正式支持限于仍在支持期的 Windows 版本；项目的最低 API 级别不等同于对所有旧版 Windows 的实机验收。兼容与支持范围的依据见微软的 [Windows App SDK 发布渠道说明](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/release-channels)。
 
@@ -125,6 +125,8 @@ GUI 构建必须在 Windows 上进行，使用 .NET 10 SDK 和 Windows 构建工
 ```
 
 `build-desktop.ps1` 使用微软支持的 unpackaged、自包含目录部署：`WindowsPackageType=None`、`WindowsAppSDKSelfContained=true`、`.NET SelfContained=true`。无需 MSIX 签名证书或安装全局 Windows App Runtime。GUI 保留自身 .NET 运行时，发布时关闭 Native AOT 与 trimming，并启用 Release ReadyToRun；原有 `advkit.exe` 继续使用 Native AOT，两者是独立进程。
+
+应用资源索引使用此项目实际生成的 `OurNotes.Director.pri`。项目在发布目标中明确加入构建产出的 PRI，缺少源文件时立即失败；构建脚本也要求发布目录包含该文件，随后纳入哈希清单。此处理覆盖 [Windows App SDK 已报告的 unpackaged PRI 发布遗漏](https://github.com/microsoft/WindowsAppSDK/issues/6720)，不生成替代索引，也不依赖 MSIX 项目的 `resources.pri` 文件名。
 
 脚本先发布到自己的临时目录，确认运行文件完整，再合并到已有 Windows 包。它记录并验证后台程序和已有原生 / 媒体依赖的 SHA-256，复制 NuGet 许可证、通知及元数据到 `licenses/desktop/`，生成 `desktop-dependencies.json`。清单记录各 NuGet / framework / runtime 包的实际版本、声明的许可证和随包通知路径，包括 Windows SDK 的 WinRT 支持程序集；若 NuGet 只声明许可 URL，则保留该 URL 和原 `.nuspec`。许可文件使用包声明的真实名称，例如 `sdk_license.txt`，不依赖统一文件名。不要在合并 GUI 之后用“整个目录不得包含 .NET 运行时”的规则判断 CLI 是否为 AOT；工作流在合并前完成独立 CLI 检查，合并后验证同一 `advkit.exe` 的校验和与行为。
 
