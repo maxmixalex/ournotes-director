@@ -95,6 +95,7 @@ internal sealed partial class SceneStudioPage
         if (export) await StudioExportDialog.ShowSceneAsync(_window, shot, 0, singleActor: true);
         else
         {
+            if (!await ConfirmReplaceAsync()) return;
             SaveDraft(); SetDocument(shot); SelectObject(shot.Actors.Single().Id); await ReloadAsync();
             Notice($"已按模型原始画布创建单人透明镜头：{width} × {height}。动作和表情可在指令区继续编排。", false);
         }

@@ -160,7 +160,19 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
     {
         if (!TryFlushCommandDraft()) return false;
         FlushProperty();
-        return !HasUnsavedChanges || await _window.ConfirmAsync("打开另一个场景？", "当前修改会先保留为草稿。", "继续");
+        if (!HasUnsavedChanges) return true;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = _window.RootXaml, Title = "保存当前场景？",
+            Content = "当前场景有未保存的修改。保存后可以随时重新打开继续编辑。",
+            PrimaryButtonText = "保存并继续", SecondaryButtonText = "不保存", CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary
+        };
+        var choice = await dialog.ShowAsync();
+        if (choice == ContentDialogResult.Secondary) return true;
+        if (choice != ContentDialogResult.Primary) return false;
+        await SaveAsync();
+        return !HasUnsavedChanges;
     }
     private async Task<SceneSource?> ChooseSourceAsync()
     {
@@ -702,8 +714,10 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
     private async Task RestoreDraftAsync()
     {
         if (!File.Exists(DraftPath)) { Notice("还没有保存的草稿。", false); return; }
-        if (!await ConfirmReplaceAsync()) return;
+        // Saving the current scene also refreshes its autosave file. Read the
+        // requested recovery snapshot before that save can replace the draft.
         var draft = JsonNode.Parse(await File.ReadAllTextAsync(DraftPath))!;
+        if (!await ConfirmReplaceAsync()) return;
         SetDocument(StudioSceneDocument.FromSceneDocument(SceneDocument.Parse(draft["project"]!.ToJsonString(), draft["filePath"]?.ToString(), draft["baseDirectory"]?.ToString())));
         if (_document!.DurationMode == StudioDurationMode.Fixed && !_document.CanEditTimeline) _document.SetPlaybackDuration(Number(draft["playbackDuration"], _document.Duration));
         _document.Time = Number(draft["time"], 0);
@@ -737,6 +751,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             SelectObject(actor);
             check(_viewport.IsLoaded && _viewport.ActualWidth > 0 && _commands.IsLoaded && _commands.ActualWidth > 0 && _commands.Items.Count > 0,
                 "实时画布和可读指令列表在原生工作台中布局");
+            RunTimelineVisibilitySmoke(check);
             _timelineTab!.IsChecked = true; UpdateLayout();
             check(_timeline.IsLoaded && _timeline.ActualWidth > 0, "指令与时间轴可在同一原生编排区域切换");
             _commandsTab!.IsChecked = true; UpdateLayout();

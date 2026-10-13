@@ -16,10 +16,10 @@ internal sealed record StudioTimelineMarker(string Id, string TrackId, double Ti
 internal sealed record StudioTimelineTrack(string Id, string Label, IReadOnlyList<StudioTimelineMarker> Markers);
 
 /// <summary>Native interactive ruler and keyframe tracks. Editing only occurs through its public callbacks.</summary>
-internal sealed class StudioTimeline : UserControl
+internal sealed partial class StudioTimeline : UserControl
 {
-    private const double LabelWidth = 106, RulerHeight = 24, TrackHeight = 27;
-    private readonly Canvas _canvas = new() { Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)) };
+    private const double LabelWidth = 106, RulerHeight = 24, TrackHeight = 27, MinimumCanvasHeight = 80;
+    private readonly Canvas _canvas = new() { Height = MinimumCanvasHeight, Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)) };
     private readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     private readonly Button _play;
@@ -35,6 +35,7 @@ internal sealed class StudioTimeline : UserControl
     private string? _selectedMarker;
     private double _position, _length = 5, _dragTime;
     private bool _playing, _updating, _scrubbing, _automatic, _durationResolved = true;
+    private bool _drawPending = true;
     internal event Action<double>? SeekRequested;
     internal event Action<double>? DurationChanged;
     internal event Action<bool>? AutomaticDurationChanged;
@@ -69,6 +70,8 @@ internal sealed class StudioTimeline : UserControl
         root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
         root.Children.Add(transport); _scroll.Content = _canvas; root.Children.Add(_scroll); Grid.SetRow(_scroll, 1); Content = root;
         _scroll.SizeChanged += (_, _) => Draw();
+        Loaded += (_, _) => Draw();
+        RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => { if (Visibility == Visibility.Visible && _drawPending) Draw(); });
         _zoom.ValueChanged += (_, _) => Draw();
         ActualThemeChanged += (_, _) => Draw();
         _duration.ValueChanged += (_, _) =>
@@ -93,12 +96,12 @@ internal sealed class StudioTimeline : UserControl
     internal double Duration
     {
         get => _length;
-        set { double length = Math.Clamp(value, .1, 36000); if (Math.Abs(_length - length) < .0001) return; _length = length; _updating = true; _duration.Value = _length; _updating = false; Draw(); UpdateReadout(); }
+        set { if (!double.IsFinite(value)) return; double length = Math.Clamp(value, .1, 36000); if (Math.Abs(_length - length) < .0001) return; _length = length; _position = Math.Min(_position, _length); _updating = true; _duration.Value = _length; _updating = false; Draw(); UpdateReadout(); UpdatePlayhead(); }
     }
     internal double Position
     {
         get => _position;
-        set { _position = Math.Clamp(value, 0, _length); UpdateReadout(); UpdatePlayhead(); }
+        set { if (!double.IsFinite(value)) return; _position = Math.Clamp(value, 0, _length); UpdateReadout(); UpdatePlayhead(); }
     }
     internal bool IsPlaying
     {
@@ -121,20 +124,25 @@ internal sealed class StudioTimeline : UserControl
         if (_tracks.Count == next.Length && _tracks.Zip(next).All(pair => pair.First.Id == pair.Second.Id && pair.First.Label == pair.Second.Label && pair.First.Markers.SequenceEqual(pair.Second.Markers))) return;
         _tracks = next; if (!_tracks.SelectMany(t => t.Markers).Any(m => m.Id == _selectedMarker)) _selectedMarker = null; Draw();
     }
-    private double PixelsPerSecond => Math.Max(_zoom.Value, Math.Max(1, _scroll.ActualWidth - LabelWidth - 20) / _length);
+    private double AvailableWidth => double.IsFinite(_scroll.ActualWidth) ? Math.Max(0, _scroll.ActualWidth) : 0;
+    private double ContentHeight => Math.Max(MinimumCanvasHeight, RulerHeight + Math.Max(2, _tracks.Count) * TrackHeight);
+    private double PixelsPerSecond => Math.Max(_zoom.Value, Math.Max(1, AvailableWidth - LabelWidth - 20) / _length);
     private double At(double time) => LabelWidth + time * PixelsPerSecond;
     private double From(double x) => Math.Clamp(Math.Round((x - LabelWidth) / PixelsPerSecond * 30) / 30, 0, _length);
     private void UpdateReadout() => _time.Text = _automatic && !_durationResolved ? $"{_position:0.00} s · 计算中" : $"{_position:0.00} / {_length:0.00} s";
     private void UpdatePlayhead()
     {
-        _playhead.X1 = _playhead.X2 = At(_position); _playhead.Y1 = 0; _playhead.Y2 = _canvas.Height;
+        // Height remains "Auto" (NaN) before a Canvas is measured unless explicitly
+        // sized. The playhead also updates while the timeline tab is collapsed.
+        _playhead.X1 = _playhead.X2 = At(_position); _playhead.Y1 = 0; _playhead.Y2 = ContentHeight;
     }
     private void Draw()
     {
-        if (_scroll.ActualWidth <= 0) return;
+        _drawPending = true;
+        if (Visibility != Visibility.Visible || AvailableWidth <= 0) return;
         _canvas.Children.Clear();
-        _canvas.Width = Math.Max(_scroll.ActualWidth - 14, At(_length) + 24);
-        _canvas.Height = Math.Max(80, RulerHeight + Math.Max(2, _tracks.Count) * TrackHeight);
+        _canvas.Width = Math.Max(AvailableWidth - 14, At(_length) + 24);
+        _canvas.Height = ContentHeight;
         bool dark = ActualTheme == ElementTheme.Dark;
         var textBrush = new SolidColorBrush(dark ? Color.FromArgb(230, 235, 235, 235) : Color.FromArgb(230, 45, 45, 45));
         var gridBrush = new SolidColorBrush(Color.FromArgb(35, 128, 128, 128));
@@ -160,7 +168,8 @@ internal sealed class StudioTimeline : UserControl
             foreach (var marker in track.Markers)
             {
                 double time = _dragging?.Id == marker.Id ? _dragTime : marker.Time;
-                if (marker.End is double end && end > time + .02)
+                if (!double.IsFinite(time) || !double.IsFinite(At(time))) continue;
+                if (marker.End is double end && double.IsFinite(At(end)) && end > time + .02)
                 {
                     var bar = new Border { Width = Math.Max(3, At(end) - At(time)), Height = 16, CornerRadius = new(3),
                         Background = new SolidColorBrush(Color.FromArgb(90, 151, 111, 200)), Tag = marker };
@@ -177,6 +186,7 @@ internal sealed class StudioTimeline : UserControl
             }
         }
         _canvas.Children.Add(_playhead); UpdatePlayhead();
+        _drawPending = false;
     }
     private void PointerPressedOnCanvas(object sender, PointerRoutedEventArgs args)
     {
