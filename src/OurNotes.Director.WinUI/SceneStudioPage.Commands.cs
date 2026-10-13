@@ -287,14 +287,15 @@ internal sealed partial class SceneStudioPage
         }
         void Change(JsonNode? next) { if (generation == _commandDraftGeneration) SetDraftValue(path, next); }
         if (value is JsonArray array && array.Count is >= 2 and <= 4 && !key.EndsWith("IDs", StringComparison.OrdinalIgnoreCase)
-            && array.All(item => item is JsonValue number && number.TryGetValue<double>(out double component) && double.IsFinite(component) && Math.Abs(component) < 9007199254740992d))
+            && array.All(item => TryCommandNumber(item, out _)))
         {
             var current = (JsonArray)array.DeepClone(); var grid = new Grid { ColumnSpacing = 5 };
             string[] axes = key is "background" or "tint" ? ["红", "绿", "蓝", "透明"] : ["X", "Y", "Z", "W"];
             for (int index = 0; index < array.Count; index++)
             {
                 int axis = index; grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-                var vectorBox = new NumberBox { Header = axes[index], Value = Number(array[index], 0), SmallChange = .01,
+                TryCommandNumber(array[index], out double component);
+                var vectorBox = new NumberBox { Header = axes[index], Value = component, SmallChange = .01,
                     SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden, MinWidth = 42 };
                 BindNumberInput(vectorBox, [.. path, axis.ToString(CultureInfo.InvariantCulture)], label + " " + axes[axis], vectorBox.Value, false,
                     number => { current[axis] = number; Change(current.DeepClone()); });
@@ -318,10 +319,10 @@ internal sealed partial class SceneStudioPage
             control.Click += (_, _) => Change(JsonValue.Create(control.IsChecked == true)); panel.Children.Add(control); return;
         }
         bool opaqueId = key.EndsWith("ID", StringComparison.OrdinalIgnoreCase) || key.EndsWith("IDs", StringComparison.OrdinalIgnoreCase);
-        bool finiteNumber = value is JsonValue numeric && numeric.TryGetValue<double>(out double nativeNumber) && double.IsFinite(nativeNumber) && Math.Abs(nativeNumber) < 9007199254740992d;
+        bool finiteNumber = TryCommandNumber(value, out double nativeNumber);
         if (!opaqueId && (finiteNumber || value is null && definition?.Kind is CommandFieldKind.Number or CommandFieldKind.Integer))
         {
-            var control = new NumberBox { Header = label, Value = double.TryParse(value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double n) ? n : double.NaN,
+            var control = new NumberBox { Header = label, Value = finiteNumber ? nativeNumber : double.NaN,
                 SmallChange = definition?.Kind == CommandFieldKind.Integer ? 1 : .1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
             BindNumberInput(control, path, label, control.Value, definition?.Kind == CommandFieldKind.Integer, number => Change(JsonValue.Create(number)));
             panel.Children.Add(control); return;
@@ -383,6 +384,16 @@ internal sealed partial class SceneStudioPage
             }, "\uE8B7"));
         }
         if (!string.IsNullOrEmpty(definition?.Description)) panel.Children.Add(Ui.Text(definition.Description, 10, true));
+    }
+
+    private static bool TryCommandNumber(JsonNode? value, out double number)
+    {
+        number = 0;
+        // JsonValue<int/float/...> does not coerce through TryGetValue<double> like a parsed JsonElement.
+        // Use the invariant JSON token, while leaving large integers and non-number tokens in text controls.
+        return value?.GetValueKind() == System.Text.Json.JsonValueKind.Number
+            && double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+            && double.IsFinite(number) && Math.Abs(number) < 9007199254740992d;
     }
 
     private void SetDraftValue(string[] path, JsonNode? value)

@@ -796,6 +796,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             check(!HasCommandDraft && _document.ToJson() == beforeInvalid, "显式撤销取消未应用草稿，不撤销已提交的场景内容");
             InsertNativeCommand("Delay");
             check(_document.Commands.Count == 3 && SelectedCommand()?.Command == "Delay", "工作台插入指令会进入真实执行数组并选中其属性");
+            check(_commandInputs["Frames"] is NumberBox { Value: 30 }, "新插入指令的整数帧数显示为数值控件，并保留30帧初值");
             var framesInput = (NumberBox)_commandInputs["Frames"]; framesInput.Text = "45.5";
             check(!TryFlushCommandDraft() && _commandFieldErrors.Count > 0, "原生帧数拒绝小数输入并保留错误草稿");
             framesInput.Text = "abc";
@@ -808,8 +809,16 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             check(_document.Commands.Count == 4 && _commands.Items.Count == 4, "复制指令同步刷新可点击列表");
             RemoveSelectedCommand();
             check(_document.Commands.Count == 3 && !Ui.Text("列表标签").IsTextSelectionEnabled, "删除原生指令生效，普通列表标签不会抢占文字选择");
-            string transformCommand = _document.InsertCommand("commands", 3, StudioCommandCatalog.Create("Director.Actor", "test-target"));
-            SelectCommand(transformCommand); SetDraftValue(["Space"], JsonValue.Create("world")); SetDraftValue(["IgnoreData"], JsonValue.Create(1));
+            var transformTemplate = StudioCommandCatalog.Create("Director.Actor", "test-target");
+            transformTemplate["Values"]!["position"] = new JsonArray(1, 2.5f);
+            string transformCommand = _document.InsertCommand("commands", 3, transformTemplate);
+            SelectCommand(transformCommand);
+            check(_commandInputs["Values.position.0"] is NumberBox { Value: 1 }
+                && _commandInputs["Values.position.1"] is NumberBox { Value: 2.5 }
+                && _commandInputs["Values.scale.0"] is NumberBox { Value: 1 }
+                && _commandInputs["Values.height"] is NumberBox { Value: 1 },
+                "新指令的整数与浮点向量、缩放及高度均使用数值控件并保留实际初值");
+            SetDraftValue(["Space"], JsonValue.Create("world")); SetDraftValue(["IgnoreData"], JsonValue.Create(1));
             var controlDraft = CaptureCommandDraft()!; ClearCommandDraft(); BuildProperties(); RestoreCommandDraft(controlDraft);
             check(_commandEnabled?.IsChecked == false && Ui.Selected((ComboBox)_commandInputs["Space"]) == "world" && HasCommandDraft,
                 "恢复草稿根据草稿值重建开关和下拉框，同时保留原文基准判断未应用修改");
