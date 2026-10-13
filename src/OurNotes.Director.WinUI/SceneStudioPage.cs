@@ -771,12 +771,19 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
                 "原生对白导入后立即显示全部指令，时长跟随执行而不伪装成固定秒数");
             string talk = _document.Commands.First().Id; SelectCommand(talk);
             check(_dialogueText?.Text == "这是一段导入的对白", "原剧情指令可选择并在右侧直接编辑台词");
+            check(!HasCommandDraft && !CommandJsonChanged, "原生文本框的初始换行格式不会把未编辑指令误判为草稿");
+            _commandJson!.Text = _commandJsonInitial!.ReplaceLineEndings("\r\n");
+            check(!HasCommandDraft && !CommandJsonChanged, "指令 JSON 的 CR、LF 与 CRLF 换行转换不产生虚假修改");
             _dialogueText!.Text = "我可以直接修改这句台词";
             var draftControl = _dialogueText; BuildProperties();
             check(ReferenceEquals(draftControl, _dialogueText) && _dialogueText.Text == "我可以直接修改这句台词" && HasCommandDraft,
                 "异步元数据刷新不会重建或丢弃尚未应用的同条对白草稿");
             string wait = _document.Commands.Last().Id; SelectCommand(wait);
-            check(_document.GetCommandText(talk) == "我可以直接修改这句台词", "对白编辑应用到实际原生项目文本");
+            bool dialogueCommitted = _document.GetCommandText(talk) == "我可以直接修改这句台词";
+            check(dialogueCommitted, "对白编辑应用到实际原生项目文本" + (dialogueCommitted ? "" :
+                $"；选择={_selectedCommand}，字段修改={CommandFieldsChanged}，JSON修改={CommandJsonChanged}，字段错误={string.Join("；", _commandFieldErrors.Values)}，提示={_notice.Message}"));
+            SelectCommand(talk); _dialogueText!.Text = "第一行台词\r\n第二行台词"; SelectCommand(wait);
+            check(_document.GetCommandText(talk) == "第一行台词\n第二行台词", "原生多行对白切换指令后按项目换行格式完整保存");
             SelectCommand(talk);
             var voiceInput = (TextBox)_commandInputs["VoiceIDs"]; voiceInput.Text = "[invalid";
             string beforeInvalid = _document.ToJson(); SelectCommand(wait);
@@ -807,6 +814,13 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             check(_commandEnabled?.IsChecked == false && Ui.Selected((ComboBox)_commandInputs["Space"]) == "world" && HasCommandDraft,
                 "恢复草稿根据草稿值重建开关和下拉框，同时保留原文基准判断未应用修改");
             UndoSceneEdit(); _document.RemoveCommand(transformCommand);
+            SelectCommand(talk); string beforeConflict = _document.ToJson();
+            _dialogueText!.Text = "字段中尚未提交的新台词";
+            var conflictingJson = (JsonObject)SelectedCommand()!.Data.DeepClone(); conflictingJson["TargetName"] = "conflicting-target";
+            _commandJson!.Text = conflictingJson.ToJsonString(DesktopSettings.JsonOptions);
+            check(CommandFieldsChanged && CommandJsonChanged && !TryFlushCommandDraft() && _document.ToJson() == beforeConflict,
+                "真实修改对白字段和 JSON 时仍要求明确选择应用内容，不覆盖项目");
+            UndoSceneEdit();
         }
         finally { _suppressReload = false; }
         if (Environment.GetEnvironmentVariable("OURNOTES_STUDIO_FIXTURE") is not { Length: > 0 } fixture) return;

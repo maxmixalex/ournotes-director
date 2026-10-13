@@ -18,19 +18,29 @@ internal sealed partial class SceneStudioPage
     private readonly Dictionary<string, Action> _commandFieldValidators = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FrameworkElement> _commandInputs = new(StringComparer.Ordinal);
     private readonly HashSet<string> _commandInputsChanged = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _commandInputsPending = new(StringComparer.Ordinal);
 
     private bool CommandFieldsChanged => _commandDraft is not null && (_commandDraft.ToJsonString() != _commandDraftOriginal
-        || _dialogueText is not null && _dialogueText.Text != _commandDialogueInitial);
-    private bool CommandJsonChanged => _commandJson is not null && _commandJson.Text != _commandJsonInitial;
+        || CommandDialogueChanged);
+    private bool CommandDialogueChanged => _dialogueText is not null && !SameTextBoxText(_dialogueText.Text, _commandDialogueInitial);
+    private bool CommandJsonChanged => _commandJson is not null && !SameTextBoxText(_commandJson.Text, _commandJsonInitial);
     private bool HasCommandDraft => ReferenceEquals(_commandDraftDocument, _document) && _commandDraftId is not null
-        && (CommandFieldsChanged || CommandJsonChanged || _commandFieldErrors.Count > 0);
+        && (CommandFieldsChanged || CommandJsonChanged || _commandFieldErrors.Count > 0 || _commandInputsPending.Count > 0);
     private bool PreserveCommandDraft => HasCommandDraft && _commandDraftId == _selectedCommand && !_applyingCommandDraft;
+
+    // WinUI's RichEdit normalizes newlines to CR, including after a TextBox is first loaded.
+    // Ignore only that representation change; JSON content and escaped string values remain significant.
+    private static string NormalizeTextBoxLineEndings(string text)
+        => text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+    private static bool SameTextBoxText(string? left, string? right)
+        => left == right || left is not null && right is not null
+            && NormalizeTextBoxLineEndings(left) == NormalizeTextBoxLineEndings(right);
 
     private void ClearCommandDraft()
     {
         _commandDraftDocument = null; _commandDraftId = null; _commandDraftOriginal = null; _commandDialogueInitial = null;
         _commandDraft = null; _commandJson = null; _commandJsonInitial = null; _dialogueText = null; _commandEnabled = null;
-        _commandFieldErrors.Clear(); _commandFieldValidators.Clear(); _commandInputs.Clear(); _commandInputsChanged.Clear();
+        _commandFieldErrors.Clear(); _commandFieldValidators.Clear(); _commandInputs.Clear(); _commandInputsChanged.Clear(); _commandInputsPending.Clear();
         _commandDraftGeneration++;
     }
     private void CommandDraftChanged()
@@ -43,10 +53,20 @@ internal sealed partial class SceneStudioPage
         => ReferenceEquals(document, _document) && ReferenceEquals(document, _commandDraftDocument)
             && id == _commandDraftId && generation == _commandDraftGeneration;
 
+    private void SynchronizePendingCommandInputs()
+    {
+        if (_applyingCommandDraft || !ReferenceEquals(_commandDraftDocument, _document)) return;
+        foreach (string key in _commandInputsPending.ToArray())
+            if (_commandFieldValidators.TryGetValue(key, out var validate)) validate();
+    }
+
     /// <summary>Applies a valid draft before navigation or persistence; invalid input stays on screen.</summary>
     private bool TryFlushCommandDraft(bool reload = true)
     {
-        if (_applyingCommandDraft || !HasCommandDraft) return true;
+        if (_applyingCommandDraft) return true;
+        // TextChanged is asynchronous. Read pending TextChanging edits before testing errors or conflicts.
+        SynchronizePendingCommandInputs();
+        if (!HasCommandDraft) return true;
         if (_commandFieldErrors.Count > 0)
         { Notice(string.Join(Environment.NewLine, _commandFieldErrors.Values), false); return false; }
         if (CommandJsonChanged && CommandFieldsChanged)
@@ -65,6 +85,7 @@ internal sealed partial class SceneStudioPage
         {
             if (!useJson)
             {
+                SynchronizePendingCommandInputs();
                 _validatingCommandInputs = true;
                 try { foreach (var validate in _commandFieldValidators.Values.ToArray()) validate(); }
                 finally { _validatingCommandInputs = false; }
@@ -73,11 +94,11 @@ internal sealed partial class SceneStudioPage
             JsonObject value = useJson
                 ? JsonNode.Parse(_commandJson?.Text ?? "") as JsonObject ?? throw new ArgumentException("一条指令需要是 JSON 对象。")
                 : (JsonObject)_commandDraft.DeepClone();
-            string? text = useJson ? null : _dialogueText?.Text;
+            string? text = !useJson && CommandDialogueChanged ? NormalizeTextBoxLineEndings(_dialogueText!.Text) : null;
             FlushProperty(); _applyingCommandDraft = true;
             document.BeginEdit("修改指令"); transaction = true;
             document.UpdateCommand(id, value);
-            if (text is not null && text != document.GetCommandText(id)) document.SetCommandText(id, text);
+            if (text is not null && !SameTextBoxText(text, document.GetCommandText(id))) document.SetCommandText(id, text);
             document.CommitEdit(); transaction = false;
             ClearCommandDraft(); BuildProperties(); RefreshHeader(); RefreshTimeline();
             if (reload && !_suppressReload) _ = SafeAsync(ReloadAsync);
@@ -150,13 +171,14 @@ internal sealed partial class SceneStudioPage
         });
         box.ValueChanged += (_, _) =>
         {
-            if (generation != _commandDraftGeneration || box.Value == initial && !_commandInputsChanged.Contains(key)) return;
+            if (generation != _commandDraftGeneration || box.Value.Equals(initial) && !_commandInputsChanged.Contains(key)) return;
             _commandInputsChanged.Add(key); Validate();
         };
     }
 
     private JsonObject? CaptureCommandDraft()
     {
+        SynchronizePendingCommandInputs();
         if (!HasCommandDraft || _document?.Commands.FirstOrDefault(command => command.Id == _commandDraftId) is not { } command) return null;
         var inputs = new JsonObject();
         foreach (string key in _commandInputsChanged)
@@ -176,6 +198,7 @@ internal sealed partial class SceneStudioPage
                 if (_commandInputs.TryGetValue(pair.Key, out var control))
                 { if (control is NumberBox number) number.Text = pair.Value?.ToString() ?? ""; else ((TextBox)control).Text = pair.Value?.ToString() ?? ""; }
         if (_commandJson is not null && draft["json"] is { } json) _commandJson.Text = json.ToString();
+        SynchronizePendingCommandInputs();
         RefreshHeader();
     }
 }

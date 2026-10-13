@@ -311,7 +311,24 @@ public sealed class MainWindow : Window
     public async Task RunSmokeTestAsync(string reportPath)
     {
         var checks = new JsonArray(); var pages = new JsonArray();
-        void Check(bool condition, string description) { if (!condition) throw new InvalidOperationException(description); checks.Add(description); }
+        void SaveProgress(bool complete = false, string? failedCheck = null)
+        {
+            DesktopSettings.AtomicWrite(reportPath, new JsonObject
+            {
+                ["schema"] = "ournotes-director/desktop-smoke/1", ["ok"] = complete,
+                ["status"] = complete ? "passed" : failedCheck is null ? "running" : "failed",
+                ["checks"] = checks.DeepClone(), ["pages"] = pages.DeepClone(),
+                ["failedCheck"] = failedCheck, ["commands"] = CommandCatalog.All.Count,
+                ["result"] = complete ? "原生工作台、实时画布、场景编辑与后台导出检查通过" : null
+            }.ToJsonString(DesktopSettings.JsonOptions));
+        }
+        void Check(bool condition, string description)
+        {
+            if (condition) checks.Add(description);
+            SaveProgress(failedCheck: condition ? null : description);
+            if (!condition) throw new InvalidOperationException(description);
+        }
+        SaveProgress();
         foreach (var key in new[] { "scenes", "home" })
         {
             Navigate(key); _root.UpdateLayout(); await Task.Delay(100);
@@ -336,8 +353,6 @@ public sealed class MainWindow : Window
         Check(probe.Success, "后台队列通过真实本地媒体操作");
         Check(Jobs.Tasks.Any(t => t.Request.CommandId == "image.probe" && t.Status == DesktopTaskStatus.Succeeded && File.Exists(t.ReportPath)), "任务结果持久保存");
         CloseDrawer(); _root.UpdateLayout(); await Task.Delay(150);
-        DesktopSettings.AtomicWrite(reportPath, new JsonObject { ["schema"] = "ournotes-director/desktop-smoke/1", ["ok"] = true,
-            ["checks"] = checks, ["pages"] = pages, ["commands"] = CommandCatalog.All.Count,
-            ["result"] = "原生工作台、实时画布、场景编辑与后台导出检查通过" }.ToJsonString(DesktopSettings.JsonOptions));
+        SaveProgress(complete: true);
     }
 }

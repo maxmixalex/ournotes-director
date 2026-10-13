@@ -229,8 +229,9 @@ internal sealed partial class SceneStudioPage
         _dialogueText = null;
         if (command.Command is "Talk" or "Subtitles" or "Location" or "ChatTalk")
         {
-            _dialogueText = new TextBox { Header = "对白文本", Text = _document!.GetCommandText(command.Id), AcceptsReturn = true,
+            _dialogueText = new TextBox { Header = "对白文本", AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap, MinHeight = 96, PlaceholderText = "直接输入角色要说的话" };
+            _dialogueText.Text = _document!.GetCommandText(command.Id);
             _commandDialogueInitial = _dialogueText.Text;
             _dialogueText.TextChanged += (_, _) => CommandDraftChanged();
             _properties.Children.Add(_dialogueText);
@@ -262,9 +263,10 @@ internal sealed partial class SceneStudioPage
         _properties.Children.Add(StudioLayout.Tool("应用指令", ApplyCommandDraft, "\uE73E"));
         _properties.Children.Add(StudioLayout.Tool("撤销未应用修改", DiscardCommandDraft, "\uE7A7"));
         _properties.Children.Add(StudioLayout.AsyncTool("添加字段…", AddCommandFieldAsync, "\uE710"));
-        _commandJsonInitial = _commandDraft.ToJsonString(DesktopSettings.JsonOptions);
-        _commandJson = new TextBox { Text = _commandJsonInitial, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
+        _commandJson = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Consolas"), FontSize = 11, Height = 220 };
+        _commandJson.Text = _commandDraft.ToJsonString(DesktopSettings.JsonOptions);
+        _commandJsonInitial = _commandJson.Text;
         _commandJson.TextChanged += (_, _) => CommandDraftChanged();
         ScrollViewer.SetVerticalScrollBarVisibility(_commandJson, ScrollBarVisibility.Auto); ScrollViewer.SetHorizontalScrollBarVisibility(_commandJson, ScrollBarVisibility.Auto);
         _properties.Children.Add(new Expander { Header = "这条指令的 JSON", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Ui.Stack(8, _commandJson,
@@ -325,13 +327,16 @@ internal sealed partial class SceneStudioPage
             panel.Children.Add(control); return;
         }
         bool json = value is JsonArray or JsonObject || value?.GetValueKind() == System.Text.Json.JsonValueKind.Number;
-        var input = new TextBox { Header = label, Text = json ? value!.ToJsonString() : value?.ToString() ?? "",
+        var input = new TextBox { Header = label,
             PlaceholderText = definition?.Placeholder ?? (definition?.Required == true ? "需要填写或从素材库选择" : ""),
             AcceptsReturn = key.Contains("Text", StringComparison.OrdinalIgnoreCase), TextWrapping = TextWrapping.Wrap };
+        input.Text = json ? value!.ToJsonString() : value?.ToString() ?? "";
+        string initialText = input.Text;
         string fieldPath = string.Join('.', path); _commandInputs[fieldPath] = input;
         void ValidateInput()
         {
             if (generation != _commandDraftGeneration || !_commandInputsChanged.Contains(fieldPath)) return;
+            _commandInputsPending.Remove(fieldPath);
             if (json)
             {
                 try { var parsed = JsonNode.Parse(input.Text); if (!_validatingCommandInputs) Change(parsed); _commandFieldErrors.Remove(fieldPath); }
@@ -347,7 +352,14 @@ internal sealed partial class SceneStudioPage
             CommandDraftChanged();
         }
         _commandFieldValidators[fieldPath] = ValidateInput;
-        input.TextChanged += (_, _) => { _commandInputsChanged.Add(fieldPath); ValidateInput(); };
+        input.TextChanging += (_, _) =>
+        {
+            if (generation != _commandDraftGeneration
+                || !_commandInputsChanged.Contains(fieldPath) && SameTextBoxText(input.Text, initialText)) return;
+            // This synchronous event can run during layout: only record input, never change the visual tree here.
+            _commandInputsChanged.Add(fieldPath); _commandInputsPending.Add(fieldPath);
+        };
+        input.TextChanged += (_, _) => { if (_commandInputsPending.Contains(fieldPath)) ValidateInput(); };
         panel.Children.Add(input);
         if (key is "Model" or "MotionName" or "ExpressionName" or "VoiceName" or "SoundId")
         {
@@ -379,8 +391,8 @@ internal sealed partial class SceneStudioPage
         JsonObject current = _commandDraft;
         foreach (string segment in path[..^1]) { if (current[segment] is not JsonObject) current[segment] = new JsonObject(); current = (JsonObject)current[segment]!; }
         current[path[^1]] = value;
-        if (_commandJson is not null && _commandJson.Text == _commandJsonInitial)
-        { _commandJsonInitial = _commandDraft.ToJsonString(DesktopSettings.JsonOptions); _commandJson.Text = _commandJsonInitial; }
+        if (_commandJson is not null && !CommandJsonChanged)
+        { _commandJson.Text = _commandDraft.ToJsonString(DesktopSettings.JsonOptions); _commandJsonInitial = _commandJson.Text; }
         CommandDraftChanged();
     }
     private void ApplyCommandDraft() => TryApplyCommandDraft(false);
