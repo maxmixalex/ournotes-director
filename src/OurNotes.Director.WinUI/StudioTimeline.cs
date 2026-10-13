@@ -12,7 +12,7 @@ using Windows.UI;
 
 namespace OurNotes.Director.WinUI;
 
-internal sealed record StudioTimelineMarker(string Id, string TrackId, double Time, string Label, string Kind = "key");
+internal sealed record StudioTimelineMarker(string Id, string TrackId, double Time, string Label, string Kind = "key", double? End = null);
 internal sealed record StudioTimelineTrack(string Id, string Label, IReadOnlyList<StudioTimelineMarker> Markers);
 
 /// <summary>Native interactive ruler and keyframe tracks. Editing only occurs through its public callbacks.</summary>
@@ -29,13 +29,15 @@ internal sealed class StudioTimeline : UserControl
         SmallChange = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, Header = null };
     private readonly Slider _zoom = new() { Minimum = 20, Maximum = 160, Value = 60, Width = 76, VerticalAlignment = VerticalAlignment.Center };
     private readonly Line _playhead = new() { StrokeThickness = 1.5, Stroke = new SolidColorBrush(Color.FromArgb(255, 55, 148, 225)), IsHitTestVisible = false };
+    private readonly ComboBox _durationMode = Ui.Choice("", [("automatic", "跟随指令"), ("fixed", "指定时长")], "fixed");
     private IReadOnlyList<StudioTimelineTrack> _tracks = [];
     private StudioTimelineMarker? _dragging;
     private string? _selectedMarker;
     private double _position, _length = 5, _dragTime;
-    private bool _playing, _updating, _scrubbing;
+    private bool _playing, _updating, _scrubbing, _automatic, _durationResolved = true;
     internal event Action<double>? SeekRequested;
     internal event Action<double>? DurationChanged;
+    internal event Action<bool>? AutomaticDurationChanged;
     internal event Action? PlayPauseRequested;
     internal event Action<StudioTimelineMarker>? MarkerSelected;
     internal event Action<StudioTimelineMarker, double>? MarkerMoved;
@@ -56,8 +58,9 @@ internal sealed class StudioTimeline : UserControl
             StudioLayout.Tool("", () => DeleteKeyRequested?.Invoke(), "\uE74D"));
         editing.HorizontalAlignment = HorizontalAlignment.Center;
         ToolTipService.SetToolTip(editing.Children[1], "删除所选关键帧");
-        var limits = Ui.Row(6, new TextBlock { Text = "时长", VerticalAlignment = VerticalAlignment.Center, FontSize = 12 }, _duration,
-            new TextBlock { Text = "秒", VerticalAlignment = VerticalAlignment.Center, FontSize = 12 }, _zoom);
+        _durationMode.MinWidth = 106; _durationMode.Visibility = Visibility.Collapsed;
+        var limits = Ui.Row(6, _durationMode, _duration, _zoom);
+        _durationMode.SelectionChanged += (_, _) => { if (!_updating) AutomaticDurationChanged?.Invoke(Ui.Selected(_durationMode) == "automatic"); };
         ToolTipService.SetToolTip(_zoom, "时间轴缩放"); AutomationProperties.SetName(_zoom, "时间轴缩放");
         AutomationProperties.SetName(_duration, "场景时长（秒）");
         transport.Children.Add(playback); transport.Children.Add(editing); transport.Children.Add(limits);
@@ -90,7 +93,7 @@ internal sealed class StudioTimeline : UserControl
     internal double Duration
     {
         get => _length;
-        set { _length = Math.Clamp(value, .1, 36000); _updating = true; _duration.Value = _length; _updating = false; Draw(); UpdateReadout(); }
+        set { double length = Math.Clamp(value, .1, 36000); if (Math.Abs(_length - length) < .0001) return; _length = length; _updating = true; _duration.Value = _length; _updating = false; Draw(); UpdateReadout(); }
     }
     internal double Position
     {
@@ -103,11 +106,25 @@ internal sealed class StudioTimeline : UserControl
         set { if (_playing == value) return; _playing = value; _play.Content = Ui.Row(7, new FontIcon { Glyph = value ? "\uE769" : "\uE768", FontSize = 13 }, new TextBlock { Text = value ? "暂停" : "播放" }); }
     }
     internal bool CanEditKeys { get => _editing.IsHitTestVisible; set { _editing.IsHitTestVisible = value; _editing.Opacity = value ? 1 : .35; foreach (var button in _editing.Children.OfType<Button>()) button.IsEnabled = value; } }
-    internal void SetTracks(IEnumerable<StudioTimelineTrack> tracks) { _tracks = tracks.ToArray(); if (!_tracks.SelectMany(t => t.Markers).Any(m => m.Id == _selectedMarker)) _selectedMarker = null; Draw(); }
+    internal void SetDurationMode(bool automatic, bool resolved)
+    {
+        _automatic = automatic; _durationResolved = resolved; _updating = true;
+        _durationMode.Visibility = Visibility.Visible;
+        _durationMode.SelectedIndex = automatic ? 0 : 1;
+        _duration.IsEnabled = !automatic; _updating = false;
+        ToolTipService.SetToolTip(_duration, automatic ? resolved ? "原生播放流程计算出的完整时长" : "正在计算语音、等待和指令的完整时长" : "预览和导出的指定时长（秒）");
+        UpdateReadout();
+    }
+    internal void SetTracks(IEnumerable<StudioTimelineTrack> tracks)
+    {
+        var next = tracks.ToArray();
+        if (_tracks.Count == next.Length && _tracks.Zip(next).All(pair => pair.First.Id == pair.Second.Id && pair.First.Label == pair.Second.Label && pair.First.Markers.SequenceEqual(pair.Second.Markers))) return;
+        _tracks = next; if (!_tracks.SelectMany(t => t.Markers).Any(m => m.Id == _selectedMarker)) _selectedMarker = null; Draw();
+    }
     private double PixelsPerSecond => Math.Max(_zoom.Value, Math.Max(1, _scroll.ActualWidth - LabelWidth - 20) / _length);
     private double At(double time) => LabelWidth + time * PixelsPerSecond;
     private double From(double x) => Math.Clamp(Math.Round((x - LabelWidth) / PixelsPerSecond * 30) / 30, 0, _length);
-    private void UpdateReadout() => _time.Text = $"{_position:0.00} / {_length:0.00} s";
+    private void UpdateReadout() => _time.Text = _automatic && !_durationResolved ? $"{_position:0.00} s · 计算中" : $"{_position:0.00} / {_length:0.00} s";
     private void UpdatePlayhead()
     {
         _playhead.X1 = _playhead.X2 = At(_position); _playhead.Y1 = 0; _playhead.Y2 = _canvas.Height;
@@ -143,6 +160,13 @@ internal sealed class StudioTimeline : UserControl
             foreach (var marker in track.Markers)
             {
                 double time = _dragging?.Id == marker.Id ? _dragTime : marker.Time;
+                if (marker.End is double end && end > time + .02)
+                {
+                    var bar = new Border { Width = Math.Max(3, At(end) - At(time)), Height = 16, CornerRadius = new(3),
+                        Background = new SolidColorBrush(Color.FromArgb(90, 151, 111, 200)), Tag = marker };
+                    ToolTipService.SetToolTip(bar, $"{marker.Label} · {time:0.00}–{end:0.00} s");
+                    Canvas.SetLeft(bar, At(time)); Canvas.SetTop(bar, top + 5); _canvas.Children.Add(bar);
+                }
                 var diamond = new Border { Width = 10, Height = 10, CornerRadius = new(1), Background = new SolidColorBrush(
                     marker.Kind == "motion" ? Color.FromArgb(255, 193, 139, 233) : Color.FromArgb(255, 59, 153, 224)),
                     BorderBrush = new SolidColorBrush(dark ? Color.FromArgb(255, 255, 255, 255) : Color.FromArgb(255, 16, 45, 80)),
@@ -159,7 +183,7 @@ internal sealed class StudioTimeline : UserControl
         var point = args.GetCurrentPoint(_canvas); if (!point.Properties.IsLeftButtonPressed || point.Position.X < LabelWidth) return;
         Focus(FocusState.Pointer);
         _dragging = (args.OriginalSource as FrameworkElement)?.Tag as StudioTimelineMarker;
-        if (_dragging is not null) { _dragTime = _dragging.Time; _selectedMarker = _dragging.Id; MarkerSelected?.Invoke(_dragging); Draw(); if (!CanEditKeys) { _dragging = null; args.Handled = true; return; } }
+        if (_dragging is not null) { _dragTime = _dragging.Time; _selectedMarker = _dragging.Id; MarkerSelected?.Invoke(_dragging); Draw(); if (!CanEditKeys || _dragging.Kind == "command") { _dragging = null; args.Handled = true; return; } }
         else { _scrubbing = true; SeekRequested?.Invoke(From(point.Position.X)); }
         _canvas.CapturePointer(args.Pointer); args.Handled = true;
     }

@@ -8,14 +8,24 @@ public sealed class CriLipsData
 {
     public static CriLipsData? FromArchive(Archive archive,string site,JsonNode manifest,JsonNode definition)
     {
-        CriLipsData? Read(JsonNode source,JsonNode document)=>document["crilips"] is JsonNode data?new(JsonNode.Parse(archive.Logical(site,source,Archive.S(data,"descriptor")))!,archive.Logical(site,source,Archive.S(data,"data"))):null;
-        var direct=Read(manifest,definition);if(direct is not null||!OperatingSystem.IsLinux())return direct;
+        CriLipsData? Read(JsonNode source,JsonNode document)
+        {
+            if(document["crilips"] is not JsonNode data)return null;
+            try{return new(JsonNode.Parse(archive.Logical(site,source,Archive.S(data,"descriptor")))!,archive.Logical(site,source,Archive.S(data,"data")));}
+            catch(FileNotFoundException){return null;}
+            catch(DirectoryNotFoundException){return null;}
+        }
+        var direct=Read(manifest,definition);if(direct is not null)return direct;
         // MotionSync-only episodes omit the shared CRI neural weights. Linux
-        // uses the same archived CRI analyser, sourced from another episode.
+        // uses the same archived CRI analyser, sourced from another episode. The same
+        // lookup also serves Windows commands that explicitly request CRI for a group.
         foreach(string file in Directory.EnumerateFiles(archive.SitePath(site,"stories"),"*.json").Order()){
             var source=Archive.ReadJson(file);
             if(source["files"] is not JsonObject files||!files.Any(p=>p.Key.Contains("crilips",StringComparison.OrdinalIgnoreCase)))continue;
-            var document=JsonNode.Parse(archive.Logical(site,source,"story.json"))!;
+            JsonNode document;
+            try{document=JsonNode.Parse(archive.Logical(site,source,"story.json"))!;}
+            catch(FileNotFoundException){continue;}
+            catch(DirectoryNotFoundException){continue;}
             if(Read(source,document) is {} found)return found;
         }
         return null;

@@ -19,8 +19,9 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
         if(root["output"] is not null&&root["output"] is not JsonObject)throw new ArgumentException("Project output must be an object");
         CheckKeys(output,["width","height","supersample","codec","cineformQuality","clean","letterbox"],"output");
         foreach(string key in new[]{"width","height","supersample"})if(output[key] is {} value){
-            if(!int.TryParse(value.ToString(),out int n)||n<(key=="supersample"?1:16)||n>(key=="supersample"?4:key=="width"?7680:4320))throw new ArgumentException("Invalid project output."+key);
+            if(!int.TryParse(value.ToString(),out int n)||n<(key=="supersample"?1:16)||n>(key=="supersample"?4:RenderDimensions.MaxSide))throw new ArgumentException("Invalid project output."+key);
         }
+        RenderDimensions.Validate(int.Parse(Archive.S(output,"width","1920")),int.Parse(Archive.S(output,"height","1080")),int.Parse(Archive.S(output,"supersample","2")));
         if(output["clean"] is JsonValue clean&&!clean.TryGetValue<bool>(out _))throw new ArgumentException("Project output.clean must be boolean");
         if(output["clean"] is not null&&output["clean"] is not JsonValue)throw new ArgumentException("Project output.clean must be boolean");
         if(output["codec"] is not null)_=VideoEncoding.NormalizeCodec(Archive.S(output,"codec"));

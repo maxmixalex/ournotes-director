@@ -111,6 +111,7 @@ static class RealtimePreviewTests
                 "preview creates no disk frames, video proxies or generated media files");
 
             await CheckSceneAsync(root,sceneProject,session,Check);
+            await CheckAutomaticTimingAsync(root,Check);
 
             await session.DisposeAsync();
             try{await session.SeekAsync(0);Check(false,"disposed session must reject requests");}
@@ -123,6 +124,47 @@ static class RealtimePreviewTests
             await session.DisposeAsync();
             if(Directory.Exists(root))Directory.Delete(root,true);
         }
+    }
+
+    static async Task CheckAutomaticTimingAsync(string root,Action<bool,string> check)
+    {
+        string path=Path.Combine(root,"studio-auto-timing.json");File.WriteAllText(path,RealtimeSceneFixture.Document().ToJsonString());
+        var source=new ScenePreviewSource(root,path,"","",128,96,.1,PreviewDurationMode.Automatic);
+        await using var session=new RealtimePreviewSession();
+        await session.LoadSceneAsync(source).WaitAsync(TimeSpan.FromSeconds(20));
+        long initialSession=session.LastFrame!.SessionId;var first=session.LastFrame.Pixels;
+        check(session.LastFrame.Frame==0&&session.LastFrame.DurationMode==PreviewDurationMode.Automatic,
+            "automatic scene duration starts with a real first frame instead of seeking the visible renderer to the end");
+        var timing=await session.ResolveSceneTimingAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        check(timing.IsComplete&&timing.EndFrame==30&&Math.Abs(timing.Duration!.Value-31/30d)<1e-10,
+            "automatic duration observes the actual interpreter completion and includes its last export frame");
+        check(timing.Commands.Count==3&&timing.Commands.Last().Section=="commands"&&timing.Commands.Last().StartFrame==0&&timing.Commands.Last().EndFrame==30,
+            "native scene timing preserves initialization and real tween start/end positions");
+        await session.SeekAsync(.5);
+        check(session.LastFrame!.Frame==15&&session.LastFrame.SessionId==initialSession&&session.LastFrame.DurationResolved,
+            "background duration analysis preserves the live context and replaces the provisional short duration");
+        await session.SeekAsync(100);
+        check(session.LastFrame!.Frame==30&&session.LastFrame.Timing?.IsComplete==true,
+            "automatic seeking clamps at the true last frame without rendering after story completion");
+        await session.LoadSceneAsync(source);
+        check(session.LastFrame!.Timing?.IsComplete==true&&session.LastFrame.Pixels.Rgba.SequenceEqual(first.Rgba),
+            "reloading an unchanged project uses cached measured duration and keeps deterministic first-frame pixels");
+
+        int actualEnd=await Task.Run(()=>
+        {
+            using var rendered=new AdvStoryRenderer(new Archive(root),"intl","","43","zh-Hans",128,96,path,"",1);
+            for(int frame=0;frame<100;frame++){rendered.Frame(frame,true);if(rendered.Player.Finished)return frame;}
+            return -1;
+        });
+        check(actualEnd==timing.EndFrame,"drawing every native frame reaches the same end as duration analysis without frame readbacks");
+        var lengthy=RealtimeSceneFixture.Document();lengthy["commands"]=new JsonArray((JsonNode)new JsonObject{["cmd"]="Delay",["Frames"]=30*36000});
+        string longPath=Path.Combine(root,"studio-cancel-timing.json");File.WriteAllText(longPath,lengthy.ToJsonString());
+        await session.LoadSceneAsync(source with{ProjectPath=longPath});
+        var pending=session.ResolveSceneTimingAsync();
+        await session.LoadSceneAsync(source with{DurationMode=PreviewDurationMode.Fixed,Duration=1});
+        bool cancelled=false;try{await pending.WaitAsync(TimeSpan.FromSeconds(15));}catch(OperationCanceledException){cancelled=true;}
+        check(cancelled&&session.LastFrame!.Frame==0&&session.LastFrame.DurationMode==PreviewDurationMode.Fixed,
+            "switching projects cancels old native duration analysis without overwriting the new source or pixels");
     }
 
     static async Task CheckSceneAsync(string root,string projectPath,RealtimePreviewSession home,Action<bool,string> check)

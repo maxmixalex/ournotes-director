@@ -65,7 +65,7 @@ public sealed class SceneSnapshot : IDisposable
 /// A lossless editor envelope, not a renderer. Unknown fields remain editable and are reported by Validate.
 /// Root and row values are detached copies so every mutation has an explicit document transaction.
 /// </summary>
-public sealed class SceneDocument
+public sealed partial class SceneDocument
 {
     static readonly string[] Sections = ["initialize", "commands", "finalize"];
     static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -246,12 +246,14 @@ public sealed class SceneDocument
         string? codec = null, string? cineformQuality = null, bool? clean = null, string? letterbox = null)
     {
         EnsureKnown();
-        if (width is not null) CheckRange(width.Value, 16, 7680, nameof(width));
-        if (height is not null) CheckRange(height.Value, 16, 4320, nameof(height));
+        if (width is not null) CheckRange(width.Value, 16, RenderDimensions.MaxSide, nameof(width));
+        if (height is not null) CheckRange(height.Value, 16, RenderDimensions.MaxSide, nameof(height));
         if (supersample is not null) CheckRange(supersample.Value, 1, 4, nameof(supersample));
         if (codec is not null) codec = VideoEncoding.NormalizeCodec(codec);
         if (cineformQuality is not null) cineformQuality = VideoEncoding.NormalizeCineFormQuality(cineformQuality);
         if (letterbox is not null && letterbox is not ("game" or "none")) throw new ArgumentException("letterbox 必须为 game 或 none。", nameof(letterbox));
+        var existingOutput = Output;
+        RenderDimensions.Validate(width ?? existingOutput.Width, height ?? existingOutput.Height, supersample ?? existingOutput.Supersample);
         bool legacy = Kind == SceneDocumentKind.LegacyShot;
         if (legacy && (codec is not null || cineformQuality is not null || clean is not null || letterbox is not null))
             throw new NotSupportedException("旧 Shot 不支持 codec、cineformQuality、clean 或 letterbox 字段；请在原生导出选项中设置，或使用统一项目格式。");
@@ -423,7 +425,7 @@ public sealed class SceneDocument
         {
             Keys(output, ["width", "height", "supersample", "codec", "cineformQuality", "clean", "letterbox"], "$.output");
             foreach (string key in new[] { "width", "height", "supersample" })
-                if (output[key] is { } value && (!TryInteger(value, out int n) || n < (key == "supersample" ? 1 : 16) || n > (key == "supersample" ? 4 : key == "width" ? 7680 : 4320)))
+                if (output[key] is { } value && (!TryInteger(value, out int n) || n < (key == "supersample" ? 1 : 16) || n > (key == "supersample" ? 4 : RenderDimensions.MaxSide)))
                     Error("output.integer", "$.output." + key, key + " 超出范围或不是整数。");
             if (output["clean"] is { } clean && (clean is not JsonValue boolean || !boolean.TryGetValue<bool>(out _)))
                 Error("output.boolean", "$.output.clean", "clean 必须为布尔值。");
@@ -436,7 +438,7 @@ public sealed class SceneDocument
             if (!issues.Any(issue => issue.Path.StartsWith("$.output", StringComparison.Ordinal)))
             {
                 var current = Output;
-                try { VideoEncoding.Validate(current.Codec, current.Width, current.Height, current.CineformQuality); }
+                try { RenderDimensions.Validate(current.Width, current.Height, current.Supersample); VideoEncoding.Validate(current.Codec, current.Width, current.Height, current.CineformQuality); }
                 catch (ArgumentException error) { Error("output.encoding-size", "$.output", error.Message); }
             }
         }

@@ -4,8 +4,10 @@ public sealed partial class AdvUi
 {
     readonly Lazy<CriLipsData?> criData;
     readonly Dictionary<int,CriVoiceLipSync> criVoices=[];
+    internal bool TimingOnly{get;init;}
     void AttachVoiceLipSync(Actor actor,AdvSound voice,bool forceCri=false)
     {
+        if(TimingOnly)return;
         CriVoiceLipSync? fallback=null;
         if((forceCri||!actor.HasMotionSync)&&criData.Value is CriLipsData data){
             if(!criVoices.TryGetValue(voice.Id,out fallback)){criVoices[voice.Id]=fallback=new(data,audio,voice);voice.OnFinished.Add(()=>criVoices.Remove(voice.Id));}

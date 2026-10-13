@@ -7,6 +7,8 @@ namespace OurNotes.Director.Core;
 
 public sealed record SpineAnimationInfo(string Name, float Duration);
 public sealed record SpineSlotInfo(string Name, string Bone);
+/// <summary>The exporter's setup-pose rectangle in original Spine image pixels, before SkeletonDataAsset.scale.</summary>
+public sealed record SpineDesignBounds(float X, float Y, float Width, float Height);
 
 // Pure managed asset loading, shared by inspection, bounds sampling, and the native renderer.
 // File names are resolved by the caller, so the same code reads an archive or an extracted spot directory.
@@ -20,6 +22,8 @@ public sealed class SpineAsset
     public string File { get; }
     public string Version => Data.Version;
     public float FramesPerSecond => Data.Fps;
+    public float SourceScale { get; }
+    public SpineDesignBounds DesignBounds => new(Data.X, Data.Y, Data.Width, Data.Height);
     public IReadOnlyList<SpineAnimationInfo> Animations { get; }
     public IReadOnlyList<string> Skins { get; }
     public IReadOnlyList<SpineSlotInfo> Slots { get; }
@@ -33,6 +37,7 @@ public sealed class SpineAsset
             throw new InvalidDataException("Spine skeleton record needs name and skeleton");
         float scale = Actor.N(record["scale"], 1);
         if (!float.IsFinite(scale) || scale <= 0) throw new InvalidDataException($"Invalid Spine scale: {Name}");
+        SourceScale = scale;
         var loader = new PageLoader(readFile);
         var atlasFiles = record["atlases"]?.AsArray().Select(n => n?.GetValue<string>() ?? "").ToArray() ?? [];
         if (atlasFiles.Length == 0 || atlasFiles.Any(string.IsNullOrWhiteSpace))

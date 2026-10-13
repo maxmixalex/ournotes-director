@@ -14,6 +14,7 @@ public static class StudioSceneDocumentTests
         OriginalCommands(check);
         HistoryAndFiles(check);
         NativeFrameClock(check);
+        StudioNativeCommandTests.Run(check);
     }
     static void Basics(Action<bool, string> check)
     {

@@ -43,6 +43,13 @@ Windows 使用 `./advkit.exe`。`story commands` 保留原字段与行号；`nat
 
 直接演出输入仍是归档 story manifest 中的 `host/host.json`、`host/spot/spot.json`、Spine atlas／骨架／纹理和 room 资源。`home show` 返回具体站点、spot ID、来源剧情和 manifest，并显示共享骨架的角色拆分信息。此路径支持主页场景与动画，不表示已经实现 SimpleADV 的点击对话、结算或相应 UI 指令；也不保证任意 Unity 组件与特殊混合层能逐像素复现。使用方式见 [HOME_SPINE.md](HOME_SPINE.md)。
 
+## 工作台名称与真实素材回归
+
+- [Moenotes 公开模型目录](https://storage.bdon.moe/moenotes/models.json)：中文角色名的直接来源。桌面资源 `Resources/CharacterNames.json` 保存名称映射与来源说明；显示别名不修改模型、动作或表情 ID。
+- [Haneoka](https://haneoka.org/) 与[源码](https://github.com/haneoka-gakuen/haneoka)：参考角色／服装名称的展示与 Live2D 资源组织。动作、表情未找到完整的逐条官方中文译表，因此只翻译能解释的名称片段，并保留原始编号。
+- 真实场景回归使用 intl 10462 的原 episode、两套 Cubism 模型与原声；真实主页回归使用 40002 的 intl 10855 / 10853 host 资源。`scripts/fetch-*-fixture.py` 保留来源 manifest，记录其 SHA-256 并验证解码后的内容散列；回归素材不纳入发布包。
+- 40002 的 `Hotaru_back` 空引用与 nnnotes `spot.py` 仅沿角色 `_animation` 引用读取 SkeletonAnimation 的导出路径对应。原矩阵未取得；本项目使用可验证的共有骨骼对齐补全部件，诊断明确标记推定恢复。具体范围见 [主页指南](HOME_SPINE.md#源数据缺失的背层部件)。
+
 ## 供应商文档
 
 - [Native AOT](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) 与[跨平台编译限制](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/cross-compile)。

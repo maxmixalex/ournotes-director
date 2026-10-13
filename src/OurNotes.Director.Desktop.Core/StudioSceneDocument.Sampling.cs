@@ -40,7 +40,7 @@ public sealed partial class StudioSceneDocument
     /// </summary>
     public StudioSceneSample Sample(double time)
     {
-        int at = Math.Clamp(ToFrame(time), 0, durationFrames);
+        int at = ClampPlayheadFrame(ToFrame(time));
         if (cachedSample is { } cached && cached.Time == at / (double)FramesPerSecond) return CopySample(cached);
         var state = EvaluateOriginal(at);
         sampleBaseline ??= EvaluateOriginal(0, includeEvents: false);
@@ -86,8 +86,8 @@ public sealed partial class StudioSceneDocument
         Background = (JsonArray)sample.Background.DeepClone()
     };
     void InvalidateSamples() { cachedSample = null; sampleRows = null; sampleTracks = null; sampleBaseline = null; }
-    IReadOnlyList<StudioActor> ActorDefinitions() => originals.Where(row => row.Command == "Character")
-        .Select(row => new StudioActor(Text(row.Data["TargetName"]), Text(row.Data["TargetName"]), Text(row.Data["Model"]), "game", new(), false))
+    IReadOnlyList<StudioActor> ActorDefinitions() => originals.Where(row => row.Command == "Character" && !Ignored(row.Data))
+        .Select(row => new StudioActor(Text(row.Data["TargetName"]), Text(row.Data["TargetName"]), ResolveActorModel(row.Data), "game", new(), false))
         .DistinctBy(actor => actor.Id, StringComparer.Ordinal).ToArray();
 
     EvaluatedState EvaluateOriginal(int at, bool includeEvents = true)
@@ -98,7 +98,7 @@ public sealed partial class StudioSceneDocument
         foreach (var row in sampleRows)
         {
             int start = row.Section == "finalize" && timingKnown ? durationFrames : row.Frame;
-            if (start > at || !row.Known || row.Section == "commands" && Ignored(row.Data)) continue;
+            if (start > at || !row.Known || Ignored(row.Data)) continue;
             Advance(state, Math.Max(0, start - (row.StartsAfterTweens ? 0 : 1)));
             ApplySampleRow(state, row.Command, row.Data, start, includeEvents, row.StartsAfterTweens);
         }

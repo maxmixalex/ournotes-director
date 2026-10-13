@@ -14,7 +14,7 @@ using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 namespace OurNotes.Director.WinUI;
 
 /// <summary>A scene editor: the document, native viewport and timeline share one authored state.</summary>
-internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
+internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
 {
     private readonly MainWindow _window;
     private readonly NativeViewport _viewport = App.TraceConstruction("Scene NativeViewport", () => new NativeViewport());
@@ -44,7 +44,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     private Task _pendingPreviewCommit = Task.CompletedTask;
     private long _loadVersion;
     private bool _refreshing, _disposed, _looping, _suppressReload;
-    internal bool HasUnsavedChanges => _document is not null && _document.ToJson() != _savedJson;
+    internal bool HasUnsavedChanges => _document is not null && (_document.ToJson() != _savedJson || HasCommandDraft);
 
     internal SceneStudioPage(MainWindow window)
     {
@@ -65,10 +65,11 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         toolbar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var editTools = Ui.Row(5, file, StudioLayout.AsyncTool("保存", () => SaveAsync(), "\uE74E"),
-            StudioLayout.Tool("", () => Edit(() => _document?.Undo()), "\uE7A7"), StudioLayout.Tool("", () => Edit(() => _document?.Redo()), "\uE7A6"));
+            StudioLayout.Tool("", UndoSceneEdit, "\uE7A7"), StudioLayout.Tool("", () => Edit(() => _document?.Redo()), "\uE7A6"));
         ToolTipService.SetToolTip(editTools.Children[2], "撤销 · Ctrl+Z"); ToolTipService.SetToolTip(editTools.Children[3], "重做 · Ctrl+Y");
         toolbar.Children.Add(editTools); toolbar.Children.Add(_name); Grid.SetColumn(_name, 1);
-        var finalTools = Ui.Row(7, _loop, StudioLayout.AsyncTool("JSON", ShowJsonAsync, "\uE943"),
+        var finalTools = Ui.Row(7, StudioLayout.AsyncTool("单人透明", () => CreateSingleActorShotAsync(false), "\uE77B"),
+            StudioLayout.AsyncTool("画布", CanvasSettingsAsync, "\uE740"), _loop, StudioLayout.AsyncTool("JSON", ShowJsonAsync, "\uE943"),
             StudioLayout.AsyncTool("导出", ExportAsync, "\uE898", true));
         toolbar.Children.Add(finalTools); Grid.SetColumn(finalTools, 2);
 
@@ -96,17 +97,23 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         var center = new Grid(); center.Children.Add(_viewport); center.Children.Add(_welcome);
         _notice.VerticalAlignment = VerticalAlignment.Top; _notice.Margin = new(8); center.Children.Add(_notice);
         var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("属性"), _autoKey, _properties, _hint));
-        Content = App.TraceConstruction("Scene StudioLayout", () => new StudioLayout(left, center, right, _timeline, toolbar));
+        Content = App.TraceConstruction("Scene StudioLayout", () => new StudioLayout(left, center, right, CreateCommandDock(), toolbar));
         _properties.Children.Add(Ui.Text("在左侧或画布中选择角色、相机与画面。", 13, true));
 
         _timeline.SeekRequested += time => _ = SafeAsync(() => SeekAsync(time));
         _timeline.PlayPauseRequested += () => _ = SafeAsync(TogglePlaybackAsync);
-        _timeline.DurationChanged += value => { if (!_refreshing && _document is not null) Edit(() => { if (_document.CanEditTimeline) _document.SetDuration(value); else _document.SetPlaybackDuration(value); }); };
-        _timeline.MarkerSelected += marker => { _selectedMarker = marker.Id; SelectObject(marker.TrackId); _ = SafeAsync(() => SeekAsync(marker.Time)); };
+        _timeline.DurationChanged += value => { if (!_refreshing && _document is not null) Edit(() => _document.SetDuration(value)); };
+        _timeline.AutomaticDurationChanged += automatic => { if (!_refreshing && _document is not null) Edit(() => _document.SetDurationMode(automatic ? StudioDurationMode.Automatic : StudioDurationMode.Fixed)); };
+        _timeline.MarkerSelected += marker =>
+        {
+            if (marker.Kind == "command") SelectCommand(marker.TrackId);
+            else { _selectedMarker = marker.Id; SelectObject(marker.TrackId); }
+            _ = SafeAsync(() => SeekAsync(marker.Time));
+        };
         _timeline.MarkerMoved += (marker, time) => Edit(() => _document?.MoveKeyframe(marker.Id, time));
         _timeline.AddKeyRequested += AddKey;
         _timeline.DeleteKeyRequested += () => { if (_selectedMarker is { } key) Edit(() => _document?.DeleteKeyframe(key)); };
-        _viewport.SelectionChanged += (_, id) => SelectObject(id);
+        _viewport.SelectionChanged += (_, id) => { if (!_selectingCommandTarget) SelectObject(id); };
         _viewport.ObjectDragged += (_, drag) => _ = SafeAsync(() => DragAsync(drag));
         _viewport.ObjectScaled += (_, scale) => _ = SafeAsync(() => ScaleAsync(scale));
         _viewport.FramePresented += (_, frame) => OnFrame(frame);
@@ -133,7 +140,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
             {
                 case VirtualKey.S: args.Handled = true; _ = SafeAsync(() => SaveAsync()); break;
                 case VirtualKey.O: args.Handled = true; _ = SafeAsync(() => OpenAsync()); break;
-                case VirtualKey.Z: if (args.OriginalSource is not TextBox) { args.Handled = true; Edit(() => _document?.Undo()); } break;
+                case VirtualKey.Z: if (args.OriginalSource is not TextBox) { args.Handled = true; UndoSceneEdit(); } break;
                 case VirtualKey.Y: if (args.OriginalSource is not TextBox) { args.Handled = true; Edit(() => _document?.Redo()); } break;
             }
         };
@@ -151,6 +158,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private async Task<bool> ConfirmReplaceAsync()
     {
+        if (!TryFlushCommandDraft()) return false;
         FlushProperty();
         return !HasUnsavedChanges || await _window.ConfirmAsync("打开另一个场景？", "当前修改会先保留为草稿。", "继续");
     }
@@ -188,6 +196,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     internal async Task SaveAsync(bool saveAs = false)
     {
+        if (!TryFlushCommandDraft()) return;
         FlushProperty(); if (_document is null) return;
         string? path = _document.Document.FilePath;
         if (saveAs || path is null) path = await _window.PickFileAsync(true, path is null ? "scene.json" : Path.GetFileName(path), [".json"]);
@@ -198,48 +207,70 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     private void SetDocument(StudioSceneDocument document)
     {
         if (_document is not null) _document.Changed -= DocumentChanged;
+        ClearCommandDraft();
         _viewport.InvalidateSource(); _previewDocument = null; _document = document; _savedJson = null; _selectedMarker = null;
+        _selectedCommand = null; _commandListSignature = null; _lastTiming = null;
         _document.Changed += DocumentChanged; _welcome.Visibility = Visibility.Collapsed; _notice.IsOpen = false;
-        RefreshObjects(); RefreshTimeline(); BuildProperties(); RefreshHeader();
+        RefreshObjects(); RefreshTimeline(); RefreshCommands(); BuildProperties(); RefreshHeader();
     }
     private void DocumentChanged()
     {
         if (_disposed) return;
-        RefreshHeader(); RefreshObjects(); RefreshTimeline(); _draftTimer.Stop(); _draftTimer.Start();
+        RefreshHeader(); RefreshObjects(); RefreshTimeline(); RefreshCommands(); _draftTimer.Stop(); _draftTimer.Start();
     }
     private void RefreshHeader()
     {
         _name.Text = (_document?.Document.FilePath is { } file ? Path.GetFileNameWithoutExtension(file) : "未命名场景") + (HasUnsavedChanges ? " · 未保存" : "");
         _source.Text = _document is null ? "" : "素材来源 · " + _document.Document.Source.Adv;
     }
-    private void Edit(Action action)
+    private bool Edit(Action action)
     {
         try
         {
+            if (!TryFlushCommandDraft(reload: false)) return false;
             FlushProperty(); action(); BuildProperties(); RefreshTimeline();
             if (!_suppressReload) _ = SafeAsync(ReloadAsync);
+            return true;
         }
-        catch (Exception error) { Notice(error.Message, false); }
+        catch (Exception error) { Notice(error.Message, false); return false; }
     }
     private async Task AddActorAsync()
     {
+        if (!TryFlushCommandDraft()) return;
         if (_document is null) { await NewAsync(false); if (_document is null) return; }
         var selected = await ResourcePicker.PickAsync(_window, CommandCatalog.Get("model.show").Fields.First(f => f.Key == "modelId"),
             new Dictionary<string, string?> { ["site"] = _document.Document.Source.Site });
         if (selected is null) return;
-        string id = _document.AddActor(selected.Value); SelectObject(id); await ReloadAsync();
+        if (_document.CanEditTimeline)
+        { string id = _document.AddActor(selected.Value, DisplayNames.Model(selected.Value)); SelectObject(id); }
+        else
+        {
+            string target = "actor" + (_document.Actors.Count + 1);
+            while (_document.Actors.Any(actor => actor.Id == target)) target += "_";
+            var command = StudioCommandCatalog.Create("Character", target); command["Model"] = selected.Value; command["IgnoreData"] = 0;
+            string id = _document.InsertCommand("initialize", _document.CommandSections.First(s => s.Section == "initialize").Commands.Count, command);
+            SelectCommand(id);
+        }
+        await ReloadAsync();
     }
     private void RemoveSelected()
     {
+        if (!TryFlushCommandDraft(reload: false)) return;
         if (_document?.SelectedId is not { } id || id.StartsWith('$')) return;
-        Edit(() => _document.RemoveActor(id)); SelectObject(StudioSceneDocument.SceneId);
+        if (_document.CanEditTimeline) Edit(() => _document.RemoveActor(id));
+        else
+        {
+            var command = StudioCommandCatalog.Create("Out", id);
+            Edit(() => _document.InsertCommand("commands", SelectedCommand()?.Index + 1 ?? _document.CommandSections.First(s => s.Section == "commands").Commands.Count, command));
+        }
+        SelectObject(StudioSceneDocument.SceneId);
     }
     private void RefreshObjects()
     {
         if (_document is null) return; _refreshing = true;
-        _addActor.IsEnabled = _document.CanEditTimeline;
+        _addActor.IsEnabled = true;
         _objects.Items.Clear();
-        foreach (var actor in _document.Actors) Add(actor.Id, actor.Name, "\uE77B");
+        foreach (var actor in _document.Actors) Add(actor.Id, actor.Name == actor.Model ? DisplayNames.Model(actor.Model) : DisplayNames.Character(actor.Name), "\uE77B");
         Add(StudioSceneDocument.CameraId, "相机", "\uE722"); Add(StudioSceneDocument.SceneId, "画面与后处理", "\uE790");
         _objects.SelectedItem = _objects.Items.OfType<ListViewItem>().FirstOrDefault(i => i.Tag?.ToString() == _document.SelectedId);
         _refreshing = false;
@@ -249,8 +280,8 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     private void SelectObject(string? id)
     {
         if (_document is null) return;
-        FlushProperty(); _document.SelectedId = id; _viewport.SelectedTargetId = id?.StartsWith('$') == true ? null : id;
-        _refreshing = true; _objects.SelectedItem = _objects.Items.OfType<ListViewItem>().FirstOrDefault(i => i.Tag?.ToString() == id); _refreshing = false;
+        if (!TryFlushCommandDraft()) { RestoreCommandSelection(); return; }
+        FlushProperty(); _selectedCommand = null; SyncObjectSelection(id);
         BuildProperties();
     }
     private void RefreshTimeline()
@@ -260,14 +291,19 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         _timeline.Duration = _document.Duration; _timeline.Position = _document.Time;
         var tracks = _document.Actors.Select(a => (a.Id, a.Name)).Concat(new[] { (StudioSceneDocument.CameraId, "相机"), (StudioSceneDocument.SceneId, "后处理") });
         var keys = _document.Keyframes;
-        _timeline.SetTracks(tracks.SelectMany(pair =>
+        var visualTracks = tracks.SelectMany(pair =>
         {
             var groups = keys.Where(k => k.ObjectId == pair.Item1).GroupBy(k => k.Track).ToArray();
             if (groups.Length == 0) return new[] { new StudioTimelineTrack(pair.Item1, pair.Item2, []) };
             return groups.Select(group => new StudioTimelineTrack(pair.Item1 + "/" + group.Key,
                 pair.Item2 + " · " + TrackLabel(group.Key, group.First().Label),
                 group.Select(k => new StudioTimelineMarker(k.Id, pair.Item1, k.Time, k.Label, k.IsEvent ? "motion" : "key")).ToArray()));
-        }));
+        });
+        var nativeTracks = _document.TimelineCommands.Where(command => command.Start is not null).GroupBy(command => command.Section)
+            .Select(group => new StudioTimelineTrack("commands/" + group.Key, SectionLabel(group.Key) + "指令", group.Select(command =>
+                new StudioTimelineMarker(command.Id, command.CommandId, command.Start!.Value, command.Label, "command", command.End)).ToArray()));
+        _timeline.SetTracks(visualTracks.Concat(nativeTracks));
+        UpdateDurationStatus(); UpdateCommandTransport();
         _refreshing = false;
     }
     private static string TrackLabel(string track, string fallback) => track switch
@@ -279,15 +315,14 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
 
     private void BuildProperties()
     {
-        _properties.Children.Clear(); _numbers.Clear(); if (_document is null) return;
+        if (PreserveCommandDraft) return;
+        _properties.Children.Clear(); _numbers.Clear(); ClearCommandDraft(); if (_document is null) return;
+        if (SelectedCommand() is { } selectedCommand) { BuildCommandProperties(selectedCommand); return; }
+        _autoKey.Visibility = Visibility.Visible;
         _autoKey.IsEnabled = _document.CanEditTimeline;
         if (!_document.CanEditTimeline)
         {
-            _properties.Children.Add(Ui.Text("原始剧情", 16));
-            _properties.Children.Add(Ui.Text("原始指令的时序由剧情决定，视觉轨道暂为只读。可以实时播放、调整预览范围，或打开 JSON 继续修改。", 12, true));
-            _properties.Children.Add(Ui.Text("下方“时长”是这次预览与导出的范围，不代表原剧情的总时长。", 12, true));
-            _properties.Children.Add(StudioLayout.AsyncTool("打开 JSON", ShowJsonAsync, "\uE943"));
-            _properties.Children.Add(StudioLayout.AsyncTool("新建可编排场景", () => NewAsync(false), "\uE710"));
+            BuildNativeObjectProperties();
             return;
         }
         var sample = _document.Sample(_document.Time); string? id = _document.SelectedId;
@@ -302,6 +337,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         }
         else if (id == StudioSceneDocument.SceneId)
         {
+            _properties.Children.Add(StudioLayout.AsyncTool($"画布 · {_document.Document.Output.Width} × {_document.Document.Output.Height}", CanvasSettingsAsync, "\uE740"));
             _properties.Children.Add(StudioLayout.Section("背景"));
             var transparent = new CheckBox { Content = "透明背景", IsChecked = Number(sample.Background.ElementAtOrDefault(3), 1) < 1 };
             transparent.Click += (_, _) => Edit(() => _document.SetBackground(transparent.IsChecked == true ? new JsonArray(0, 0, 0, 0) : new JsonArray(.08, .09, .12, 1), _document.Time, _autoKey.IsChecked == true));
@@ -315,13 +351,14 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         }
         else if (sample.Actors.FirstOrDefault(a => a.Id == id) is { } actor)
         {
-            _properties.Children.Add(StudioLayout.Section(actor.Name));
+            _properties.Children.Add(StudioLayout.Section(DisplayNames.Character(actor.Name)));
             var visible = new CheckBox { Content = "显示角色", IsChecked = actor.Visible };
             visible.Click += (_, _) => Edit(() => _document.SetActorVisibility(actor.Id, visible.IsChecked == true, _document.Time, _autoKey.IsChecked == true));
             _properties.Children.Add(visible);
             _properties.Children.Add(StudioLayout.AsyncTool("选择动作", () => PickAnimationAsync(false), "\uE768"));
             _properties.Children.Add(StudioLayout.AsyncTool("选择表情", () => PickAnimationAsync(true), "\uE76E"));
-            _properties.Children.Add(Ui.Text(string.Join(" · ", new[] { actor.Motion, actor.Expression }.Where(v => !string.IsNullOrEmpty(v))), 11, true));
+            _properties.Children.Add(Ui.Text(string.Join(" · ", new[] { DisplayNames.Animation(actor.Motion ?? ""), DisplayNames.Animation(actor.Expression ?? "") }.Where(v => !string.IsNullOrEmpty(v))), 11, true));
+            _properties.Children.Add(StudioLayout.AsyncTool("单人透明导出…", () => CreateSingleActorShotAsync(true), "\uE898"));
             bool screen = actor.Space == "screen";
             _properties.Children.Add(StudioLayout.Section("位置与大小"));
             AddNumber("x", screen ? "水平位置（%）" : "世界 X", actor.Transform.X * (screen ? 100 : 1), -1000, 1000, screen ? .5 : .01);
@@ -395,7 +432,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private void RefreshValues()
     {
-        if (_document is null || _pendingProperty is not null || _dragStart is not null) return;
+        if (_document is null || _pendingProperty is not null || _dragStart is not null || _selectedCommand is not null || !_document.CanEditTimeline) return;
         if (FocusManager.GetFocusedElement(XamlRoot) is DependencyObject focused && IsInside(focused, _properties)) return;
         var sample = _document.Sample(_document.Time); _refreshing = true;
         void Set(string key, double value) { if (_numbers.TryGetValue(key, out var box)) box.Value = value; }
@@ -435,6 +472,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     private async Task DragAsync(PreviewDrag drag)
     {
         if (_document is null || !_viewport.HasCurrentSource) return;
+        if (await DragCommandAsync(drag)) return;
         var sample = _document.Sample(_document.Time); var actor = sample.Actors.FirstOrDefault(a => a.Id == drag.TargetId);
         if (actor is null || actor.Space != "screen") return;
         _viewport.Pause(); _timeline.IsPlaying = false;
@@ -457,6 +495,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private async Task ScaleAsync(PreviewScale scale)
     {
+        if (await ScaleCommandAsync(scale)) return;
         if (_document?.Sample(_document.Time).Actors.FirstOrDefault(a => a.Id == scale.TargetId) is not { Space: "screen" } actor) return;
         _viewport.Pause(); SelectObject(actor.Id);
         var transform = actor.Transform with { Height = Math.Clamp(actor.Transform.Height * scale.Factor, .01, 20) };
@@ -498,7 +537,8 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
                 var pixels = _viewport.LastFrame!.Pixels;
                 await _viewport.CommitSceneProjectAsync(new(_window.Settings.ArchivePath, snapshot.FilePath,
                     NativeDependencies.CoreLibrary(Empty(_window.Settings.NativeLibraryPath), Empty(_window.Settings.CubismSdkPath)),
-                    NativeDependencies.MediaTool("ffmpeg", Empty(_window.Settings.FFmpegPath)), pixels.Width, pixels.Height, _document.Duration));
+                    NativeDependencies.MediaTool("ffmpeg", Empty(_window.Settings.FFmpegPath)), pixels.Width, pixels.Height, _document.PreviewLimitDuration,
+                    _document.DurationMode == StudioDurationMode.Automatic ? PreviewDurationMode.Automatic : PreviewDurationMode.Fixed));
                 _previewInput?.Dispose(); _previewInput = snapshot;
             }
             catch { if (!ReferenceEquals(_previewInput, snapshot)) snapshot.Dispose(); throw; }
@@ -516,6 +556,19 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
             if (version != _loadVersion || _disposed || _document is null) return;
             if (!Directory.Exists(_window.Settings.ArchivePath)) { Notice("请选择素材库，之后即可在这里播放和编辑。", false); return; }
             var editor = _document;
+            bool inherited = editor.CommandSections.Any(section => section.IsInherited);
+            var expanded = StudioSceneDocument.FromSceneDocument(editor.ToSceneDocument());
+            string sourceText = editor.Document.Text, sourceDirectory = editor.Document.BaseDirectory;
+            await Task.Run(() =>
+            {
+                var archive = new Archive(_window.Settings.ArchivePath);
+                if (inherited) expanded.ExpandInheritedSections(archive); else expanded.ResolveSourceModels(archive);
+            });
+            if (version != _loadVersion || !ReferenceEquals(editor, _document) || _disposed) return;
+            if (sourceText != editor.Document.Text || sourceDirectory != editor.Document.BaseDirectory)
+            { _ = SafeAsync(ReloadAsync); return; }
+            if (inherited) editor.ReplaceJson(expanded.ToJson());
+            editor.ImportSourceMetadata(expanded); RefreshObjects(); RefreshCommands(); BuildProperties();
             double restoreTime = editor.Time;
             var document = editor.ToSceneDocument();
             var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "preview-inputs"));
@@ -526,13 +579,15 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
             {
                 _previewDocument = null;
                 await _viewport.LoadSceneAsync(new(_window.Settings.ArchivePath, snapshot.FilePath, core,
-                    NativeDependencies.MediaTool("ffmpeg", Empty(_window.Settings.FFmpegPath)), width, height, editor.Duration));
+                    NativeDependencies.MediaTool("ffmpeg", Empty(_window.Settings.FFmpegPath)), width, height, editor.PreviewLimitDuration,
+                    editor.DurationMode == StudioDurationMode.Automatic ? PreviewDurationMode.Automatic : PreviewDurationMode.Fixed));
                 _previewInput?.Dispose(); _previewInput = snapshot;
                 if (version != _loadVersion || !ReferenceEquals(editor, _document) || _disposed) return;
                 _previewDocument = editor;
+                if (_viewport.LastFrame is { } initial) OnFrame(initial);
                 if (restoreTime > 0) await _viewport.SeekAsync(restoreTime);
-                _viewport.SelectedTargetId = _document.SelectedId?.StartsWith('$') == true ? null : _document.SelectedId;
-                _notice.IsOpen = false;
+                SyncObjectSelection(_document.SelectedId);
+                if (!HasCommandDraft) _notice.IsOpen = false;
             }
             catch { if (!ReferenceEquals(_previewInput, snapshot)) snapshot.Dispose(); throw; }
         }
@@ -541,25 +596,37 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     private static string? Empty(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
     private async Task SeekAsync(double time)
     {
+        bool commandChanged = HasCommandDraft;
+        if (!TryFlushCommandDraft(reload: false)) return;
+        if (commandChanged && !_suppressReload) await ReloadAsync();
         FlushProperty(); await _pendingPreviewCommit; if (_document is null) return;
-        _viewport.Pause(); _document.Time = Math.Clamp(time, 0, _document.Duration); _timeline.Position = _document.Time; _timeline.IsPlaying = false; RefreshValues();
+        _viewport.Pause(); _document.Time = Math.Clamp(time, 0, _document.DurationMode == StudioDurationMode.Automatic && !_document.IsDurationResolved ? _document.PreviewLimitDuration : _document.PlaybackEndTime);
+        _timeline.Position = _document.Time; _timeline.IsPlaying = false; RefreshValues(); UpdateCommandTransport();
         if (_viewport.HasCurrentSource) await _viewport.SeekAsync(_document.Time);
     }
     private async Task TogglePlaybackAsync()
     {
+        bool commandChanged = HasCommandDraft;
+        if (!TryFlushCommandDraft(reload: false)) return;
+        if (commandChanged && !_suppressReload) await ReloadAsync();
         FlushProperty(); await _pendingPreviewCommit; if (_document is null) return;
         if (_viewport.IsPlaying) { _viewport.Pause(); _timeline.IsPlaying = false; return; }
         if (!_viewport.HasCurrentSource) await ReloadAsync();
         if (!_viewport.HasCurrentSource) return;
-        if (_document.Time >= _document.Duration - 1d / 30) await SeekAsync(0);
-        _viewport.Play(); _timeline.IsPlaying = true;
+        if (_document.IsDurationResolved && _document.Time >= _document.PlaybackEndTime - 1d / 30) await SeekAsync(0);
+        _viewport.Play(); _timeline.IsPlaying = true; UpdateCommandTransport();
     }
     private void OnFrame(PreviewFrame frame)
     {
         if (_document is null || _disposed || !_viewport.HasCurrentSource || !ReferenceEquals(_previewDocument, _document)) return;
-        _document.Time = Math.Min(frame.Time, _document.Duration); _timeline.Position = _document.Time; _timeline.IsPlaying = frame.IsPlaying;
-        RefreshValues();
-        if (frame.IsPlaying && frame.Time >= _document.Duration - 1d / 30 && !_looping)
+        long now = Environment.TickCount64;
+        if (frame.Timing is { } timing && !ReferenceEquals(timing, _lastTiming)
+            && (timing.IsComplete || timing.Error is not null || now - _lastTimingUiRefresh >= 250) && _document.ApplyNativeTiming(timing))
+        { _lastTiming = timing; _lastTimingUiRefresh = now; RefreshTimeline(); RefreshCommands(); }
+        bool wasPlaying = _timeline.IsPlaying;
+        _document.Time = frame.Time; _timeline.Position = _document.Time; _timeline.IsPlaying = frame.IsPlaying;
+        if (now - _lastPropertyRefresh >= 100) { _lastPropertyRefresh = now; RefreshValues(); UpdateCommandTransport(frame); }
+        if (_document.IsDurationResolved && (frame.IsPlaying || wasPlaying) && frame.Time >= _document.PlaybackEndTime - .0001 && !_looping)
         {
             _viewport.Pause(); _timeline.IsPlaying = false;
             if (_loop.IsChecked == true)
@@ -570,6 +637,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private async Task ExportAsync()
     {
+        if (!TryFlushCommandDraft()) return;
         FlushProperty(); if (_document is null) return; _viewport.Pause();
         await StudioExportDialog.ShowSceneAsync(_window, _document, _document.Time);
     }
@@ -581,6 +649,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private async Task ApplyJsonAsync(string text)
     {
+        if (!TryFlushCommandDraft(reload: false)) return;
         FlushProperty(); await _pendingPreviewCommit;
         var parsed = SceneDocument.Parse(text, baseDirectory: _document?.Document.BaseDirectory);
         if (_document is null) SetDocument(StudioSceneDocument.FromSceneDocument(parsed));
@@ -589,6 +658,7 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private async Task ShowJsonAsync()
     {
+        if (!TryFlushCommandDraft()) return;
         _viewport.Pause(); FlushProperty();
         var input = new TextBox { Text = _document?.ToJson() ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Consolas"), FontSize = 12, MinHeight = 240, Height = 380, PlaceholderText = "粘贴 agent 生成的场景 JSON" };
@@ -625,7 +695,8 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
     {
         if (_document is null) return;
         try { DesktopSettings.AtomicWrite(DraftPath, new JsonObject { ["project"] = _document.Document.Root, ["filePath"] = _document.Document.FilePath,
-            ["baseDirectory"] = _document.Document.BaseDirectory, ["time"] = _document.Time, ["playbackDuration"] = _document.Duration }.ToJsonString(DesktopSettings.JsonOptions)); }
+            ["baseDirectory"] = _document.Document.BaseDirectory, ["time"] = _document.Time, ["playbackDuration"] = _document.Duration,
+            ["commandDraft"] = CaptureCommandDraft() }.ToJsonString(DesktopSettings.JsonOptions)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { _window.SetStatus("草稿暂时无法保存：" + error.Message); }
     }
     private async Task RestoreDraftAsync()
@@ -634,8 +705,10 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
         if (!await ConfirmReplaceAsync()) return;
         var draft = JsonNode.Parse(await File.ReadAllTextAsync(DraftPath))!;
         SetDocument(StudioSceneDocument.FromSceneDocument(SceneDocument.Parse(draft["project"]!.ToJsonString(), draft["filePath"]?.ToString(), draft["baseDirectory"]?.ToString())));
-        if (!_document!.CanEditTimeline) _document.SetPlaybackDuration(Number(draft["playbackDuration"], _document.Duration));
-        _document.Time = Number(draft["time"], 0); await ReloadAsync();
+        if (_document!.DurationMode == StudioDurationMode.Fixed && !_document.CanEditTimeline) _document.SetPlaybackDuration(Number(draft["playbackDuration"], _document.Duration));
+        _document.Time = Number(draft["time"], 0);
+        if (draft["commandDraft"] is JsonObject commandDraft) RestoreCommandDraft(commandDraft);
+        await ReloadAsync();
     }
     internal void Deactivate() { _viewport.Pause(); _timeline.IsPlaying = false; FlushProperty(); SaveDraft(); }
     public async ValueTask DisposeAsync()
@@ -657,13 +730,68 @@ internal sealed class SceneStudioPage : UserControl, IAsyncDisposable
             model.SetActorTransform(actor, .7, .5, .8, 0, 2, true);
             check(Math.Abs(model.Sample(1).Actors.Single().Transform.X - .5) < .02, "场景时间轴真实插值角色位置");
             SelectObject(actor); _document.Time = 1; RefreshValues(); RefreshTimeline(); UpdateLayout();
-            check(_viewport.IsLoaded && _viewport.ActualWidth > 0 && _timeline.IsLoaded && _timeline.ActualWidth > 0, "实时画布和时间轴在原生工作台中布局");
+            SelectObject(StudioSceneDocument.CameraId);
+            check(_document.SelectedId == StudioSceneDocument.CameraId && _numbers.ContainsKey("zoom"), "由角色切换到相机不会被画布的空选择回调清除");
+            SelectObject(actor); SelectObject(StudioSceneDocument.SceneId);
+            check(_document.SelectedId == StudioSceneDocument.SceneId && _numbers.ContainsKey("exposure"), "由角色切换到后处理保持一致选择与属性面板");
+            SelectObject(actor);
+            check(_viewport.IsLoaded && _viewport.ActualWidth > 0 && _commands.IsLoaded && _commands.ActualWidth > 0 && _commands.Items.Count > 0,
+                "实时画布和可读指令列表在原生工作台中布局");
+            _timelineTab!.IsChecked = true; UpdateLayout();
+            check(_timeline.IsLoaded && _timeline.ActualWidth > 0, "指令与时间轴可在同一原生编排区域切换");
+            _commandsTab!.IsChecked = true; UpdateLayout();
             check(_numbers.ContainsKey("x") && _objects.Items.Count == 3, "对象列表和选中角色属性真实可用");
             MainWindow.Copy("```json\n" + model.ToJson() + "\n```");
             await PasteAsync();
             check(_document.Document.Kind == SceneDocumentKind.UnifiedProject && !_document.ToJson().Contains("```", StringComparison.Ordinal), "剪贴板 JSON 进入同一场景编辑模型");
             model = _document; string before = model.ToJson(); model.SetActorTransform(actor, .8, .5, .8, 0, 2, true); model.Undo();
             check(model.ToJson() == before, "角色编辑可撤销并恢复完整项目");
+            var original = SceneDocument.Parse("""
+                {"format":"ournotes-director/project","version":1,"source":{"adv":"42","site":"intl","language":"zh-Hans"},
+                 "initialize":[],"commands":[{"cmd":"Talk","TargetName":"Hotaru","AdvTextID":"line1","VoiceIDs":[]},{"cmd":"Wait"}],"finalize":[],
+                 "text":{"line1":{"simplifiedChinese":"这是一段导入的对白"}}}
+                """);
+            SetDocument(StudioSceneDocument.FromSceneDocument(original)); UpdateLayout();
+            check(_commands.Items.Count == 2 && _document!.DurationMode == StudioDurationMode.Automatic && _document.ResolvedDuration is null,
+                "原生对白导入后立即显示全部指令，时长跟随执行而不伪装成固定秒数");
+            string talk = _document.Commands.First().Id; SelectCommand(talk);
+            check(_dialogueText?.Text == "这是一段导入的对白", "原剧情指令可选择并在右侧直接编辑台词");
+            _dialogueText!.Text = "我可以直接修改这句台词";
+            var draftControl = _dialogueText; BuildProperties();
+            check(ReferenceEquals(draftControl, _dialogueText) && _dialogueText.Text == "我可以直接修改这句台词" && HasCommandDraft,
+                "异步元数据刷新不会重建或丢弃尚未应用的同条对白草稿");
+            string wait = _document.Commands.Last().Id; SelectCommand(wait);
+            check(_document.GetCommandText(talk) == "我可以直接修改这句台词", "对白编辑应用到实际原生项目文本");
+            SelectCommand(talk);
+            var voiceInput = (TextBox)_commandInputs["VoiceIDs"]; voiceInput.Text = "[invalid";
+            string beforeInvalid = _document.ToJson(); SelectCommand(wait);
+            check(_selectedCommand == talk && _commandFieldErrors.Count > 0 && _document.ToJson() == beforeInvalid && !TryFlushCommandDraft(),
+                "无效语音数组阻止指令切换和提交，不会静默沿用旧数组");
+            var storedDraft = CaptureCommandDraft()!; ClearCommandDraft(); BuildProperties(); RestoreCommandDraft(storedDraft);
+            check(((TextBox)_commandInputs["VoiceIDs"]).Text == "[invalid" && _commandFieldErrors.Count > 0,
+                "未完成的无效字段也可保存并恢复为独立草稿");
+            UndoSceneEdit();
+            check(!HasCommandDraft && _document.ToJson() == beforeInvalid, "显式撤销取消未应用草稿，不撤销已提交的场景内容");
+            InsertNativeCommand("Delay");
+            check(_document.Commands.Count == 3 && SelectedCommand()?.Command == "Delay", "工作台插入指令会进入真实执行数组并选中其属性");
+            var framesInput = (NumberBox)_commandInputs["Frames"]; framesInput.Text = "45.5";
+            check(!TryFlushCommandDraft() && _commandFieldErrors.Count > 0, "原生帧数拒绝小数输入并保留错误草稿");
+            framesInput.Text = "abc";
+            check(!TryFlushCommandDraft(), "数值输入不是数字时不会应用上一次合法帧数");
+            framesInput.Text = "45"; ApplyCommandDraft();
+            check(SelectedCommand()?.Data["Frames"]?.ToString() == "45", "字段编辑保存为原生45帧等待");
+            MoveSelectedCommand(1);
+            check(_document.Commands.Last().Command == "Delay", "指令下移改变实际执行顺序");
+            DuplicateSelectedCommand();
+            check(_document.Commands.Count == 4 && _commands.Items.Count == 4, "复制指令同步刷新可点击列表");
+            RemoveSelectedCommand();
+            check(_document.Commands.Count == 3 && !Ui.Text("列表标签").IsTextSelectionEnabled, "删除原生指令生效，普通列表标签不会抢占文字选择");
+            string transformCommand = _document.InsertCommand("commands", 3, StudioCommandCatalog.Create("Director.Actor", "test-target"));
+            SelectCommand(transformCommand); SetDraftValue(["Space"], JsonValue.Create("world")); SetDraftValue(["IgnoreData"], JsonValue.Create(1));
+            var controlDraft = CaptureCommandDraft()!; ClearCommandDraft(); BuildProperties(); RestoreCommandDraft(controlDraft);
+            check(_commandEnabled?.IsChecked == false && Ui.Selected((ComboBox)_commandInputs["Space"]) == "world" && HasCommandDraft,
+                "恢复草稿根据草稿值重建开关和下拉框，同时保留原文基准判断未应用修改");
+            UndoSceneEdit(); _document.RemoveCommand(transformCommand);
         }
         finally { _suppressReload = false; }
         if (Environment.GetEnvironmentVariable("OURNOTES_STUDIO_FIXTURE") is not { Length: > 0 } fixture) return;

@@ -178,6 +178,7 @@ public sealed class HomeCharacter
             ["path"] = p["path"]?.DeepClone(), ["skeletonData"] = p["skeletonData"]?.DeepClone(),
             ["animation"] = p["animation"]?["_animationName"]?.DeepClone(),
             ["sharedSkeleton"] = SharedMembers(p) is not null,
+            ["recovery"] = p["recovery"]?.DeepClone(),
         }).ToArray()),
         ["targetPaths"] = new JsonArray(Targets.Select(p => p["path"]?.DeepClone()).ToArray()),
     };
@@ -200,6 +201,8 @@ public sealed class HomeScene
     public IReadOnlyList<HomeSource> Sources { get; }
     public IReadOnlyList<HomeCharacter> Characters { get; }
     public IReadOnlyList<JsonObject> SpineParts { get; }
+    public IReadOnlyList<HomeSpineRecovery> SpineRecoveries { get; }
+    public IReadOnlyList<JsonObject> UnresolvedSpineParts { get; }
     /// <summary>Backgrounds and props without an explicit character association; included in a full scene.</summary>
     public IReadOnlyList<JsonObject> UnassignedParts { get; }
 
@@ -211,8 +214,10 @@ public sealed class HomeScene
         Sources = sources;
         var slash = spotPath.LastIndexOf('/');
         SpineDirectory = (slash < 0 ? "" : spotPath[..(slash + 1)]) + "spine";
-        SpineParts = (spot["spineCharacters"] as JsonArray ?? []).OfType<JsonObject>()
-            .Where(p => p["skeletonData"] is not null && p["animation"] is JsonObject && p["world"] is JsonArray).ToArray();
+        var reconstruction = HomeSpineReconstruction.Resolve(spot, Home,
+            file => ReadJson(SpineDirectory + "/" + file),
+            record => SpineAsset.Load(record, file => Read(SpineDirectory + "/" + file)));
+        SpineParts = reconstruction.Parts; SpineRecoveries = reconstruction.Recoveries; UnresolvedSpineParts = reconstruction.Unresolved;
         Characters = GroupCharacters(spot, SpineParts);
         var assigned = Characters.SelectMany(c => c.Parts).ToHashSet();
         UnassignedParts = SpineParts.Where(p => !assigned.Contains(p)).ToArray();
@@ -304,6 +309,8 @@ public sealed class HomeScene
             ["site"] = Site, ["spotId"] = SpotId, ["advId"] = AdvId, ["manifest"] = ManifestPath,
             ["names"] = Spot["name"]?.DeepClone() ?? new JsonObject(), ["bandId"] = Spot["master"]?["_bandId"]?.DeepClone(),
             ["characters"] = characters, ["spinePartCount"] = SpineParts.Count,
+            ["spineRecoveries"] = new JsonArray(SpineRecoveries.Select(r => (JsonNode?)r.ToJson()).ToArray()),
+            ["unresolvedSpineParts"] = new JsonArray(UnresolvedSpineParts.Select(p => (JsonNode?)p.DeepClone()).ToArray()),
             ["unassignedParts"] = new JsonArray(UnassignedParts.Select(p => p["path"]?.DeepClone()).ToArray()),
             ["sources"] = new JsonArray(Sources.Select(s => (JsonNode?)s.ToJson()).ToArray()),
         };

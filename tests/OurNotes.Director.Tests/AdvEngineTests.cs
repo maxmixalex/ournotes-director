@@ -5,6 +5,7 @@ static class AdvEngineTests
 {
     public static void Run(Action<bool,string> check)
     {
+        PreviewRuntimeTests.Run(check);
         var loop=new AdvLoop();var phases=new List<string>();
         loop.YieldUpdate().OnCompleted(()=>phases.Add("yield"));
         loop.Delay(0).OnCompleted(()=>phases.Add("delay"));

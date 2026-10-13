@@ -322,6 +322,12 @@ public sealed class MainWindow : Window
         await Scene.RunSmokeTestAsync(Check);
         Navigate("home"); _root.UpdateLayout(); await Task.Delay(100);
         await Home.RunSmokeTestAsync(Check);
+        if (Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE") is { Length: > 0 })
+        {
+            Navigate("scenes"); _root.UpdateLayout(); await Task.Delay(100);
+            await Scene.RunRealSmokeTestAsync(Check);
+            Navigate("home"); _root.UpdateLayout();
+        }
         var help = await Engine.RunAsync(new EngineRequest("help", "引擎检查", ["help"], Path.GetDirectoryName(reportPath)!));
         Check(help.Success && help.Json?["commands"] is JsonArray, "原生导出执行器可用");
         string png = Path.Combine(Path.GetDirectoryName(reportPath)!, "local-alpha-probe.png");

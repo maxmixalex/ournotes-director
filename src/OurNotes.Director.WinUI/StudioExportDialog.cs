@@ -9,11 +9,12 @@ namespace OurNotes.Director.WinUI;
 /// <summary>One final-output workflow, shared by both editors and independent of preview resolution.</summary>
 internal static class StudioExportDialog
 {
-    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead)
+    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false)
     {
         var document = scene.ToSceneDocument(); var output = document.Output;
-        var settings = await ChooseAsync(window, "导出场景", output.Width, output.Height, 30, output.Codec,
-            output.CineformQuality, scene.Duration, playhead, false, false);
+        var settings = await ChooseAsync(window, singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, output.Codec,
+            output.CineformQuality, scene.ResolvedDuration ?? scene.Duration, playhead, false, false, output.Supersample,
+            scene.DurationMode == StudioDurationMode.Automatic);
         if (settings is null) return;
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
         var values = Values(settings); values["project"] = snapshot.FilePath;
@@ -24,8 +25,14 @@ internal static class StudioExportDialog
     internal static async Task ShowHomeAsync(MainWindow window, HomeStudioDocument document, double playhead)
     {
         var project = document.Project; var output = project.Output;
+        async Task<(int Width, int Height)> NativeCanvas(string selectedCodec, int selectedFps)
+        {
+            var canvas = await Task.Run(() => document.MeasureNativeCanvas(window.Settings.ArchivePath, fps: selectedFps, codec: selectedCodec));
+            return (canvas.Width, canvas.Height);
+        }
         var settings = await ChooseAsync(window, "导出主页", output.Width, output.Height, output.Fps, output.Codec,
-            output.CineformQuality, project.Duration, playhead, true, !string.IsNullOrEmpty(document.SelectedCharacterKey));
+            output.CineformQuality, project.Duration, playhead, true, !string.IsNullOrEmpty(document.SelectedCharacterKey), output.Supersample,
+            nativeCanvas: NativeCanvas);
         if (settings is null) return;
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
         var values = Values(settings); values["project"] = snapshot.FilePath;
@@ -34,6 +41,7 @@ internal static class StudioExportDialog
         values["fps"] = settings.Fps.ToString(CultureInfo.InvariantCulture);
         string kind = settings.Scope is "all" or "both" ? "export" : settings.Kind;
         values["character"] = settings.Scope == "selected" ? document.SelectedCharacterKey : settings.Scope == "all" ? "all" : null;
+        if (settings.Scope == "selected") { values["framing"] = "fit"; values["no-background"] = "true"; }
         Enqueue(window, "home." + kind, "导出主页", values, window.Settings.Context());
     }
 
@@ -46,6 +54,7 @@ internal static class StudioExportDialog
             ["time"] = settings.Start.ToString("R", CultureInfo.InvariantCulture)
         };
         if (settings.Kind != "frame") values["duration"] = settings.Duration.ToString("R", CultureInfo.InvariantCulture);
+        if (settings.UntilEnd && settings.Kind != "frame") { values["until-end"] = "true"; values["duration"] = "36000"; }
         if (settings.Kind == "clip") { values["codec"] = settings.Codec; values["cineform-quality"] = settings.Quality; }
         if (settings.Overwrite && settings.Kind != "sequence" && settings.Scope is not ("all" or "both")) values["overwrite"] = "true";
         return values;
@@ -60,10 +69,11 @@ internal static class StudioExportDialog
     }
 
     private sealed record ExportSettings(string Kind, string Scope, int Width, int Height, int Fps, int Supersample,
-        string Codec, string Quality, double Start, double Duration, string Path, bool Overwrite);
+        string Codec, string Quality, double Start, double Duration, string Path, bool Overwrite, bool UntilEnd);
 
     private static async Task<ExportSettings?> ChooseAsync(MainWindow window, string title, int width, int height,
-        int fps, string codec, string quality, double duration, double playhead, bool home, bool selected)
+        int fps, string codec, string quality, double duration, double playhead, bool home, bool selected,
+        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null)
     {
         var kind = Ui.Choice("导出内容", [("clip", "视频"), ("sequence", "PNG 帧序列"), ("frame", "当前画面 PNG")], "clip");
         var scope = Ui.Choice("导出范围", [("scene", "完整主页"), ("selected", "选中的角色"), ("all", "每个角色分别导出"), ("both", "完整主页与全部角色")], "scene");
@@ -74,13 +84,16 @@ internal static class StudioExportDialog
         var qualityBox = Ui.Choice("CineForm 质量", [("film1", "均衡 · Film 1"), ("high", "较小体积 · High"), ("film3", "更高画质 · Film 3")], quality);
         var resolution = Ui.Choice("画面尺寸", [("current", $"项目尺寸 · {width} × {height}"), ("1080", "横屏 · 1920 × 1080"),
             ("portrait", "竖屏 · 1088 × 1920"), ("1440", "横屏 · 2560 × 1440"), ("custom", "自定义")]);
-        var w = Number("宽度", width, 16, 7680, 16); var h = Number("高度", height, 16, 4320, 8);
+        if (selected && nativeCanvas is not null) resolution.Items.Insert(1, new ComboBoxItem { Tag = "native", Content = "选中角色原始尺寸 · 自动适配完整动画" });
+        var w = Number("宽度", width, 16, RenderDimensions.MaxSide, 16); var h = Number("高度", height, 16, RenderDimensions.MaxSide, 8);
         var dimensions = Ui.Columns(w, h); dimensions.Visibility = Visibility.Collapsed;
         var frameRate = Number("帧率", fps, 1, 120, 1); frameRate.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
         var start = Number("开始（秒）", 0, 0, 36000, .1);
         var length = Number("时长（秒）", Math.Max(duration, 1d / 30), 1d / 30, 36000, .1);
+        var rangeMode = Ui.Choice("时间范围", [("complete", "完整剧情 · 含对白、语音与等待"), ("range", "指定时间区间")], automaticDuration ? "complete" : "range");
+        rangeMode.Visibility = automaticDuration ? Visibility.Visible : Visibility.Collapsed;
         var range = Ui.Columns(start, length);
-        var sampling = Ui.Choice("边缘质量", [("1", "快速"), ("2", "精细（推荐）"), ("3", "更精细"), ("4", "最高")], "2");
+        var sampling = Ui.Choice("边缘质量", [("1", "原始像素 · 1 倍采样"), ("2", "精细 · 2 倍采样"), ("3", "更精细 · 3 倍采样"), ("4", "最高 · 4 倍采样")], supersample.ToString(CultureInfo.InvariantCulture));
         var overwrite = new CheckBox { Content = "替换同名文件" };
         var location = Ui.Input("保存到");
         string folder = window.Settings.OutputDirectory;
@@ -97,16 +110,50 @@ internal static class StudioExportDialog
             bool video = Ui.Selected(kind) == "clip";
             format.Visibility = video ? Visibility.Visible : Visibility.Collapsed;
             qualityBox.Visibility = video && Ui.Selected(format) == "cineform" ? Visibility.Visible : Visibility.Collapsed;
-            range.Visibility = Ui.Selected(kind) == "frame" ? Visibility.Collapsed : Visibility.Visible;
+            range.Visibility = Ui.Selected(kind) == "frame" || automaticDuration && Ui.Selected(rangeMode) == "complete" ? Visibility.Collapsed : Visibility.Visible;
+            rangeMode.Visibility = automaticDuration && Ui.Selected(kind) != "frame" ? Visibility.Visible : Visibility.Collapsed;
             string next = Suggested(); if (location.Text == previousSuggested) location.Text = next; previousSuggested = next;
         }
-        kind.SelectionChanged += (_, _) => Update(); format.SelectionChanged += (_, _) => Update(); scope.SelectionChanged += (_, _) => Update();
-        resolution.SelectionChanged += (_, _) =>
+        kind.SelectionChanged += (_, _) => Update(); format.SelectionChanged += (_, _) => Update(); rangeMode.SelectionChanged += (_, _) => Update();
+        scope.SelectionChanged += (_, _) =>
         {
+            if (Ui.Selected(scope) == "selected" && nativeCanvas is not null) resolution.SelectedItem = resolution.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag?.ToString() == "native");
+            else if (Ui.Selected(resolution) == "native") resolution.SelectedIndex = 0;
+            Update();
+        };
+        var resolutionStatus = Ui.Text("", 11, true);
+        int sizingVersion = 0;
+        bool measuring = false;
+        string? sizingError = null;
+        async Task UpdateResolutionAsync()
+        {
+            int version = ++sizingVersion;
+            dimensions.Visibility = Ui.Selected(resolution) == "custom" ? Visibility.Visible : Visibility.Collapsed;
+            if (Ui.Selected(resolution) == "native" && nativeCanvas is not null)
+            {
+                measuring = true; sizingError = null;
+                resolutionStatus.Text = "正在测量完整动画的角色范围…";
+                try
+                {
+                    if (!double.IsFinite(frameRate.Value) || frameRate.Value != Math.Truncate(frameRate.Value)) throw new ArgumentException("帧率需要填写整数。");
+                    var measured = await nativeCanvas(Ui.Selected(kind) == "clip" ? Ui.Selected(format) : "ffv1", checked((int)frameRate.Value)); if (version != sizingVersion) return;
+                    w.Value = measured.Width; h.Value = measured.Height; sampling.SelectedIndex = 0;
+                    resolutionStatus.Text = $"原始角色画布 · {measured.Width} × {measured.Height} · 完整动画固定构图";
+                }
+                catch (Exception failure) { if (version == sizingVersion) { sizingError = failure.Message; resolutionStatus.Text = failure.Message; } }
+                finally { if (version == sizingVersion) measuring = false; }
+                return;
+            }
+            measuring = false; sizingError = null;
             (int newWidth, int newHeight) = Ui.Selected(resolution) switch { "1080" => (1920, 1080), "portrait" => (1088, 1920), "1440" => (2560, 1440), _ => (width, height) };
             if (Ui.Selected(resolution) != "custom") { w.Value = newWidth; h.Value = newHeight; }
             dimensions.Visibility = Ui.Selected(resolution) == "custom" ? Visibility.Visible : Visibility.Collapsed;
-        };
+            resolutionStatus.Text = "";
+        }
+        resolution.SelectionChanged += async (_, _) => await UpdateResolutionAsync();
+        format.SelectionChanged += async (_, _) => { if (Ui.Selected(resolution) == "native") await UpdateResolutionAsync(); };
+        kind.SelectionChanged += async (_, _) => { if (Ui.Selected(resolution) == "native") await UpdateResolutionAsync(); };
+        frameRate.ValueChanged += async (_, _) => { if (Ui.Selected(resolution) == "native") await UpdateResolutionAsync(); };
         var browse = StudioLayout.AsyncTool("选择…", async () =>
         {
             bool directory = Ui.Selected(kind) == "sequence" || Ui.Selected(scope) is "all" or "both";
@@ -119,8 +166,8 @@ internal static class StudioExportDialog
         var pathRow = new Grid { ColumnSpacing = 8 }; pathRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); pathRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         pathRow.Children.Add(location); pathRow.Children.Add(browse); Grid.SetColumn(browse, 1); browse.VerticalAlignment = VerticalAlignment.Bottom;
         var error = new InfoBar { IsClosable = false, Severity = InfoBarSeverity.Error };
-        var advanced = new Expander { Header = "画质与时间范围", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Ui.Stack(12, sampling, frameRate, range, overwrite) };
-        var body = Ui.Stack(12, kind, scope, format, qualityBox, resolution, dimensions, advanced, pathRow, error);
+        var advanced = new Expander { Header = "画质与时间范围", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Ui.Stack(12, sampling, frameRate, rangeMode, range, overwrite) };
+        var body = Ui.Stack(12, kind, scope, format, qualityBox, resolution, dimensions, resolutionStatus, advanced, pathRow, error);
         var dialog = new ContentDialog { XamlRoot = window.RootXaml, Title = title, PrimaryButtonText = "开始导出", CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary, Content = new ScrollViewer { Content = body, MaxHeight = 570, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
         ExportSettings? result = null;
@@ -128,21 +175,27 @@ internal static class StudioExportDialog
         {
             try
             {
+                if (measuring) throw new ArgumentException("角色完整动画范围仍在计算，请稍候。");
+                if (sizingError is not null) throw new ArgumentException("无法取得角色原始尺寸：" + sizingError);
                 string mode = Ui.Selected(kind), selection = home ? Ui.Selected(scope) : "scene";
                 if (!double.IsFinite(w.Value) || !double.IsFinite(h.Value) || w.Value != Math.Truncate(w.Value) || h.Value != Math.Truncate(h.Value)) throw new ArgumentException("宽度和高度需要填写整数像素。");
                 if (!double.IsFinite(frameRate.Value) || frameRate.Value != Math.Truncate(frameRate.Value)) throw new ArgumentException("帧率需要填写整数。");
                 if (selection is "all" or "both" && mode != "clip") throw new ArgumentException("分别导出角色时，请选择视频。");
                 string encoding = Ui.Selected(format);
+                RenderDimensions.Validate(checked((int)w.Value), checked((int)h.Value), int.Parse(Ui.Selected(sampling), CultureInfo.InvariantCulture));
                 if (mode == "clip") VideoEncoding.Validate(encoding, checked((int)w.Value), checked((int)h.Value), Ui.Selected(qualityBox));
                 if (mode == "clip" && encoding == "h264" && home && selection != "scene") throw new ArgumentException("透明角色请选择透明 MOV 或无损 MKV。");
-                if (!double.IsFinite(start.Value) || !double.IsFinite(length.Value) || length.Value <= 0 || start.Value + length.Value > 36000) throw new ArgumentException("请检查导出的时间范围。");
+                bool explicitRange = mode != "frame" && !(automaticDuration && Ui.Selected(rangeMode) == "complete");
+                if (explicitRange && (!double.IsFinite(start.Value) || start.Value < 0 || !double.IsFinite(length.Value)
+                    || length.Value <= 0 || start.Value + length.Value > 36000)) throw new ArgumentException("请检查导出的时间范围。");
                 string target = Path.GetFullPath(location.Text.Trim());
                 bool directory = mode == "sequence" || selection is "all" or "both";
                 if (Directory.Exists(target) || File.Exists(target) && (directory || overwrite.IsChecked != true)) throw new ArgumentException("这里已有同名文件或目录，请改一个名称。");
                 if (mode == "clip" && !directory) VideoEncoding.ValidateOutputPath(encoding, target);
                 if (mode == "frame" && !target.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("当前画面需要保存为 .png。");
                 result = new(mode, selection, checked((int)w.Value), checked((int)h.Value), checked((int)frameRate.Value), int.Parse(Ui.Selected(sampling), CultureInfo.InvariantCulture),
-                    encoding, Ui.Selected(qualityBox), mode == "frame" ? playhead : start.Value, length.Value, target, overwrite.IsChecked == true);
+                    encoding, Ui.Selected(qualityBox), mode == "frame" ? playhead : automaticDuration && Ui.Selected(rangeMode) == "complete" ? 0 : start.Value,
+                    explicitRange ? length.Value : Math.Max(duration, 1d / 30), target, overwrite.IsChecked == true, automaticDuration && Ui.Selected(rangeMode) == "complete");
             }
             catch (Exception failure) when (failure is ArgumentException or IOException or OverflowException)
             { args.Cancel = true; error.Title = "请调整导出设置"; error.Message = failure.Message; error.IsOpen = true; }

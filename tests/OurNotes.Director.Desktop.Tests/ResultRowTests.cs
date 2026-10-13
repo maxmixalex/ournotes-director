@@ -25,6 +25,15 @@ public static class ResultRowTests
          "sources":[{"site":"jp","spotId":40005,"advId":10868,"talk":false},{"site":"jp","spotId":40005,"advId":10869,"talk":true}]}
         """);
         string originalHome = home.ToJsonString();
+        var modelLabels = ResultRow.Read(Parse("""{"models":[{"id":"adv_live2d_hotaru_016_school_winter_hs_1st_01","names":{"zh-Hans":"汐见萤"}}]}"""), "model.list");
+        check(modelLabels.Single().Title.Contains("汐见萤", StringComparison.Ordinal) && modelLabels.Single().Title.Contains("冬季", StringComparison.Ordinal)
+            && modelLabels.Single().Title.Contains("制服", StringComparison.Ordinal), "Results: model names include translated character and costume");
+        check(modelLabels.Single().Selection("modelId").Value == "adv_live2d_hotaru_016_school_winter_hs_1st_01"
+            && modelLabels.Single().SearchText.Contains("adv_live2d_hotaru_016_school_winter_hs_1st_01", StringComparison.Ordinal), "Results: translated names preserve exact selectable and searchable model IDs");
+        check(DisplayNames.Animation("mtn_hotaru_smile01") == "汐见萤 · 微笑 01" && DisplayNames.Animation("mtn_custom_ZX") == "custom_ZX",
+            "Results: known animation words are translated while unknown tokens remain identifiable");
+        check(DisplayNames.Character("Hotaru_back") == "汐见萤 · 后景部件" && DisplayNames.SearchAlias("萤") == "hotaru",
+            "Results: Chinese character search reaches archive identifiers and composite parts");
         var characters = ResultRow.Read(Envelope(home), "home.show");
         check(characters.Count == 2 && characters[0].Id == "hotaru", "Results: home show reads character keys rather than source IDs");
         check(characters[0].Context["spotId"] == "40005" && characters[0].Context["site"] == "jp", "Results: characters inherit actual homepage and site, overriding envelope fallback");

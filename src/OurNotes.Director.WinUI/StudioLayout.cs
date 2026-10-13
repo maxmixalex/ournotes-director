@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 
@@ -13,10 +14,11 @@ internal sealed class StudioLayout : UserControl
     {
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         VerticalContentAlignment = VerticalAlignment.Stretch;
-        var root = new Grid { RowSpacing = 8 };
+        var root = new Grid { RowSpacing = 4 };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star), MinHeight = 160 });
-        root.RowDefinitions.Add(new() { Height = new(184), MinHeight = 144 });
+        root.RowDefinitions.Add(new() { Height = new(8) });
+        root.RowDefinitions.Add(new() { Height = new(238), MinHeight = 144 });
         root.Children.Add(toolbar);
         var body = new Grid { ColumnSpacing = 8 };
         body.ColumnDefinitions.Add(new() { Width = new(194), MinWidth = 160 });
@@ -26,14 +28,24 @@ internal sealed class StudioLayout : UserControl
         body.Children.Add(leftFrame); body.Children.Add(viewport); body.Children.Add(rightFrame);
         Grid.SetColumn(viewport, 1); Grid.SetColumn(rightFrame, 2); Grid.SetRow(body, 1); root.Children.Add(body);
         var timelineFrame = Panel(timeline, 0);
-        Grid.SetRow(timelineFrame, 2); root.Children.Add(timelineFrame);
+        Grid.SetRow(timelineFrame, 3); root.Children.Add(timelineFrame);
+        var resize = new Thumb { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
+            Background = new SolidColorBrush(Color.FromArgb(24, 128, 128, 128)) };
+        ToolTipService.SetToolTip(resize, "上下拖动，调整编排区域高度");
+        bool resized = false;
+        resize.DragDelta += (_, args) =>
+        {
+            resized = true;
+            root.RowDefinitions[3].Height = new(Math.Clamp(root.RowDefinitions[3].ActualHeight - args.VerticalChange, 144, Math.Max(144, ActualHeight - 240)));
+        };
+        Grid.SetRow(resize, 2); root.Children.Add(resize);
         Content = root;
         SizeChanged += (_, args) =>
         {
             bool compact = args.NewSize.Width < 1100;
             body.ColumnDefinitions[0].Width = new(compact ? 170 : 206);
             body.ColumnDefinitions[2].Width = new(compact ? 218 : 260);
-            root.RowDefinitions[2].Height = new(args.NewSize.Height < 650 ? 160 : 200);
+            if (!resized) root.RowDefinitions[3].Height = new(args.NewSize.Height < 650 ? 190 : 260);
         };
     }
 

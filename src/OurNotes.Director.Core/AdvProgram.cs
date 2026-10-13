@@ -23,7 +23,7 @@ public sealed class AdvProgram
     public int PlaybackMode { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public JsonNode? Scene { get; private set; }
-    public string[] RequiredCommands => new[] { "TalkWindow" }.Concat(Initialize.Concat(Rows.Where(r => !r.Ignored)).Concat(Finalize).Select(r => r.Command)).Distinct().ToArray();
+    public string[] RequiredCommands => new[] { "TalkWindow" }.Concat(Initialize.Concat(Rows).Concat(Finalize).Where(r=>!r.Ignored).Select(r => r.Command)).Distinct().ToArray();
     public static AdvRow Row(JsonNode node, string index)
     {
         var name = Archive.S(node,"cmd");

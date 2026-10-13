@@ -23,10 +23,15 @@ public static class MediaPreview
                 FileName = ffmpeg, UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardError = true, RedirectStandardOutput = true
             } };
+            // A native-size CineForm frame can be 54 MP. Bound input decoding and filtering
+            // separately from output encoding so automatic frame threads cannot duplicate
+            // full-resolution decoder buffers before the 960 px playback proxy is scaled.
             string[] arguments = still
-                ? ["-hide_banner", "-nostdin", "-v", "error", "-i", input, "-frames:v", "1", "-pix_fmt", "rgba", temporary]
-                : ["-hide_banner", "-nostdin", "-v", "error", "-i", input, "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=960:-2", "-c:v", "libx264",
-                    "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", temporary];
+                ? ["-hide_banner", "-nostdin", "-v", "error", "-filter_threads", "1", "-threads:v", "1", "-i", input,
+                    "-frames:v", "1", "-pix_fmt", "rgba", "-threads:v", "1", temporary]
+                : ["-hide_banner", "-nostdin", "-v", "error", "-filter_threads", "1", "-threads:v", "1", "-i", input,
+                    "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=960:-2", "-c:v", "libx264",
+                    "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-threads:v", "1", "-c:a", "aac", "-movflags", "+faststart", temporary];
             foreach (var arg in arguments) process.StartInfo.ArgumentList.Add(arg);
             process.Start();
             using var registration = cancellationToken.Register(() =>

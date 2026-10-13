@@ -62,6 +62,7 @@ public sealed partial class StudioSceneDocument
     void Reload()
     {
         originals.Clear(); keys.Clear(); nextOrder = 0; InvalidateSamples();
+        ReadPlaybackSettings();
         var root = document.Root;
         timingKnown = document.Kind == SceneDocumentKind.UnifiedProject;
         timingMessage = timingKnown ? null : "此格式保留完整 JSON；可通过原生兼容入口播放与导出，视觉时间轴需要统一项目。";
@@ -78,14 +79,15 @@ public sealed partial class StudioSceneDocument
             {
                 if (rows[index] is not JsonObject actual) { timingKnown = cursorKnown = false; timingMessage = "指令段包含非对象数据，请先修正高级 JSON。"; continue; }
                 var row = (JsonObject)actual.DeepClone(); string command = Command(row);
-                bool ignored = section == "commands" && Ignored(row);
+                if (IsPlaybackMarker(row)) continue;
+                bool ignored = Ignored(row);
                 int span = 0; bool known = ignored || KnownTiming(row, command, out span);
                 if (section != "commands" && span > 0) known = false;
                 int start = cursor; bool rowAfterTweens = afterTweens;
                 if (!known)
                 {
                     timingKnown = cursorKnown = false;
-                    timingMessage ??= "原剧情包含由资源或交互决定时长的指令（例如 Talk、Wait、视频）。原始轨道会完整保留；请使用原生预览确认时序。";
+                    timingMessage ??= "Talk、Wait 或视频的绝对时序需要原生资源。所有指令仍可逐条编辑、插入和重排；预览会返回实际时间。";
                 }
                 bool tween = span > 0 && command.StartsWith("Director.", StringComparison.Ordinal);
                 int endFrame = checked(start + span - (tween && start > 0 && !afterTweens ? 1 : 0));
@@ -121,7 +123,9 @@ public sealed partial class StudioSceneDocument
                 if (key.StartsWith(Marker, StringComparison.Ordinal))
                 {
                     timingKnown = false;
-                    timingMessage = "工作台标记与原生指令不一致。为了保留高级 JSON 修改，视觉轨道暂为只读；可继续原生预览与导出。";
+                    timingMessage = key == NativeEditMarker
+                        ? "原生指令的修改已保留，自动关键帧编译暂停；可继续编辑指令、预览和导出，撤销后可恢复关键帧编辑。"
+                        : "工作台标记与原生指令不一致。原生指令仍可编辑；保留这些修改时不会自动重写关键帧缓存。";
                 }
                 var original = RestoreTiming(row);
                 int originalSpan = ignored ? 0 : KnownTiming(original, command, out int value) ? value : span;
@@ -132,7 +136,7 @@ public sealed partial class StudioSceneDocument
         durationFrames = Math.Clamp(declared > 0 ? declared : last > 0 ? last : FramesPerSecond * 3, 1, 1080000);
         if (!timingKnown && document.Kind == SceneDocumentKind.LegacyShot && Number(root["duration"], 3) is double legacyDuration)
             durationFrames = ToFrame(Math.Clamp(legacyDuration, 1d / FramesPerSecond, 36000), positive: true);
-        frame = Math.Min(frame, durationFrames);
+        frame = ClampPlayheadFrame(frame);
         // Sparse keys are the editable source; bake rows are their derived native playback cache.
         // Rebuild only after all markers and timing have been accepted. Preserve untouched source
         // text on an ordinary round trip, but never publish stale cached frames after a key edit.
@@ -177,7 +181,7 @@ public sealed partial class StudioSceneDocument
             if (tween) span = TweenFrameCount((float)Number(row["Duration"]));
             return true;
         }
-        catch (Exception error) when (error is ArgumentException or FormatException or InvalidOperationException or NotSupportedException or OverflowException) { return false; }
+        catch (Exception error) when (error is ArgumentException or FormatException or InvalidOperationException or NotSupportedException or OverflowException or InvalidDataException) { return false; }
     }
     static int DelayFrameCount(float duration)
     {
@@ -212,6 +216,7 @@ public sealed partial class StudioSceneDocument
             root[section] = new JsonArray(originals.Where(row => row.Section == section).OrderBy(row => row.Index)
                 .Select(row => (JsonNode?)row.Data.DeepClone()).ToArray());
         var scheduled = new List<(int Frame, long Order, JsonObject Row)>();
+        if (playbackMarkerPresent) scheduled.Add((0, long.MinValue, PlaybackRow(durationMode, playbackRangeFrames)));
         foreach (var row in originals.Where(row => row.Section == "commands"))
             scheduled.Add((row.Frame, row.Order, PrepareTiming(row)));
         var numeric = keys.Where(key => key.Numeric).GroupBy(key => (key.Target, key.Track)).ToArray();
@@ -279,7 +284,7 @@ public sealed partial class StudioSceneDocument
         if (!preserveEquivalentText || !EquivalentCompilation(root, document.Root))
             document.ReplaceText(root.ToJsonString(DesktopSettings.JsonOptions));
         InvalidateSamples();
-        frame = Math.Min(frame, durationFrames);
+        frame = ClampPlayheadFrame(frame);
     }
 
     // Only scheduling fields are normalized. Their original presence and JSON tokens remain

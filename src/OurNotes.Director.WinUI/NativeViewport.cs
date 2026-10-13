@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -24,6 +25,12 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     readonly Image image=new(){Stretch=Stretch.Uniform,IsHitTestVisible=false};
     readonly Canvas checker=new(){IsHitTestVisible=false};
     readonly Canvas overlay=new(){IsHitTestVisible=false};
+    readonly Rectangle outline=new(){Stroke=Brush(91,202,255),StrokeThickness=2,RadiusX=3,RadiusY=3};
+    readonly TextBlock selectionText=new(){FontSize=12,Foreground=Brush(231,247,255)};
+    readonly Border selectionLabel=new(){Background=Brush(18,66,92),CornerRadius=new(3),Padding=new(7,3,7,3)};
+    readonly Rectangle[] handles=Enumerable.Range(0,4).Select(_=>new Rectangle{Width=7,Height=7,Fill=Brush(217,243,255),Stroke=Brush(24,83,109),StrokeThickness=1}).ToArray();
+    readonly RectangleGeometry selectionClip=new();
+    readonly ToolTip diagnostics=new();
     readonly TextBlock status=new(){Text="打开项目，开始预览",FontSize=12,Foreground=Brush(205,215,230),TextWrapping=TextWrapping.Wrap};
     readonly object frameGate=new();
     readonly List<(long After,TaskCompletionSource<PreviewFrame> Completion)> waiters=[];
@@ -39,6 +46,11 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     Point dragStart,dragLast;
     bool dragMoved;
     Rect imageRect;
+    Rect selectionRect;
+    PreviewTarget? displayedTarget;
+    long statusClock;
+    bool statusPlaying,diagnosticFailure;
+    public double PresentationMilliseconds{get;private set;}
     public event EventHandler<PreviewFrame>? FramePresented;
     public event EventHandler<Exception>? Failed;
     public event EventHandler<string?>? SelectionChanged;
@@ -66,11 +78,20 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         root.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
         root.RowDefinitions.Add(new(){Height=GridLength.Auto});
         surface.Children.Add(checker);surface.Children.Add(image);surface.Children.Add(overlay);
+        selectionLabel.Child=selectionText;overlay.Children.Add(outline);overlay.Children.Add(selectionLabel);
+        foreach(var handle in handles)overlay.Children.Add(handle);
+        overlay.Clip=selectionClip;overlay.Visibility=Visibility.Collapsed;
         root.Children.Add(surface);
         var bar=new Border{Background=Brush(27,31,40),Padding=new(12,7,12,7),Child=status};
         Grid.SetRow(bar,1);root.Children.Add(bar);Content=root;
         AutomationProperties.SetName(this,"实时画布");
         AutomationProperties.SetHelpText(this,"点击角色选择，拖动改变位置，鼠标滚轮缩放。");
+        ToolTipService.SetToolTip(status,diagnostics);
+        diagnostics.Opened+=(_,_)=>
+        {
+            if(diagnosticFailure||LastFrame is not {} frame)return;
+            diagnostics.Content=$"实际刷新 {frame.FramesPerSecond:0.0} fps · 渲染 {frame.RenderMilliseconds:0.0} ms · 显示 {PresentationMilliseconds:0.0} ms\n{frame.Pixels.Width} × {frame.Pixels.Height} · 第 {frame.Frame} 帧\n{frame.Device}";
+        };
         surface.SizeChanged+=(_,_)=>LayoutCanvas();
         surface.PointerPressed+=OnPointerPressed;
         surface.PointerMoved+=OnPointerMoved;
@@ -107,7 +128,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     long BeginLoad(string message)
     {
         HasCurrentSource=false;loading=true;dragTarget=null;dragMoved=false;
-        surface.ReleasePointerCaptures();overlay.Children.Clear();status.Text=message;ToolTipService.SetToolTip(status,null);
+        surface.ReleasePointerCaptures();HideSelection();status.Text=message;diagnostics.Content=null;diagnosticFailure=false;
         return ++sourceVersion;
     }
     /// <summary>
@@ -117,9 +138,9 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     public void InvalidateSource()
     {
         session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
-        dragTarget=null;dragMoved=false;surface.ReleasePointerCaptures();overlay.Children.Clear();
+        dragTarget=null;dragMoved=false;surface.ReleasePointerCaptures();HideSelection();
         status.Text=LastFrame is null?"打开项目，开始预览":"等待载入，保留上一画面";
-        ToolTipService.SetToolTip(status,null);
+        diagnostics.Content=null;diagnosticFailure=false;
     }
     public async Task SeekAsync(double seconds)
     {
@@ -137,6 +158,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         await AwaitPresentationAsync();
     }
     public Task CommitSceneProjectAsync(ScenePreviewSource source)=>session.CommitSceneProjectAsync(source);
+    public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
     async Task AwaitPresentationAsync()
     {
         if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);
@@ -181,31 +203,29 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         }
         try
         {
+            long stamp=Stopwatch.GetTimestamp();
             var pixels=frame.Pixels;
             if(bitmap is null||bitmap.PixelWidth!=pixels.Width||bitmap.PixelHeight!=pixels.Height)
             {
                 pixelStream?.Dispose();bitmap=new(pixels.Width,pixels.Height);
                 pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.Rgba.Length];image.Source=bitmap;
             }
-            // XAML composes premultiplied BGRA. The export/native buffer stays straight
-            // RGBA; convert only this display copy, keeping its genuine alpha edges.
-            for(int i=0;i<bgra.Length;i+=4)
+            // Metadata-only progress/pause events retain the same pixel object.
+            // Copy only a newly rendered image, using the vectorized display converter.
+            if(!ReferenceEquals(LastFrame?.Pixels,pixels))
             {
-                int alpha=pixels.Rgba[i+3];
-                bgra[i]=(byte)((pixels.Rgba[i+2]*alpha+127)/255);
-                bgra[i+1]=(byte)((pixels.Rgba[i+1]*alpha+127)/255);
-                bgra[i+2]=(byte)((pixels.Rgba[i]*alpha+127)/255);
-                bgra[i+3]=(byte)alpha;
+                PreviewPixelConverter.CopyBgraPremultiplied(pixels.Rgba,bgra);
+                pixelStream!.Position=0;pixelStream.Write(bgra);bitmap.Invalidate();
             }
-            pixelStream!.Position=0;pixelStream.Write(bgra);bitmap.Invalidate();
             Volatile.Write(ref lastFrame,frame);
             if(HasCurrentSource)UpdateStatus();
             LayoutCanvas();
             lock(frameGate)
             {
-                foreach(var waiter in waiters.Where(waiter=>frame.Sequence>waiter.After).ToArray())
-                {waiter.Completion.TrySetResult(frame);waiters.Remove(waiter);}
+                for(int i=waiters.Count-1;i>=0;i--)if(frame.Sequence>waiters[i].After)
+                {waiters[i].Completion.TrySetResult(frame);waiters.RemoveAt(i);}
             }
+            PresentationMilliseconds=Stopwatch.GetElapsedTime(stamp).TotalMilliseconds;
             FramePresented?.Invoke(this,frame);
         }
         catch(Exception exception){PresentFailure(exception);}
@@ -219,7 +239,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     {
         if(disposed)return;
         status.Text=HasCurrentSource?"画面暂时无法显示":LastFrame is null?"载入失败":"载入失败，保留上一画面";
-        ToolTipService.SetToolTip(status,exception.Message);
+        diagnostics.Content=exception.Message;diagnosticFailure=true;
         lock(frameGate)
         {
             foreach(var waiter in waiters)waiter.Completion.TrySetException(exception);
@@ -231,8 +251,10 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     void UpdateStatus()
     {
         if(!HasCurrentSource||loading||LastFrame is not {} frame)return;
-        status.Text=$"{(frame.IsPlaying?"播放中":"已暂停")}  ·  {TimeSpan.FromSeconds(frame.Time):mm\\:ss\\.ff}";
-        ToolTipService.SetToolTip(status,$"实际刷新 {frame.FramesPerSecond:0.0} fps · {frame.RenderMilliseconds:0} ms\n{frame.Pixels.Width} × {frame.Pixels.Height} · 第 {frame.Frame} 帧\n{frame.Device}");
+        if(frame.IsPlaying==statusPlaying&&Stopwatch.GetElapsedTime(statusClock).TotalMilliseconds<100)return;
+        statusClock=Stopwatch.GetTimestamp();statusPlaying=frame.IsPlaying;diagnosticFailure=false;
+        string text=$"{(frame.IsPlaying?"播放中":"已暂停")}  ·  {TimeSpan.FromSeconds(frame.Time):mm\\:ss\\.ff}";
+        if(status.Text!=text)status.Text=text;
     }
 
     void LayoutCanvas()
@@ -253,30 +275,31 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
                 Canvas.SetLeft(tile,rect.X+x*cell);Canvas.SetTop(tile,rect.Y+y*cell);checker.Children.Add(tile);
             }
         }
-        overlay.Clip=new RectangleGeometry{Rect=new(0,0,surface.ActualWidth,surface.ActualHeight)};
+        var clip=new Rect(0,0,surface.ActualWidth,surface.ActualHeight);
+        if(selectionClip.Rect!=clip)selectionClip.Rect=clip;
         DrawSelection();
     }
 
     void DrawSelection()
     {
-        overlay.Children.Clear();
-        if(!HasCurrentSource)return;
+        if(!HasCurrentSource){HideSelection();return;}
         var target=LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
-        if(target is null||imageRect.Width<=0)return;
+        if(target is null||imageRect.Width<=0){HideSelection();return;}
+        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible)return;
+        displayedTarget=target;selectionRect=imageRect;overlay.Visibility=Visibility.Visible;
         double x=imageRect.X+target.X*imageRect.Width,y=imageRect.Y+target.Y*imageRect.Height;
         double width=target.Width*imageRect.Width,height=target.Height*imageRect.Height;
-        var outline=new Rectangle{Width=width,Height=height,Stroke=Brush(91,202,255),StrokeThickness=2,RadiusX=3,RadiusY=3};
-        Canvas.SetLeft(outline,x);Canvas.SetTop(outline,y);overlay.Children.Add(outline);
-        var label=new Border{Background=Brush(18,66,92),CornerRadius=new(3),Padding=new(7,3,7,3),
-            Child=new TextBlock{Text=target.Label,FontSize=12,Foreground=Brush(231,247,255)}};
-        Canvas.SetLeft(label,Math.Clamp(x,0,Math.Max(0,surface.ActualWidth-80)));
-        Canvas.SetTop(label,Math.Max(0,y-26));overlay.Children.Add(label);
-        foreach(var corner in new[]{new Point(x,y),new Point(x+width,y),new Point(x,y+height),new Point(x+width,y+height)})
+        outline.Width=width;outline.Height=height;
+        Canvas.SetLeft(outline,x);Canvas.SetTop(outline,y);
+        if(selectionText.Text!=target.Label)selectionText.Text=target.Label;
+        Canvas.SetLeft(selectionLabel,Math.Clamp(x,0,Math.Max(0,surface.ActualWidth-80)));
+        Canvas.SetTop(selectionLabel,Math.Max(0,y-26));
+        for(int i=0;i<handles.Length;i++)
         {
-            var handle=new Rectangle{Width=7,Height=7,Fill=Brush(217,243,255),Stroke=Brush(24,83,109),StrokeThickness=1};
-            Canvas.SetLeft(handle,corner.X-3.5);Canvas.SetTop(handle,corner.Y-3.5);overlay.Children.Add(handle);
+            Canvas.SetLeft(handles[i],x+(i%2)*width-3.5);Canvas.SetTop(handles[i],y+(i/2)*height-3.5);
         }
     }
+    void HideSelection(){overlay.Visibility=Visibility.Collapsed;displayedTarget=null;}
 
     public PreviewTarget? HitTest(double normalizedX,double normalizedY)=>!HasCurrentSource?null:LastFrame?.Targets.LastOrDefault(target=>
         normalizedX>=target.X&&normalizedX<=target.X+target.Width&&normalizedY>=target.Y&&normalizedY<=target.Y+target.Height);

@@ -70,7 +70,7 @@ internal static class ResourcePicker
             var token = activeRequest.Token;
             int version = ++requestVersion;
             var request = new Dictionary<string, string?>(values, StringComparer.Ordinal);
-            if (queryKey is not null && query.Length > 0) request[queryKey] = query;
+            if (queryKey is not null && query.Length > 0) request[queryKey] = id == "model.list" ? DisplayNames.SearchAlias(query) : query;
             if (append && nextOffset is { } offset) request["offset"] = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (!append) { rows.Clear(); nextOffset = null; loadedQuery = query; Filter(); }
             busy.IsActive = true; searchButton.IsEnabled = false; next.IsEnabled = false;
@@ -107,6 +107,7 @@ internal static class ResourcePicker
         if (outcome != ContentDialogResult.Primary && dialog.Tag?.ToString() != "selected") return null;
         if ((list.SelectedItem as ListViewItem)?.Tag is not ResultRow selected) return null;
         var selection = selected.Selection(field.Key);
-        return new ResourceSelection(selection.Value, selection.RelatedValues);
+        var related = new Dictionary<string, string?>(selection.RelatedValues) { ["displayName"] = selected.Title };
+        return new ResourceSelection(selection.Value, related);
     }
 }

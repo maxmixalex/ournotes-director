@@ -2,4 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../OurNotes.Director.Core/OurNotes.Director.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources/CharacterNames.json" />
+  </ItemGroup>
 </Project>

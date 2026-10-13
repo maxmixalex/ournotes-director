@@ -8,10 +8,10 @@ namespace OurNotes.Director.WinUI;
 
 internal static class Ui
 {
-    public static TextBlock Text(string text, double size = 14, bool muted = false) => new()
+    public static TextBlock Text(string text, double size = 14, bool muted = false, bool selectable = false) => new()
     {
         Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, Opacity = muted ? .68 : 1,
-        IsTextSelectionEnabled = true
+        IsTextSelectionEnabled = selectable
     };
 
     public static StackPanel Stack(double spacing = 12, params UIElement[] children)

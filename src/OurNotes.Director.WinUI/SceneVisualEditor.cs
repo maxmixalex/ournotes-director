@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 
 namespace OurNotes.Director.WinUI;
@@ -51,7 +52,7 @@ internal sealed partial class ScenePage
             var box = new NumberBox { Header = label, Value = value, Minimum = min, Maximum = max, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
             box.ValueChanged += (_, _) => touched.Add(key); return box;
         }
-        var width = Number("width", "宽度", output.Width, 16, 7680); var height = Number("height", "高度", output.Height, 16, 4320);
+        var width = Number("width", "宽度", output.Width, 16, RenderDimensions.MaxSide); var height = Number("height", "高度", output.Height, 16, RenderDimensions.MaxSide);
         var supersample = Number("supersample", "超采样倍数", output.Supersample, 1, 4);
         var codec = Ui.Choice("视频编码", [("cineform", "CineForm · 透明 MOV"), ("prores", "ProRes 4444 · 透明 MOV"),
             ("ffv1", "FFV1 · 无损 MKV"), ("h264", "H.264 · MP4")], output.Codec);

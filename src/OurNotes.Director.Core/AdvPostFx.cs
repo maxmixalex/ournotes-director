@@ -12,6 +12,8 @@ public sealed class AdvPostFx
     readonly Dictionary<string,uint> curves=[];
     readonly uint black,gray,depth;
     readonly Surface lut;
+    static readonly string[] LutComponents=["WhiteBalance","ColorAdjustments","ChannelMixer","ShadowsMidtonesHighlights","SplitToning","LiftGammaGain","ColorCurves"];
+    JsonObject? previousLut;
     public float GrainIntensity{get;set;}
     public Func<JsonNode,uint>? LoadTexture{get;set;}
     public JsonArray? GrainTextures{get;set;}
@@ -48,6 +50,9 @@ public sealed class AdvPostFx
     }
     void BuildLut(JsonNode stack)
     {
+        bool unchanged=previousLut is not null;
+        foreach(string component in LutComponents)if(unchanged&&!JsonNode.DeepEquals(previousLut![component],stack[component]))unchanged=false;
+        if(unchanged)return;
         var wb=stack["WhiteBalance"]!;float t1=N(wb,"temperature")/65,t2=N(wb,"tint")/65;
         float x=.31271f-t1*(t1<0?.1f:.05f),y=((2.87f*x-3*x*x)-.27509507f)+t2*.05f,X=x/y,Z=((1-x)-y)/y;
         float L=(.7328f*X+.4296f)-.1624f*Z,M=(-.7036f*X+1.6975f)+.0061f*Z,S=(.003f*X+.0136f)+.9834f*Z;
@@ -66,6 +71,7 @@ public sealed class AdvPostFx
             ["_SplitShadows"]=split,["_SplitHighlights"]=V(st,"highlights",true)};
         var textures=new Dictionary<string,uint>();foreach(var name in new[]{"master","red","green","blue","hueVsHue","hueVsSat","lumVsSat","satVsSat"})textures["_Curve"+char.ToUpperInvariant(name[0])+name[1..]]=Curve(cc[name],name is "master" or "red" or "green" or "blue");
         Blit("Hidden/Universal Render Pipeline/LutBuilderLdr",0,lut,values,textures);
+        previousLut=new();foreach(string component in LutComponents)previousLut[component]=stack[component]?.DeepClone();
     }
     public static float[] BokehKernel(JsonNode d,float maxRadius,float rcpAspect)
     {

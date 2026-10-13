@@ -77,9 +77,37 @@ public static class VideoEncoding
         };
         // The destination may be an internal temporary file without an extension.
         // Public entry points validate the final path; the muxer is explicit here.
-        foreach (var argument in new[] { "-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pixel_format", "rgba",
+        foreach (var argument in new[] { "-v", "error", "-nostdin", "-y" }) start.ArgumentList.Add(argument);
+        int? threadLimit = RawVideoThreadLimit(width, height);
+        if (threadLimit is { } threads)
+        {
+            start.ArgumentList.Add("-filter_threads"); start.ArgumentList.Add(threads.ToString(CultureInfo.InvariantCulture));
+        }
+        foreach (var argument in new[] { "-f", "rawvideo", "-pixel_format", "rgba",
             "-video_size", $"{width}x{height}", "-framerate", fps.ToString("R", CultureInfo.InvariantCulture), "-i", "pipe:0", "-an" }
-            .Concat(Arguments(codec, cineformQuality)).Concat(["-f", Format(codec), output])) start.ArgumentList.Add(argument);
+            .Concat(Arguments(codec, cineformQuality))) start.ArgumentList.Add(argument);
+        if (threadLimit is { } encoderThreads)
+        {
+            start.ArgumentList.Add("-threads:v"); start.ArgumentList.Add(encoderThreads.ToString(CultureInfo.InvariantCulture));
+        }
+        foreach (var argument in new[] { "-f", Format(codec), output }) start.ArgumentList.Add(argument);
         return start;
     }
+
+    /// <summary>Bound parallel frame buffers above DCI 4K, without altering the original dimensions or quality.</summary>
+    public static int? RawVideoThreadLimit(int width, int height)
+    {
+        if (width <= 0 || height <= 0) throw new ArgumentException("Video dimensions must be positive");
+        long pixels = (long)width * height;
+        if (pixels <= 4096L * 2160) return null;
+        // RGBA8 -> RGBA64 -> GBRAP12 and CineForm's wavelets retain several full-size
+        // planes per frame worker. Actual 54 MP two-frame encoding exhausted an 8 GiB
+        // process group with automatic threads; one worker completed at about 3.1 GiB.
+        // Keep roughly 32 MP of concurrent frame work; normal HD/DCI 4K stays automatic.
+        return Math.Max(1, (int)(32_000_000L / pixels));
+    }
+
+    public static IOException EncoderFailure(int exitCode, string details, Exception? innerException = null)
+        => new($"FFmpeg video encoder exited with code {exitCode}. "
+            + (string.IsNullOrWhiteSpace(details) ? "The video was not completed; the encoder supplied no error details." : details), innerException);
 }

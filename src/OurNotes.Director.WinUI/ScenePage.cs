@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
@@ -311,7 +312,7 @@ internal sealed partial class ScenePage : UserControl
                 throw new ArgumentException("预览的" + (key == "width" ? "宽度" : "高度") + "必须为 16 至 " + max + " 的整数。");
             return dimension;
         }
-        int sourceWidth = Dimension("width", output.Width, 7680), sourceHeight = Dimension("height", output.Height, 4320);
+        int sourceWidth = Dimension("width", output.Width, RenderDimensions.MaxSide), sourceHeight = Dimension("height", output.Height, RenderDimensions.MaxSide);
         double scale = Math.Min(1, 960d / Math.Max(sourceWidth, sourceHeight));
         int width = Math.Max(16, (int)Math.Round(sourceWidth * scale)), height = Math.Max(16, (int)Math.Round(sourceHeight * scale));
         var path = Path.Combine(DesktopSettings.DataDirectory, "previews", "scene-" + Guid.NewGuid().ToString("N") + ".png");

@@ -37,4 +37,10 @@ public sealed partial class AdvScene
             if(state.Visible&&actor.PreviewBounds(state.Space=="screen"?DirectorProjection():world) is {} bounds)result.Add(bounds);
         return result;
     }
+
+    public IReadOnlyList<PreviewLipSync> PreviewLipSyncState()=>shown.Values.Concat(directorActors.Keys).Distinct()
+        .Select(actor=>new PreviewLipSync(actor.Spec.Name,actor.LipSyncEngine,
+            actor.VoiceLipSyncActive||actor.PseudoLipSyncActive,actor.MouthOpen,actor.LipSyncMissing)).ToArray();
+
+    public IReadOnlyList<PreviewActorAnimation> PreviewAnimationState()=>VisibleActors.Select(actor=>actor.PreviewAnimation()).ToArray();
 }

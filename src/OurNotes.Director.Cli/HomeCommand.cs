@@ -57,7 +57,8 @@ internal static class HomeCommand
             var animation = new HomeAnimation(new(scene!), Character(scene!), animationName, loop);
             var timing = HomeTiming.Plan(animation.Duration, time, duration, fps, animation.AllLooping);
             double[]? times = verb == "contact" ? Opt("times", "0,1,2,3").Split(',').Select(t => double.Parse(t, CultureInfo.InvariantCulture)).ToArray() : null;
-            var report = HomeExport.Run(animation, verb, output, timing, width, height, supersample, Framing(animation.Character), background, codec, quality, overwrite, ffmpeg, times, Int("columns", 3), Edits(animation.Character));
+            var report = HomeExport.Run(animation, verb, output, timing, width, height, supersample, Framing(animation.Character), background, codec, quality, overwrite, ffmpeg, times, Int("columns", 3), Edits(animation.Character),
+                sourceAspect: project is null ? null : project.Output.Width / (float)project.Output.Height, sourceDuration: project?.Duration);
             if (project is not null) { report["projectFormat"] = HomeProject.Format; report["projectDuration"] = project.Duration; }
             return report;
         }
@@ -90,7 +91,8 @@ internal static class HomeCommand
                 {
                     var current = character is null ? complete : new HomeAnimation(resources, character, animationName, loop);
                     string file = Path.Combine(relative, character is null ? "scene" + extension : Path.Combine("characters", character.Key + extension));
-                    var report = HomeExport.Run(current, "clip", Path.Combine(temp, file), timing, width, height, supersample, Framing(character), background, codec, quality, false, ffmpeg, editState: Edits(character));
+                    var report = HomeExport.Run(current, "clip", Path.Combine(temp, file), timing, width, height, supersample, Framing(character), background, codec, quality, false, ffmpeg, editState: Edits(character),
+                        sourceAspect: project is null ? null : project.Output.Width / (float)project.Output.Height, sourceDuration: project?.Duration);
                     report["output"] = file.Replace('\\', '/'); exports.Add((JsonNode)report);
                 }
             }

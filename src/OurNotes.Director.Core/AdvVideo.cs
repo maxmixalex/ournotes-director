@@ -15,6 +15,7 @@ public sealed class AdvVideo : IDisposable
     public bool Playing=>showing&&(loop.Frame-started)/30d<total/fps;
     public bool Visible=>showing;
     public float Alpha=>alpha;
+    internal bool TimingOnly{get;init;}
     public AdvWait SetAlpha(float value,float duration)
     {
         if(!showing)return loop.Ready();
@@ -54,6 +55,8 @@ public sealed class AdvVideo : IDisposable
         if(p.Speed!=1)throw new NotSupportedException("Video audio resampling for playback speed is not connected");
         CloseDecoder();var data=document["videos"]?[id.ToString(CultureInfo.InvariantCulture)]??throw new InvalidDataException("Video not loaded: "+id);
         int w=(int)Actor.N(data["width"]),h=(int)Actor.N(data["height"]);total=(int)Actor.N(data["frames"]);fps=Actor.N(data["frameRate"]![0])/Actor.N(data["frameRate"]![1]);
+        if(w<1||h<1||total<1||!double.IsFinite(fps)||fps<=0)throw new InvalidDataException("Invalid archived video timing");
+        if(TimingOnly){started=loop.Frame;showing=true;alpha=0;ui.ClearVideoText();return;}
         temporary=NativeTemporary.Create("video",".webm");
         try{
         File.WriteAllBytes(temporary,archive.Logical(site,manifest,Archive.S(data,"file")));

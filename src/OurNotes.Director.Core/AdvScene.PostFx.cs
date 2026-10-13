@@ -7,6 +7,16 @@ public sealed partial class AdvScene
     AdvPostFx post=null!;
     AdvPostFx? mediaPost;AdvCamera? mediaCamera;
     readonly List<AdvVolume> volumes=[];
+    readonly List<(JsonNode Profile,float Weight)> evaluatedVolumeInputs=[];
+    JsonNode? evaluatedVolumeStack;
+    JsonNode VolumeStack()
+    {
+        bool unchanged=evaluatedVolumeStack is not null&&evaluatedVolumeInputs.Count==volumes.Count;
+        for(int i=0;unchanged&&i<volumes.Count;i++)unchanged=ReferenceEquals(evaluatedVolumeInputs[i].Profile,volumes[i].Profile)&&evaluatedVolumeInputs[i].Weight==volumes[i].Weight;
+        if(unchanged)return evaluatedVolumeStack!;
+        evaluatedVolumeInputs.Clear();foreach(var volume in volumes)evaluatedVolumeInputs.Add((volume.Profile,volume.Weight));
+        return evaluatedVolumeStack=AdvVolume.Evaluate(volumes);
+    }
     readonly Dictionary<string,JsonNode> effectProfiles=[];
     readonly Dictionary<string,ChildVolume> childVolumes=[];
     AdvVolume? stageVolume;
@@ -52,6 +62,6 @@ public sealed partial class AdvScene
         mediaPost??=new(gl,shaders){GrainTextures=post.GrainTextures,LoadTexture=post.LoadTexture};
         if(mediaCamera is null){var ui=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"ui"),language))!;var c=ui["videoAndStillCamera"]!["camera"]!;mediaCamera=new(loop,tweens,Actor.N(c["field of view"]),Actor.N(c["near clip plane"]),Actor.N(c["far clip plane"]));}
         mediaPost.GrainIntensity=post.GrainIntensity;mediaPost.GrainScale=post.GrainScale;
-        gl.BeginLayer();draw();mediaPost.Render(AdvVolume.Evaluate(suppressVolumes?[]:volumes),mediaCamera,loop.Frame);gl.EndLayer();
+        gl.BeginLayer();draw();mediaPost.Render(suppressVolumes?AdvVolume.Evaluate([]):VolumeStack(),mediaCamera,loop.Frame);gl.EndLayer();
     }
 }
