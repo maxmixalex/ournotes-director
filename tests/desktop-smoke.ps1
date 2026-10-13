@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Package')] [string] $Package,
     [string] $ReportDirectory = 'artifacts/desktop-smoke',
     [string] $FixtureDirectory,
+    [string] $RealSceneFixtureDirectory,
     [string] $OpenGLDriver,
     [ValidateRange(10, 300)] [int] $TimeoutSeconds = 120
 )
@@ -66,6 +67,9 @@ try {
     $startInfo.Environment['PATH'] = "$env:WINDIR\System32;$env:WINDIR"
     if ($FixtureDirectory) {
         $startInfo.Environment['OURNOTES_STUDIO_FIXTURE'] = (Resolve-Path -LiteralPath $FixtureDirectory).Path
+    }
+    if ($RealSceneFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_SCENE_FIXTURE'] = (Resolve-Path -LiteralPath $RealSceneFixtureDirectory).Path
     }
     if ($OpenGLDriver) {
         $startInfo.Environment['OURNOTES_TEST_OPENGL'] = (Resolve-Path -LiteralPath $OpenGLDriver).Path

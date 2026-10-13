@@ -5,6 +5,8 @@ try
     if (args.Length == 2 && args[0] == "--runtime-package") return RuntimeDependencyTests.Run(args[1]);
     if (args.Length == 2 && args[0] == "--home-fixture") return HomeRenderingTests.WriteFixture(args[1]);
     if (args.Length == 2 && args[0] == "--scene-fixture") return RealtimePreviewTests.WriteFixture(args[1]);
+    if (args.Length == 3 && args[0] == "--studio-scene") return await StudioSceneRealTests.RunAsync(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--studio-home") return StudioHomeRealTests.Run(args[1], args[2]);
     int result = MaterialStateTests.Run();
     if (result != 0) return result;
     result = SpineTests.RunGraphics();
@@ -12,6 +14,8 @@ try
     result = HomeRenderingTests.RunGraphics();
     if (result != 0) return result;
     result = HomeProjectRenderingTests.Run();
+    if (result != 0) return result;
+    result = HomeSpineRecoveryTests.Run();
     if (result != 0) return result;
     result = RealtimePreviewTests.Run();
     return result != 0 ? result : RenderLanguageTests.Run();

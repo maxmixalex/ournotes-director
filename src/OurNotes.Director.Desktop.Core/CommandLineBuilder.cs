@@ -230,10 +230,10 @@ public static class CommandLineBuilder
         int supersample = SafeInt(Parse("supersample", 2));
         if (width is { } w && height is { } h)
         {
-            if (fields.ContainsKey("width") && (w < 16 || w > 7680 || h < 16 || h > (home ? 7680 : 4320)))
+            if (fields.ContainsKey("width") && (w < 16 || w > RenderDimensions.MaxSide || h < 16 || h > RenderDimensions.MaxSide))
                 errors.Add(new("width", "画面尺寸超出此操作支持的范围。"));
-            if (home && (long)w * h * supersample * supersample > 132_710_400)
-                errors.Add(new("supersample", "超采样后的主页画布超过约 1.32 亿像素，请降低尺寸或倍数。"));
+            if (fields.ContainsKey("supersample") && (long)w * h * supersample * supersample > RenderDimensions.MaxPixels)
+                errors.Add(new("supersample", "超采样后的画布超过约 1.32 亿像素。原始尺寸请选择 1 倍采样，或降低尺寸。"));
             if (encoded && codec == "cineform" && (w <= 0 || w % 16 != 0 || h < 32 || h % 8 != 0))
                 errors.Add(new("width", "CineForm 要求宽度为 16 的倍数、高度为 8 的倍数且至少为 32；不会自动缩放或补边。"));
             if (encoded && codec == "h264" && (w % 2 != 0 || h % 2 != 0)) errors.Add(new("width", "H.264 的宽度和高度必须为偶数。"));
@@ -434,7 +434,7 @@ public static class CommandLineBuilder
                 if (pair.Key == "codec" && pair.Value is not ("cineform" or "prores" or "ffv1" or "h264")) errors.Add(new(key, "项目包含不支持的视频编码：" + pair.Value));
                 if (pair.Key is "width" or "height" or "supersample"
                     && (!int.TryParse(pair.Value, NumberStyles.None, CultureInfo.InvariantCulture, out int integer)
-                        || integer < (pair.Key == "supersample" ? 1 : 16) || integer > (pair.Key == "supersample" ? 4 : pair.Key == "width" ? 7680 : 4320)))
+                        || integer < (pair.Key == "supersample" ? 1 : 16) || integer > (pair.Key == "supersample" ? 4 : RenderDimensions.MaxSide)))
                     errors.Add(new(key, "项目中的 " + pair.Key + " 超出允许范围。"));
                 if (pair.Key == "cineform-quality" && !CommandCatalog.Get("home.clip").Fields.First(field => field.Key == "cineform-quality").Choices.Any(choice => choice.Value == pair.Value.ToLowerInvariant()))
                     errors.Add(new(key, "项目中的 CineForm 质量名称无效。"));

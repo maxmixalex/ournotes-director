@@ -232,6 +232,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
             await viewport.SetHomeEditStateAsync(current.Project.EditState);
             await viewport.SeekAsync(current.Playhead); viewport.SelectedTargetId = current.SelectedCharacterKey;
             previewLoaded = true; pendingPreview = null; notice.IsOpen = false;
+            if (metadata?.RecoveryNote is { Length: > 0 } recoveryNote) Notice(recoveryNote, false);
             if (viewport.LastFrame is { } presented) OnFrame(presented);
             if (!active) viewport.Pause();
         }
@@ -262,10 +263,15 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         if (refreshing || disposed) return;
         try
         {
+            var previousSource = document?.Project.Source;
+            var previousOutput = document?.Project.Output;
+            var previousDuration = document?.Project.Duration;
             Pause(); action();
             RefreshHeader(); RefreshObjects(); RefreshTimeline(); RefreshValues();
             draftTimer.Stop(); draftTimer.Start();
-            if (reload) _ = SafeAsync(ReloadPreviewAsync); else QueuePreview();
+            if (document?.Project.Source != previousSource) _ = SafeAsync(LoadMetadataAndPreviewAsync);
+            else if (reload || document?.Project.Output != previousOutput || document?.Project.Duration != previousDuration) _ = SafeAsync(ReloadPreviewAsync);
+            else QueuePreview();
         }
         catch (Exception error) { Notice(error.Message); RefreshValues(); RefreshTimeline(); }
     }
@@ -293,7 +299,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
             foreach (var character in metadata?.Characters ?? [])
             {
                 bool visible = document.TransformAt(character.Key, document.Playhead).Visible;
-                var item = new ListViewItem { Tag = character.Key, Content = Ui.Text(character.Name + (visible ? "" : " · 已隐藏")) };
+                var item = new ListViewItem { Tag = character.Key, Content = Ui.Stack(2, Ui.Text(character.Name + (visible ? "" : " · 已隐藏")), Ui.Text(character.Key, 11, true)) };
                 ToolTipService.SetToolTip(item, character.Supported ? "点击选择；在画布中拖动位置和滚轮缩放。" : character.Error);
                 objects.Items.Add(item);
             }
@@ -328,6 +334,17 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         if (document is null) { properties.Children.Add(Ui.Text("选择主页，开始创作。", 13, true)); refreshing = false; return; }
         if (document.SelectedCharacterKey is not { } key)
         {
+            properties.Children.Add(Ui.Text("画布", 16));
+            AddNumber("canvasWidth", "宽度（像素）", 16, RenderDimensions.MaxSide, 16, Pause);
+            AddNumber("canvasHeight", "高度（像素）", 16, RenderDimensions.MaxSide, 8, Pause);
+            AddNumber("canvasFps", "帧率", 1, 120, 1, Pause);
+            properties.Children.Add(StudioLayout.Tool("应用画布尺寸", ApplyCanvas, "\uE740"));
+            if (metadata is not null)
+            {
+                properties.Children.Add(Ui.Text($"原始完整动画 · {metadata.SourceDuration:0.###} 秒", 12, true));
+                properties.Children.Add(StudioLayout.Tool("时间轴适配完整动画", () => Edit(() => document.SetDuration(
+                    HomeTiming.Plan(metadata.SourceDuration, fps: document.Project.Output.Fps, loop: metadata.AllLooping).Duration)), "\uE916"));
+            }
             var room = roomBox = new CheckBox { Content = "显示房间", IsChecked = document.Project.EditState.Background };
             var post = postBox = new CheckBox { Content = "原始后期效果", IsChecked = document.Project.EditState.PostProcessing };
             room.Checked += (_, _) => Edit(() => document.SetScene(background: true)); room.Unchecked += (_, _) => Edit(() => document.SetScene(background: false));
@@ -345,9 +362,10 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         else
         {
             var character = metadata?.Characters.FirstOrDefault(c => c.Key == key);
-            properties.Children.Add(Ui.Text(character?.Name ?? key, 16));
+            properties.Children.Add(Ui.Text(DisplayNames.Character(character?.Name ?? key), 16));
+            properties.Children.Add(Ui.Text(key, 12, true));
             if (character?.Supported == false) { properties.Children.Add(Ui.Text(character.Error ?? "该角色暂不支持独立编辑。", 13, true)); refreshing = false; return; }
-            animationBox = Ui.Choice("动作", new[] { ("", "原始动作") }.Concat((character?.Animations ?? []).Select(name => (name, name))), "");
+            animationBox = Ui.Choice("动作", new[] { ("", "原始动作") }.Concat((character?.Animations ?? []).Select(name => (name, DisplayNames.Animation(name)))), "");
             loopBox = Ui.Choice("循环", [("source", "沿用原设置"), ("once", "播放一次"), ("loop", "持续循环")], "source");
             animationBox.SelectionChanged += (_, _) => AnimationChanged(); loopBox.SelectionChanged += (_, _) => AnimationChanged();
             properties.Children.Add(animationBox); properties.Children.Add(loopBox);
@@ -363,6 +381,15 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
             properties.Children.Add(StudioLayout.Tool("恢复此角色的原始状态", () => Edit(() => document.ResetCharacter(key)), "\uE777"));
         }
         refreshing = false; RefreshValues();
+    }
+    void ApplyCanvas()
+    {
+        if (document is null || refreshing) return;
+        if (new[] { "canvasWidth", "canvasHeight", "canvasFps" }.Any(key => !numbers.TryGetValue(key, out var number) || !double.IsFinite(number.Value)))
+        { Notice("请填写完整的画布宽度、高度和帧率。"); return; }
+        double width = Number("canvasWidth", document.Project.Output.Width), height = Number("canvasHeight", document.Project.Output.Height), fps = Number("canvasFps", document.Project.Output.Fps);
+        if (width != Math.Truncate(width) || height != Math.Truncate(height) || fps != Math.Truncate(fps)) { Notice("画布宽度、高度和帧率需要填写整数。"); return; }
+        Edit(() => document.SetOutput(document.Project.Output with { Width = checked((int)width), Height = checked((int)height), Fps = checked((int)fps) }), reload: true);
     }
     void AddNumber(string id, string label, double min, double max, double step, Action changed)
     {
@@ -386,6 +413,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         }
         else
         {
+            Value("canvasWidth", document.Project.Output.Width); Value("canvasHeight", document.Project.Output.Height); Value("canvasFps", document.Project.Output.Fps);
             if (roomBox is not null) roomBox.IsChecked = document.Project.EditState.Background;
             if (postBox is not null) postBox.IsChecked = document.Project.EditState.PostProcessing;
             if (framingBox is not null) framingBox.SelectedItem = framingBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag?.ToString() == document.Project.EditState.Framing);
@@ -542,7 +570,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
     }
 
     sealed record CharacterInfo(string Key, string Name, IReadOnlyList<string> Animations, bool Supported = true, string? Error = null);
-    sealed record Metadata(HomeProjectSource Source, string Name, double Duration, IReadOnlyList<CharacterInfo> Characters);
+    sealed record Metadata(HomeProjectSource Source, string Name, double Duration, double SourceDuration, bool AllLooping, IReadOnlyList<CharacterInfo> Characters, string? RecoveryNote = null);
     static Metadata ReadMetadata(string archivePath, HomeProjectSource source, string language)
     {
         var scene = new HomeCatalog(new Archive(archivePath)).Open(source.SpotId, source.Site, source.AdvId);
@@ -554,18 +582,22 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
                 var animation = new HomeAnimation(resources, character);
                 var names = animation.Parts.Select(p => p.Actor.Asset.Animations.Select(a => a.Name).ToHashSet(StringComparer.Ordinal)).ToArray();
                 var common = names.Length == 0 ? new HashSet<string>(StringComparer.Ordinal) : names[0]; foreach (var namesInPart in names.Skip(1)) common.IntersectWith(namesInPart);
-                characters.Add(new(character.Key, character.Name, common.Order(StringComparer.Ordinal).ToArray()));
+                characters.Add(new(character.Key, DisplayNames.Character(character.Name), common.Order(StringComparer.Ordinal).ToArray()));
             }
-            catch (NotSupportedException error) { characters.Add(new(character.Key, character.Name, [], false, error.Message)); }
+            catch (NotSupportedException error) { characters.Add(new(character.Key, DisplayNames.Character(character.Name), [], false, error.Message)); }
         }
+        string? recoveryNote = scene.UnresolvedSpineParts.Count > 0
+            ? "此主页有缺少有效组件信息的动画部件，无法安全补全。详情见导出诊断中的 unresolvedSpineParts。"
+            : scene.SpineRecoveries.Count > 0 ? "已依据逐帧共有骨骼补全角色背层。原始独立组件变换未被上游导出；补全结果使用角色坐标对齐。" : null;
         return new(new(scene.SpotId, scene.Site, scene.AdvId), LocalName(scene.Spot["name"], language, "主页 " + scene.SpotId),
-            HomeTiming.Plan(complete.Duration, fps: 30, loop: complete.AllLooping).Duration, characters);
+            HomeTiming.Plan(complete.Duration, fps: 30, loop: complete.AllLooping).Duration, complete.Duration, complete.AllLooping, characters, recoveryNote);
     }
     static string LocalName(JsonNode? names, string language, string fallback)
     {
         if (names is JsonObject obj)
         {
-            foreach (string key in new[] { language, "zh-Hans", "ja", "en" }.Distinct(StringComparer.Ordinal)) if (obj[key] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)) return text;
+            string alias = language switch { "zh-Hans" => "simplifiedChinese", "zh-Hant" => "traditionalChinese", "ja" => "japanese", "en" => "english", "ko" => "korean", _ => language };
+            foreach (string key in new[] { language, alias, "zh-Hans", "simplifiedChinese", "ja", "japanese", "en", "english" }.Distinct(StringComparer.Ordinal)) if (obj[key] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)) return text;
             foreach (var pair in obj) if (pair.Value is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)) return text;
         }
         return names is JsonValue node && node.TryGetValue<string>(out var name) && name.Length > 0 ? name : fallback;
@@ -584,7 +616,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         try
         {
             var model = new HomeStudioDocument(new HomeProject(new HomeProjectSource(77, "intl", 42)) { Duration = 2, Output = new(320, 180, 30, 1) });
-            SetDocument(model, new(model.Project.Source, "测试主页", 2, [new("alice", "测试角色", ["home_start"])]));
+            SetDocument(model, new(model.Project.Source, "测试主页", 2, 1, false, [new("alice", "测试角色", ["home_start"])]));
             model.SetTransform("alice", 0, new()); model.SetTransform("alice", 1, new(.2, .1, 1.4));
             Select("alice"); model.Playhead = .5; RefreshValues(); RefreshTimeline(); UpdateLayout();
             check(Math.Abs(model.TransformAt("alice", .5).X - .1) < 1e-9 && model.TimelineKeys().Count == 2, "主页位置关键帧真实插值并进入时间轴");

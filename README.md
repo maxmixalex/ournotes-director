@@ -12,7 +12,7 @@ GitHub Actions 的 [**Build native executables** 工作流](https://github.com/m
 
 默认交付位置是 Actions artifacts。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会把各平台测试通过的包分别保存为独立的**草稿 Release**，下载链接见对应 job 的 Summary。草稿只有具有仓库写权限的人能查看；其他情况仍使用 artifacts。
 
-**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 主界面为“场景工作台”和“主页工作台”：在原生窗口实时播放，直接拖动角色，用时间轴编排位置、动作、相机与后处理，再通过共同的导出面板选择格式和画质。两者均支持粘贴 JSON；原有 CLI 工具从素材库中的高级工具打开。具体步骤见 [桌面使用说明](DESKTOP.md)。Linux 继续使用下面的 CLI。
+**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 主界面为“场景工作台”和“主页工作台”：在原生窗口实时播放，直接拖动角色，插入或修改原生指令，用时间轴编排位置、动作、相机与后处理，再通过共同的导出面板选择格式和画质。原剧情可编辑并自动解析完整时长；“单人透明”自动读取模型原画布并完成构图。两者均支持粘贴 JSON；原有 CLI 工具从素材库中的高级工具打开。具体步骤见 [桌面使用说明](DESKTOP.md)。Linux 继续使用下面的 CLI。
 
 ```powershell
 # Windows：在解压后的目录中运行
@@ -206,7 +206,7 @@ tracks 的 target 为角色 name 或 camera。相机可动画 x/y/zoom/roll；�
 {"target":"hotaru","property":"param:ParamAngleX","interpolation":"smoothstep","keys":[{"t":0,"value":-15},{"t":3,"value":15}]}
 ```
 
-静态参数写 `parameters:{"ParamAngleX":10}`。眼睛看向可用 ParamEyeBallX/Y，头部用 ParamAngleX/Y/Z，身体用 ParamBodyAngleX，手动嘴型用 ParamMouthOpenY。使用 model parameters 查该模型的真实参数及范围；未知 ID 报错，值在模型范围内截断。统一适配后的参数覆盖发生在物理、口型求值后；release 可交还原动作。自动语音口型通过 `story` 的 Talk/Voice 指令驱动：MotionSync 模型加载本地 5.0.4 原生 DLL，其余模型与共享语音使用剧情内的 CRI Lips 数据；缺失分析数据会在 `story state` 的 `lipSyncMissing` 中明确显示。Talk 支持原有的 AirLipSync、AirLipSync_HoldOpen、EveryoneLipSync 和 IgnoreLipSync 字段。
+静态参数写 `parameters:{"ParamAngleX":10}`。眼睛看向可用 ParamEyeBallX/Y，头部用 ParamAngleX/Y/Z，身体用 ParamBodyAngleX，手动嘴型用 ParamMouthOpenY。使用 model parameters 查该模型的真实参数及范围；未知 ID 报错，值在模型范围内截断。统一适配后的参数覆盖发生在物理、口型求值后；release 可交还原动作。自动语音口型通过 `story` 的 Talk/Voice 指令驱动：MotionSync 模型加载本地 5.0.4 原生 DLL，其余模型与共享语音使用剧情内的 CRI Lips 数据；缺失分析数据时采用实际解码语音的音量包络驱动口型，并在 `story state` 的 `lipSyncMissing` 中明确显示；该回退不等同于音素分析。Talk 支持原有的 AirLipSync、AirLipSync_HoldOpen、EveryoneLipSync 和 IgnoreLipSync 字段。
 
 loop=true 是导演循环语义，false 在末尾保持。切换使用定长淡入混合，不承诺复现游戏 Animator/FadeController 的完整生命周期。
 

@@ -85,7 +85,9 @@ CineForm 按质量压缩，不承诺固定码率。片长、尺寸、帧率、�
 
 ### 尺寸要求
 
-为遵守旧版 Adobe 的 CineForm 尺寸要求，输出宽度必须是 **16 的倍数**，高度必须是 **8 的倍数且至少为 32**。不支持的尺寸会在导出前报错，并给出就近尺寸建议；程序不会自动缩放或补边。
+为遵守旧版 Adobe 的 CineForm 尺寸要求，输出宽度必须是 **16 的倍数**，高度必须是 **8 的倍数且至少为 32**。显式输入的不支持尺寸会在导出前报错，并给出就近尺寸建议。工作台的「单人透明镜头／模型原始尺寸」会提前计算符合所选格式的画布，只增加必要的透明边距，保留模型原有像素尺寸。
+
+原始模型画布可能达到 6000×9000。此类大画布按原始分辨率渲染，默认采用 1 倍采样；编码器会按画布像素数限制并发，降低同时处理多个巨大帧的内存占用。分辨率与质量档位不因此降低，导出速度会受可用内存和机器性能影响。
 
 | 尺寸 | 是否可用 |
 |---|---|
@@ -101,6 +103,8 @@ CineForm 按质量压缩，不承诺固定码率。片长、尺寸、帧率、�
 Adobe 在 [CC 2014.1 官方更新说明](https://blog.adobe.com/en/publish/2014/09/07/after-effects-cc-2014-1-13-1)中说明，Premiere Pro、After Effects 和 Media Encoder 可在 Windows／macOS 上原生编解码 CineForm MOV，并支持 alpha。该支持早于 Premiere Pro 2015.0。
 
 [2015 官方手册](https://helpx.adobe.com/archive/en/media-encoder/cc/2015/mediaencoder_reference.pdf)的文档第 32–35 页进一步说明 CineForm 的 RGBA 4:4:4:4、12-bit 输出、RGB + alpha 预设及尺寸限制。这些资料是选择此格式的依据；本项目的自动化测试不包含 Premiere Pro 2015.0 9.0.0 (247) 本体，不能代替该版本的实际导入验证。
+
+原始素材尺寸和 Premiere 序列尺寸应分别看待。[Premiere Pro CC 2015 手册](https://helpx.adobe.com/archive/en/premiere-pro/cc/2015/premiere_pro_reference.pdf)列出的素材导入上限是 256 百万像素、任一边不超过 32,768 像素，而序列上限是 10,240×8,192。6000×9000 原始角色素材处于前者的尺寸范围内；可以作为较小序列里的缩放、移动素材，但不能据此假定该版本能创建同样高度的序列。具体 CineForm 文件的导入仍须在目标 Premiere 版本确认。
 
 本程序渲染的透明画面以 **straight alpha（非预乘）**送入编码器。验收时，将 MOV 放在有颜色或有纹理的图层上，检查透明区域、半透明区域和细线边缘；同时确认素材的 alpha 解释与 straight alpha 一致。普通播放器显示黑色背景不代表透明通道不存在。`media clip` 转换已有素材时保留源像素，源素材自身的 alpha 解释也需一致。
 

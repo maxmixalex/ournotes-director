@@ -11,7 +11,8 @@ public sealed partial class StudioSceneDocument
     Revision? transaction;
     string? selected;
     int frame;
-    sealed record Revision(string Text, string BaseDirectory, int Frame, string? Selected, string Label);
+    sealed record Revision(string Text, string BaseDirectory, int Frame, string? Selected, string Label,
+        Dictionary<string, string> CommandIds, string? SelectedCommand);
 
     StudioSceneDocument(SceneDocument document) { this.document = document; Reload(); }
 
@@ -37,19 +38,21 @@ public sealed partial class StudioSceneDocument
                     { ["stageVisible"] = false, ["background"] = new JsonArray(0, 0, 0, 0) } },
                 (JsonNode)new JsonObject { ["cmd"] = "Director.Camera", ["Values"] = new JsonObject
                     { ["framing"] = new JsonObject { ["x"] = 0, ["y"] = 0, ["zoom"] = 1, ["roll"] = 0 } } },
-                (JsonNode)new JsonObject { ["cmd"] = "Delay", ["Frames"] = count })
+                (JsonNode)new JsonObject { ["cmd"] = "Delay", ["Frames"] = count },
+                (JsonNode)new JsonObject { ["cmd"] = "Delay", ["Frames"] = 0, ["Key"] = Marker + "duration/" + count.ToString(CultureInfo.InvariantCulture) })
         };
         return FromSceneDocument(SceneDocument.Parse(root.ToJsonString(DesktopSettings.JsonOptions)));
     }
 
     /// <summary>Use EditDocument/ReplaceJson for mutations so history and derived tracks stay synchronized.</summary>
     public SceneDocument Document => document;
-    public double Duration => durationFrames / (double)FramesPerSecond;
+    /// <summary>Current playback range. For Automatic projects, consult ResolvedDuration before displaying it as the story's total duration.</summary>
+    public double Duration => PlaybackFrameCount / (double)FramesPerSecond;
     public int Frame { get => frame; set => Time = value / (double)FramesPerSecond; }
     public double Time
     {
         get => frame / (double)FramesPerSecond;
-        set { int next = Math.Clamp(ToFrame(value), 0, durationFrames); if (next != frame) { frame = next; PlayheadChanged?.Invoke(); } }
+        set { int next = ClampPlayheadFrame(ToFrame(value)); if (next != frame) { frame = next; PlayheadChanged?.Invoke(); } }
     }
     public string? SelectedId
     {
@@ -92,11 +95,12 @@ public sealed partial class StudioSceneDocument
         if (transaction is not null || !redo.TryPop(out var next)) return false;
         undo.Push(Capture(next.Label)); Restore(next); Changed?.Invoke(); return true;
     }
-    Revision Capture(string label) => new(document.Text, document.BaseDirectory, frame, selected, label);
+    Revision Capture(string label) => new(document.Text, document.BaseDirectory, frame, selected, label, CaptureCommandIds(), selectedCommand);
     void Restore(Revision revision)
     {
         document.ReplaceText(SceneDocument.Parse(revision.Text, baseDirectory: revision.BaseDirectory).TextAtDirectory(document.BaseDirectory));
-        Reload(); frame = Math.Min(revision.Frame, durationFrames); selected = revision.Selected;
+        pendingCommandIds = revision.CommandIds; selectedCommand = revision.SelectedCommand;
+        RefreshCommandIndex(); Reload(); frame = ClampPlayheadFrame(revision.Frame); selected = revision.Selected;
     }
     void Edit(string label, Action action)
     {
@@ -120,28 +124,46 @@ public sealed partial class StudioSceneDocument
     public void SetDuration(double seconds)
     {
         int count = ToFrame(seconds, positive: true);
+        if (!timingKnown) { SetDurationMode(StudioDurationMode.Fixed, seconds); return; }
         EnsureTimeline();
         if (keys.Any(key => key.Frame > count)) throw new ArgumentException("请先移动或删除结束时间以后的关键帧。");
         if (originals.Any(row => !row.IsDelay && row.EndFrame > count)) throw new ArgumentException("结束时间早于已有原始指令，请先编辑对应指令。");
-        Edit("修改片段时长", () => { durationFrames = count; Compile(); });
+        Edit("修改片段时长", () =>
+        {
+            durationFrames = count; durationMode = StudioDurationMode.Fixed;
+            if (playbackMarkerPresent) playbackRangeFrames = count;
+            Compile();
+        });
     }
 
     /// <summary>Changes only the editor playback/export range for scripts whose native duration is not yet known.</summary>
     public void SetPlaybackDuration(double seconds)
     {
         if (timingKnown) { SetDuration(seconds); return; }
-        durationFrames = ToFrame(seconds, positive: true); frame = Math.Min(frame, durationFrames);
+        durationFrames = ToFrame(seconds, positive: true); durationMode = StudioDurationMode.Fixed;
+        playbackRangeFrames = durationFrames; frame = Math.Min(frame, durationFrames);
         InvalidateSamples(); PlayheadChanged?.Invoke();
     }
 
     public string AddActor(string model, string? name = null)
     {
-        EnsureTimeline();
         if (string.IsNullOrWhiteSpace(model)) throw new ArgumentException("请选择归档中的实际人物模型。", nameof(model));
         string id = name?.Trim() ?? "";
         var used = ActorDefinitions().Select(actor => actor.Id).ToHashSet(StringComparer.Ordinal);
         if (id.Length == 0) { int index = 1; do { id = "actor" + (index++).ToString(CultureInfo.InvariantCulture); } while (used.Contains(id)); }
         if (id is CameraId or SceneId || used.Contains(id)) throw new ArgumentException("人物名称已使用，请选择另一个名称。", nameof(name));
+        if (!timingKnown)
+        {
+            string target = id;
+            EditNativeCommands("添加人物", maps =>
+            {
+                document.InsertCommand("commands", 0, new() { ["cmd"] = "Character", ["TargetName"] = target, ["Model"] = model });
+                maps["commands"].Insert(0, NewId());
+                document.InsertCommand("commands", 1, StudioCommandCatalog.Create("Director.Actor", target));
+                maps["commands"].Insert(1, NewId()); selected = target;
+            });
+            return id;
+        }
         Edit("添加人物", () =>
         {
             AddOriginal(new() { ["cmd"] = "Character", ["TargetName"] = id, ["Model"] = model }, 0);

@@ -15,6 +15,9 @@ public sealed class HomeRenderer : IDisposable
     readonly int width, height, supersample, fps;
     float[] projection;
     readonly HomeTiming timing;
+    readonly bool fitEditedBounds;
+    readonly float sourceAspect;
+    readonly float[] sourceProjection;
     HomeEditState? editState;
     string framing;
     bool background;
@@ -26,17 +29,23 @@ public sealed class HomeRenderer : IDisposable
     public int RoomMeshCount => Transparent ? 0 : room?.VisibleMeshes ?? 0;
     public bool PostProcessing => !Transparent && (editState?.PostProcessing ?? true) && post is not null;
 
-    public HomeRenderer(HomeAnimation animation, int width, int height, int supersample, HomeTiming timing, string framing = "scene", bool background = true, HomeEditState? editState = null)
+    public HomeRenderer(HomeAnimation animation, int width, int height, int supersample, HomeTiming timing, string framing = "scene", bool background = true,
+        HomeEditState? editState = null, bool fitEditedBounds = false, float? sourceAspect = null)
     {
         ValidateDimensions(width, height, supersample);
         if (framing is not ("scene" or "fit")) throw new ArgumentException("Home --framing must be scene or fit.");
         this.animation = animation; this.width = width; this.height = height; this.supersample = supersample; fps = timing.Fps;
         this.timing = timing; this.framing = editState?.Framing ?? framing; this.background = editState?.Background ?? background;
+        this.fitEditedBounds = fitEditedBounds && animation.Character is not null;
+        this.sourceAspect = sourceAspect ?? width / (float)height;
+        if (!float.IsFinite(this.sourceAspect) || this.sourceAspect <= 0) throw new ArgumentOutOfRangeException(nameof(sourceAspect));
+        sourceProjection = animation.Camera.ViewProjection(this.sourceAspect);
         // Fitting establishes one source crop. Subsequent edits remain deliberate screen-space moves
         // and do not make the viewport chase a dragged character or change the zoom while playing.
         framing = this.framing;
-        Crop = framing == "fit" ? animation.Fit(width / (float)height, timing.FirstFrame, timing.FrameCount, fps) : AdvMatrix.Identity();
-        projection = AdvMatrix.Multiply(Crop, animation.Camera.ViewProjection(width / (float)height));
+        Crop = ComputeCrop(editState);
+        projection = AdvMatrix.Multiply(Crop, this.fitEditedBounds && framing == "fit" ? sourceProjection : animation.Camera.ViewProjection(width / (float)height));
+        this.editState = editState;
         gl = new(width * supersample, height * supersample);
         try
         {
@@ -45,6 +54,19 @@ public sealed class HomeRenderer : IDisposable
             else EnsureRoom();
         }
         catch { post?.Dispose(); room?.Dispose(); drawing?.Dispose(); gl.Dispose(); throw; }
+    }
+
+    float[] ComputeCrop(HomeEditState? state)
+    {
+        if (framing != "fit") return AdvMatrix.Identity();
+        if (fitEditedBounds)
+        {
+            animation.SetEditState(state);
+            return animation.MeasureBounds(sourceAspect, timing.FirstFrame, timing.FrameCount, fps)
+                .Crop(sourceAspect: sourceAspect, outputAspect: width / (float)height);
+        }
+        animation.SetEditState(null);
+        return animation.Fit(width / (float)height, timing.FirstFrame, timing.FrameCount, fps);
     }
 
     void EnsureRoom()
@@ -59,12 +81,11 @@ public sealed class HomeRenderer : IDisposable
     {
         if (PendingFrames > 0) throw new InvalidOperationException("Read queued home frames before changing the composition.");
         HomeProject.ValidateEdits(state);
-        if (framing != state.Framing)
+        if (framing != state.Framing || fitEditedBounds && !ReferenceEquals(editState, state))
         {
-            animation.SetEditState(null);
-            Crop = state.Framing == "fit" ? animation.Fit(width / (float)height, timing.FirstFrame, timing.FrameCount, fps) : AdvMatrix.Identity();
-            projection = AdvMatrix.Multiply(Crop, animation.Camera.ViewProjection(width / (float)height));
             framing = state.Framing;
+            Crop = ComputeCrop(state);
+            projection = AdvMatrix.Multiply(Crop, fitEditedBounds && framing == "fit" ? sourceProjection : animation.Camera.ViewProjection(width / (float)height));
         }
         animation.SetEditState(state); editState = state; background = state.Background; EnsureRoom();
     }
@@ -73,9 +94,7 @@ public sealed class HomeRenderer : IDisposable
 
     public static void ValidateDimensions(int width, int height, int supersample)
     {
-        if (width < 16 || height < 16 || width > 7680 || height > 7680) throw new ArgumentException("Home dimensions must be 16..7680.");
-        if (supersample is < 1 or > 4) throw new ArgumentException("Supersample must be 1..4.");
-        if ((long)width * height * supersample * supersample > 132_710_400) throw new ArgumentException("Supersampled home render target exceeds 132 megapixels.");
+        RenderDimensions.Validate(width, height, supersample);
     }
 
     void Draw(int frame)
@@ -94,7 +113,9 @@ public sealed class HomeRenderer : IDisposable
             foreach (var part in group)
             {
                 if (!animation.TransformFor(part, time).Visible) continue;
-                var matrix = animation.EditedMatrix(part, projection, width / (float)height, time);
+                var matrix = fitEditedBounds && framing == "fit"
+                    ? AdvMatrix.Multiply(Crop, animation.EditedMatrix(part, sourceProjection, sourceAspect, time))
+                    : animation.EditedMatrix(part, projection, width / (float)height, time);
                 foreach (var batch in part.Actor.Mesh.Batches)
                 {
                     batches.Add((part, batch, matrix));
@@ -119,11 +140,11 @@ public sealed class HomeRenderer : IDisposable
         targets = targetBounds.Select(pair => new PreviewTarget(pair.Key, animation.Scene.Characters.First(c => c.Key == pair.Key).Name,
             pair.Value.Min.X, pair.Value.Min.Y, pair.Value.Max.X - pair.Value.Min.X, pair.Value.Max.Y - pair.Value.Min.Y)).ToArray();
     }
-    public Pixels Frame(int frame) { Draw(frame); return gl.Present(width, height, supersample, 0, static (_, _, _) => { }, true); }
+    public Pixels Frame(int frame) { Draw(frame); return gl.Present(width, height, supersample, 0, static (_, _, _) => { }, Transparent); }
     public void QueueFrame(int frame)
     {
         if (PendingFrames >= 3) throw new InvalidOperationException("Read a queued home frame before advancing.");
-        Draw(frame); gl.QueuePresent(width, height, supersample, 0, static (_, _, _) => { }, true);
+        Draw(frame); gl.QueuePresent(width, height, supersample, 0, static (_, _, _) => { }, Transparent);
     }
     public Pixels ReadQueuedFrame() => gl.ReadQueued();
     public void Dispose() { post?.Dispose(); room?.Dispose(); drawing.Dispose(); gl.Dispose(); }
@@ -133,7 +154,8 @@ public static class HomeExport
 {
     public static JsonObject Run(HomeAnimation animation, string mode, string output, HomeTiming timing, int width = 1920, int height = 1080,
         int supersample = 2, string framing = "scene", bool background = true, string codec = "cineform", string quality = VideoEncoding.DefaultCineFormQuality,
-        bool overwrite = false, string? ffmpeg = null, double[]? times = null, int columns = 3, HomeEditState? editState = null)
+        bool overwrite = false, string? ffmpeg = null, double[]? times = null, int columns = 3, HomeEditState? editState = null,
+        float? sourceAspect = null, double? sourceDuration = null)
     {
         if (mode is not ("frame" or "contact" or "clip" or "sequence")) throw new ArgumentException("Unknown home export mode: " + mode);
         HomeRenderer.ValidateDimensions(width, height, supersample);
@@ -164,11 +186,12 @@ public static class HomeExport
             var fitTiming = timing;
             if (mode is "frame" or "contact")
             {
-                var natural = HomeTiming.Plan(animation.Duration, fps: timing.Fps, loop: animation.AllLooping);
+                var natural = HomeTiming.Plan(sourceDuration ?? animation.Duration, fps: timing.Fps, loop: animation.AllLooping);
                 int last = mode == "frame" ? timing.FirstFrame : (int)Math.Floor(times!.Max() * timing.Fps + 1e-8);
                 fitTiming = new(0, Math.Max(natural.FrameCount, last + 1), timing.Fps);
             }
-            using var renderer = new HomeRenderer(animation, width, height, supersample, fitTiming, framing, background, editState);
+            using var renderer = new HomeRenderer(animation, width, height, supersample, fitTiming, framing, background, editState,
+                fitEditedBounds: editState is not null && animation.Character is not null && framing == "fit", sourceAspect: sourceAspect);
             var result = animation.Describe();
             result["output"] = output; result["mode"] = mode; result["width"] = width; result["height"] = height; result["supersample"] = supersample;
             result["fps"] = timing.Fps; result["firstFrame"] = timing.FirstFrame; result["frameCount"] = mode == "frame" ? 1 : timing.FrameCount;
@@ -223,7 +246,7 @@ public static class HomeExport
                 if (encoder is not null)
                 {
                     encoder.StandardInput.Close(); encoder.WaitForExit();
-                    if (encoder.ExitCode != 0) throw new IOException(errors!.GetAwaiter().GetResult());
+                    if (encoder.ExitCode != 0) throw VideoEncoding.EncoderFailure(encoder.ExitCode, errors!.GetAwaiter().GetResult());
                 }
             }
             result["wallSeconds"] = wall.Elapsed.TotalSeconds;
@@ -232,7 +255,7 @@ public static class HomeExport
             return result;
         }
         catch (IOException ex) when (encoder is not null && encoder.HasExited && encoder.ExitCode != 0)
-        { throw new IOException("Home video encoder failed: " + errors!.GetAwaiter().GetResult(), ex); }
+        { throw VideoEncoding.EncoderFailure(encoder.ExitCode, errors!.GetAwaiter().GetResult(), ex); }
         finally
         {
             if (encoder is not null) { if (!encoder.HasExited) encoder.Kill(true); encoder.Dispose(); }

@@ -38,6 +38,7 @@ public sealed class SpineActor
     public SpineMesh Mesh => mesh ??= BuildMesh();
     public SpineBounds? Bounds => Mesh.Bounds;
     public int CurrentFrame => currentFrame;
+    internal Skeleton RuntimeSkeleton => skeleton;
 
     public SpineActor(SpineAsset asset, JsonNode animation, string? animationOverride = null, bool? loopOverride = null, IReadOnlySet<string>? includedSlots = null)
     {

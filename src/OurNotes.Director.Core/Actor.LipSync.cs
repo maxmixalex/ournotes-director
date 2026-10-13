@@ -10,8 +10,13 @@ public sealed unsafe partial class Actor
     float mouthFiltered,mouthPresented,mouthHold,mouthSpeechHint,mouthOpenScale=1,mouthFormScale=1,mouthAccumulator;
     bool mouthCanBlend;
     CriVoiceLipSync? criVoice;float criOpening;
-    public bool HasMotionSync=>mouthSetting is not null&&!OperatingSystem.IsLinux();
+    bool envelopeActive;
+    string lastLipSyncEngine="";
+    readonly VoiceEnvelopeLipSync envelope=new();
+    readonly float[] envelopePcm=new float[AdvAudio.SamplesPerFrame];
+    public bool HasMotionSync=>mouthSetting is not null&&mouthDll.Length>0&&!OperatingSystem.IsLinux();
     public bool VoiceLipSyncActive=>mouthVoice is not null;
+    public string LipSyncEngine=>envelopeActive?"语音音量驱动（无分析数据）":PseudoLipSyncActive?"计时口型":criVoice is not null?"CRI Lips":lastLipSyncEngine.Length>0?lastLipSyncEngine:HasMotionSync?"MotionSync":"待语音播放";
     public string? LipSyncMissing{get;private set;}
     public float MouthOpen=>ids.TryGetValue("ParamMouthOpenY",out int i)?Values[i]:0;
     void InitializeLipSync(string coreDll)
@@ -31,20 +36,35 @@ public sealed unsafe partial class Actor
     {
         StopVoiceLipSync();pseudoActive=false;
         if(!HasMotionSync||forceCri){
-            if(fallback is null){LipSyncMissing="Episode has no CRI Lips analysis data";return;}
-            criVoice=fallback;criOpening=mouthFiltered=mouthPresented=mouthHold=0;mouthVoice=voice;LipSyncMissing=null;
+            if(fallback is null){
+                // A missing optional analyser must not silently leave a speaking model
+                // motionless. This fallback follows the decoded voice's sample clock.
+                envelopeActive=true;envelope.Reset();mouthAudio=audio;mouthVoice=voice;
+                lastLipSyncEngine="语音音量驱动（无分析数据）";
+                LipSyncMissing="未找到 MotionSync 或 CRI 分析数据，当前使用实际语音音量驱动嘴部开合。";
+                voice.OnFinished.Add(()=>{if(ReferenceEquals(mouthVoice,voice))StopVoiceLipSync();});return;
+            }
+            criVoice=fallback;criOpening=mouthFiltered=mouthPresented=mouthHold=0;mouthVoice=voice;LipSyncMissing=null;lastLipSyncEngine="CRI Lips";
             voice.OnFinished.Add(()=>{if(ReferenceEquals(mouthVoice,voice))StopVoiceLipSync();});return;
         }
         if(mouthDll=="")throw new FileNotFoundException("MotionSync 5.0.4 is missing from the application package. Extract the complete release package, or set CUBISM_MOTIONSYNC_DLL.");
         mouthAnalysis??=new(mouthDll,mouthSetting!);mouthAnalysis.ResetInput();mouthAudio=audio;mouthVoice=voice;mouthSample=0;mouthAccumulator=0;
+        lastLipSyncEngine="MotionSync";
         mouthFiltered=mouthPresented=mouthHold=mouthSpeechHint=0;Array.Copy(mouthNeutral,mouthSmoothed,mouthNeutral.Length);Array.Copy(mouthNeutral,mouthDamped,mouthNeutral.Length);LipSyncMissing=null;
         voice.OnFinished.Add(()=>{if(ReferenceEquals(mouthVoice,voice))StopVoiceLipSync();});
     }
-    public void StopVoiceLipSync(){mouthVoice=null;mouthAudio=null;criVoice=null;mouthAnalysis?.ResetInput();}
+    public void StopVoiceLipSync(){mouthVoice=null;mouthAudio=null;criVoice=null;envelopeActive=false;envelope.Reset();mouthAnalysis?.ResetInput();}
     float MouthSigned(int i,float value){float lim=Math.Abs(value<0?Core.Min[i]:Core.Max[i]);return lim==0?0:Math.Clamp(value/lim,-1,1);}
     float MouthNormal(int i,float value){float span=Core.Max[i]-Core.Min[i];return span==0?0:Math.Clamp((value-Core.Min[i])/span,0,1);}
     void ApplyVoiceLipSync(float dt)
     {
+        if(envelopeActive&&mouthVoice is not null&&mouthAudio is not null)
+        {
+            int count=mouthAudio.ReadRecentMono(mouthVoice,envelopePcm);
+            float opening=envelope.Feed(envelopePcm.AsSpan(0,count),dt);
+            if(ids.TryGetValue("ParamMouthOpenY",out int mouth))Values[mouth]=Core.Min[mouth]+opening*(Core.Max[mouth]-Core.Min[mouth]);
+            return;
+        }
         if(criVoice is not null){if(ids.TryGetValue("ParamMouthOpenY",out int mouth))Values[mouth]=Core.Min[mouth]+criOpening*(Core.Max[mouth]-Core.Min[mouth]);criOpening=FallbackMouthPolicy(criVoice.Read(),dt);return;}
         if(mouthVoice is null||mouthAudio is null||mouthAnalysis is null)return;
         float[] pcm=mouthAudio.PcmSince(mouthVoice,ref mouthSample);mouthAccumulator+=dt;

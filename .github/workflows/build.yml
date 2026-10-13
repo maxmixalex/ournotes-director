@@ -130,6 +130,30 @@ jobs:
           --fixture-writer artifacts/native-tests/OurNotes.Director.NativeTests
           --ffmpeg artifacts/linux-x64/tools/ffmpeg
           --ffprobe artifacts/linux-x64/tools/ffprobe
+      - name: Fetch verified original story and home regression assets
+        shell: pwsh
+        run: |
+          python scripts/fetch-studio-fixture.py artifacts/real-scene-fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/fetch-home-fixture.py artifacts/real-home-fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify original duration, voice mouth animation, full canvas and missing home parts
+        shell: pwsh
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          $env:OURNOTES_TEST_PACKAGE = (Resolve-Path "artifacts/${{ matrix.rid }}").Path
+          if ($IsWindows) {
+            $mesa = Get-ChildItem "$env:RUNNER_TEMP/msys64/ucrt64/bin/opengl32.dll", 'C:/msys64/ucrt64/bin/opengl32.dll', 'D:/a/_temp/msys64/ucrt64/bin/opengl32.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $mesa) { throw 'The MSYS2 Mesa test driver was not installed.' }
+            $env:OURNOTES_TEST_OPENGL = $mesa.FullName
+          }
+          $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
+          & $testBinary --studio-scene artifacts/real-scene-fixture artifacts/real-studio-evidence/scene
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $testBinary --studio-home artifacts/real-home-fixture artifacts/real-studio-evidence/home
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build and stage the self-contained WinUI frontend
         if: runner.os == 'Windows'
         shell: pwsh
@@ -170,7 +194,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $mesa = Get-ChildItem "$env:RUNNER_TEMP/msys64/ucrt64/bin/opengl32.dll", 'C:/msys64/ucrt64/bin/opengl32.dll', 'D:/a/_temp/msys64/ucrt64/bin/opengl32.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $mesa) { throw 'The MSYS2 Mesa test driver was not installed.' }
-          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -OpenGLDriver $mesa.FullName
+          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 240
       - name: Upload actual WinUI screenshots and smoke report
         if: always() && runner.os == 'Windows'
         continue-on-error: true
@@ -178,6 +202,15 @@ jobs:
         with:
           name: ournotes-director-winui-evidence
           path: artifacts/desktop-smoke/*
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload real story and home regression evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ournotes-director-real-studio-${{ matrix.rid }}
+          path: artifacts/real-studio-evidence/**
           if-no-files-found: ignore
           retention-days: 30
       - uses: actions/upload-artifact@v7

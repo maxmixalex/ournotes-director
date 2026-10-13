@@ -34,6 +34,8 @@ public sealed unsafe partial class Actor : IDisposable
     float eyeOpening=1,blinkStopStart=1,blinkStopTime,blinkStopDuration;public bool EyeBlinkStopped{get;private set;}
     public void SetEyeBlinkStopped(bool stopped,float duration){if(!stopped){EyeBlinkStopped=false;return;}if(!EyeBlinkStopped){EyeBlinkStopped=true;blinkStopStart=eyeOpening;blinkStopTime=0;blinkStopDuration=duration;}else if(duration<=0)blinkStopDuration=0;}
     Clip? current;float motionTime;float[]? transition;float fadeTime,fadeDuration;string expression="";string? previousExpression;float expressionTime,expressionFade;
+    public PreviewActorAnimation PreviewAnimation()=>new(Spec.Name,Spec.Model,current?.Name??DefaultMotion,
+        gameAnimation?gameExpression.Length>0?gameExpression:DefaultExpression:expression.Length>0?expression:DefaultExpression,motionTime);
     public float[] Values{get;private set;} public string DefaultMotion{get;}public string DefaultExpression{get;}
     float renderOpacity=1;float elapsed;
     public string GeometryHash{get;private set;}="";

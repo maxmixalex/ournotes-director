@@ -309,6 +309,12 @@ public sealed unsafe class OffscreenGl : IDisposable
     public void Rule(uint texture,float value,bool gradient,float[] color)
     {Float("rulePass",1);Float("ruleValue",value);Float("ruleGradient",gradient?1:0);Draw(texture,[-1,-1,1,-1,1,1,-1,1],[0,1,1,1,1,0,0,0],[0,1,2,0,2,3],1,[1,1,1,1],[0,0,0,0],color,0,false,false);Float("rulePass",0);}
     GlSurface? presentation,resolvedPresentation;
+    byte[] readbackScratch=[];
+    byte[] ReadbackStorage(int length)
+    {
+        if(readbackScratch.Length!=length)readbackScratch=GC.AllocateUninitializedArray<byte>(length);
+        return readbackScratch;
+    }
     UnityShader? resolveShader;
     const uint PixelPackBuffer=0x88EB;
     readonly Queue<(uint Buffer,int Width,int Height)> pendingPixels=[];
@@ -337,11 +343,17 @@ public sealed unsafe class OffscreenGl : IDisposable
         }
         #endif
         """;
-    Pixels? ResolvePresentation(GlSurface source,int width,int height,int scale,bool queued)
+    Pixels? ResolvePresentation(GlSurface source,int width,int height,int scale,bool queued,bool opaque=false)
     {
-        resolvedPresentation??=Surface(width,height);resolveShader??=new("Integer area resolve",ResolveSource);
-        var target=resolvedPresentation.Value;
-        Blit(resolveShader,target,new Dictionary<string,float[]>{{"scale",[scale]}},new Dictionary<string,uint>{{"sourceImage",source.Texture}});
+        var target=source;
+        // The opaque 1x presentation is already an 8-bit straight-alpha image.
+        // Re-resolving it would perform an identical fullscreen pass and GPU round trip.
+        if(!opaque||scale!=1)
+        {
+            resolvedPresentation??=Surface(width,height);resolveShader??=new("Integer area resolve",ResolveSource);
+            target=resolvedPresentation.Value;
+            Blit(resolveShader,target,new Dictionary<string,float[]>{{"scale",[scale]}},new Dictionary<string,uint>{{"sourceImage",source.Texture}});
+        }
         Fn<Bind>("glBindFramebuffer")(0x8D40,target.Framebuffer);
         if(queued){
             uint buffer;if(freePixelBuffers.Count>0)buffer=freePixelBuffers.Pop();else{Fn<Gen>("glGenBuffers")(1,out buffer);pixelBuffers.Add(buffer);}
@@ -350,8 +362,8 @@ public sealed unsafe class OffscreenGl : IDisposable
             finally{Fn<Bind>("glBindBuffer")(PixelPackBuffer,0);}
             return null;
         }
-        var pixels=new byte[checked(width*height*4)];glReadPixels(0,0,width,height,0x1908,0x1401,pixels);
-        var result=new byte[pixels.Length];int stride=width*4;
+        var pixels=ReadbackStorage(checked(width*height*4));glReadPixels(0,0,width,height,0x1908,0x1401,pixels);
+        var result=GC.AllocateUninitializedArray<byte>(pixels.Length);int stride=width*4;
         for(int y=0;y<height;y++)Buffer.BlockCopy(pixels,(height-1-y)*stride,result,y*stride,stride);
         return new(width,height,result);
     }
@@ -384,18 +396,46 @@ public sealed unsafe class OffscreenGl : IDisposable
         try {
             glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);
             glViewport(0,0,sw,sh);drawBands(sw,sh,Height);
-            return ResolvePresentation(target,width,height,supersample,queued);
+            return ResolvePresentation(target,width,height,supersample,queued,!transparent);
         }finally{Fn<Bind>("glBindFramebuffer")(0x8D40,drawTarget);glViewport(0,0,Width,Height);}
     }
     public Pixels Read(int width,int height)=>ReadPixels(width,height,Width,Height);
-    static Pixels ReadPixels(int width,int height,int sourceWidth,int sourceHeight)
+    Pixels ReadPixels(int width,int height,int sourceWidth,int sourceHeight)
     {
         if(width<=0||height<=0||sourceWidth%width!=0||sourceHeight%height!=0||sourceWidth/width!=sourceHeight/height)throw new ArgumentException("Readback requires uniform integer downsampling");
-        var pixels=new byte[checked(sourceWidth*sourceHeight*4)];glReadPixels(0,0,sourceWidth,sourceHeight,0x1908,0x1401,pixels);
+        var pixels=ReadbackStorage(checked(sourceWidth*sourceHeight*4));glReadPixels(0,0,sourceWidth,sourceHeight,0x1908,0x1401,pixels);
         var result=new byte[checked(width*height*4)];int scale=sourceWidth/width;
+        if(scale==1&&BitConverter.IsLittleEndian)
+        {
+            // Most scene pixels are fully opaque; transparent character previews also
+            // have large empty areas. Resolve these blocks without per-channel division.
+            Parallel.For(0,height,y=>ResolveOneRow(pixels.AsSpan((height-1-y)*width*4,width*4),result.AsSpan(y*width*4,width*4)));
+            return new(width,height,result);
+        }
         // Area resolve in premultiplied space, then emit straight-alpha PNG/rawvideo.
         Parallel.For(0,height,y=>{for(int x=0;x<width;x++){int r=0,g=0,b=0,a=0;for(int dy=0;dy<scale;dy++)for(int dx=0;dx<scale;dx++){int p=((sourceHeight-1-(y*scale+dy))*sourceWidth+x*scale+dx)*4;r+=pixels[p];g+=pixels[p+1];b+=pixels[p+2];a+=pixels[p+3];}int d=(y*width+x)*4;if(a>0){result[d]=(byte)Math.Min(255,(r*255+a/2)/a);result[d+1]=(byte)Math.Min(255,(g*255+a/2)/a);result[d+2]=(byte)Math.Min(255,(b*255+a/2)/a);}result[d+3]=(byte)((a+scale*scale/2)/(scale*scale));}});
         return new(width,height,result);
+    }
+    static void ResolveOneRow(ReadOnlySpan<byte> source,Span<byte> destination)
+    {
+        var input=MemoryMarshal.Cast<byte,uint>(source);var output=MemoryMarshal.Cast<byte,uint>(destination);int i=0;
+        var mask=new System.Numerics.Vector<uint>(255);
+        if(System.Numerics.Vector.IsHardwareAccelerated)for(;i<=input.Length-System.Numerics.Vector<uint>.Count;i+=System.Numerics.Vector<uint>.Count)
+        {
+            var value=new System.Numerics.Vector<uint>(input.Slice(i));var alpha=value>>24;
+            if(System.Numerics.Vector.EqualsAll(alpha,mask)){value.CopyTo(output.Slice(i));continue;}
+            if(System.Numerics.Vector.EqualsAll(alpha,System.Numerics.Vector<uint>.Zero)){System.Numerics.Vector<uint>.Zero.CopyTo(output.Slice(i));continue;}
+            for(int j=0;j<System.Numerics.Vector<uint>.Count;j++)output[i+j]=ResolvePixel(input[i+j]);
+        }
+        for(;i<input.Length;i++)output[i]=ResolvePixel(input[i]);
+    }
+    static uint ResolvePixel(uint value)
+    {
+        uint alpha=value>>24;if(alpha==0)return 0;if(alpha==255)return value;
+        uint r=Math.Min(255,((value&255)*255+alpha/2)/alpha);
+        uint g=Math.Min(255,(((value>>8)&255)*255+alpha/2)/alpha);
+        uint b=Math.Min(255,(((value>>16)&255)*255+alpha/2)/alpha);
+        return r|(g<<8)|(b<<16)|(alpha<<24);
     }
     public void Grade(GradeSpec grade)
     {

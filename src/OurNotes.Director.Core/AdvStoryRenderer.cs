@@ -23,20 +23,21 @@ public sealed class AdvStoryRenderer : IDisposable
     T Measure<T>(string name,Func<T> action){long start=Stopwatch.GetTimestamp();try{return action();}finally{milliseconds[name]=milliseconds.GetValueOrDefault(name)+Stopwatch.GetElapsedTime(start).TotalMilliseconds;}}
     void Measure(string name,Action action)=>Measure(name,()=>{action();return 0;});
     public IReadOnlyDictionary<string,double> Timings=>milliseconds;
-    public AdvStoryRenderer(Archive archive,string site,string dll,string id,string language,int width,int height,string? script,string ffmpeg,int supersample=2)
+    public AdvStoryRenderer(Archive archive,string site,string dll,string id,string language,int width,int height,string? script,string ffmpeg,int supersample=2,
+        JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null)
     {
-        if(width<16||height<16||width>7680||height>4320)throw new ArgumentException("Invalid story render dimensions");
-        if(supersample is <1 or >4)throw new ArgumentException("Supersample must be 1..4");
+        RenderDimensions.Validate(width,height,supersample);
         outputWidth=width;outputHeight=height;this.supersample=supersample;
         float target=width>height?2.1666667f:1.7777778f;int viewportHeight=height;
-        bool noLetterbox=script is not null&&DirectorProject.Document(script) is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
+        var supplied=projectDocument??(script is null?null:DirectorProject.Document(script));
+        bool noLetterbox=supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
         if(!noLetterbox&&width/(float)height+.0001f<target&&(height-width/target)/2>1)viewportHeight=(int)MathF.Floor(width/target+.5f);
         viewportY=(int)MathF.Floor((height-viewportHeight)/2f+.5f);
         var manifest=archive.Manifest(site,"stories",id);var definition=JsonNode.Parse(archive.Logical(site,manifest,"story.json"))!;
         var episode=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"episode")))!;
         var scene=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"scene")))!;var settings=scene["settings"]!["playerSettings"]!.DeepClone();
-        if(script is not null){var custom=DirectorProject.Document(script);bool project=custom is JsonObject&&Archive.S(custom,"format")==DirectorProject.Format;
-            if(project){var config=DirectorProject.Read(script);if(config.Adv!=id)throw new ArgumentException("Project source does not match story ID");}
+        if(supplied is not null){var custom=supplied;bool project=custom is JsonObject&&Archive.S(custom,"format")==DirectorProject.Format;
+            if(project){if(projectDocument is null)_=DirectorProject.Read(script!);if(Archive.S(custom["source"]!,"adv")!=id)throw new ArgumentException("Project source does not match story ID");}
             var commands=custom is JsonArray?custom:custom["commands"];
             if(commands is not null)episode["commands"]=commands.DeepClone();else if(!project)throw new ArgumentException("Script needs a commands array");
             if(custom is JsonObject){if(custom["text"] is JsonObject text)foreach(var pair in text)episode["text"]![pair.Key]=pair.Value?.DeepClone();if(custom["initialize"] is JsonArray init)settings["_initializeEpisodes"]=init.DeepClone();if(custom["finalize"] is JsonArray fin)settings["_finalizeEpisodes"]=fin.DeepClone();}
@@ -44,18 +45,18 @@ public sealed class AdvStoryRenderer : IDisposable
         var program=AdvProgram.From(episode,settings);Player=new(Loop,program);var tweens=new AdvTweens(Loop);
         gl=new(checked(width*supersample),checked(viewportHeight*supersample));
         try{
-            Scene=new(archive,site,dll,manifest,definition,scene,language,gl,Loop,tweens);Scene.Bind(Player);
+            Scene=new(archive,site,dll,manifest,definition,scene,language,gl,Loop,tweens){TimingOnly=timingOnly};Scene.Bind(Player);
             if(script is not null)Scene.ProjectDirectory=Path.GetDirectoryName(Path.GetFullPath(script))!;
             var rows=program.Initialize.Concat(program.Rows).Concat(program.Finalize).Where(r=>!r.Ignored).ToArray();
             foreach(var row in rows)DirectorValidation.Check(row);
-            Audio=new(Loop,[]){ResolveCue=n=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg)};Audio.Bind(Player);
-            Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=viewportHeight<height,MasterIds=scene["settings"]?["masterIdSettings"]};Ui.Bind(Player);Ui.CheckTexts(rows);
+            Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg)};Audio.Bind(Player);
+            Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=viewportHeight<height,MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
             Ui.ResolveCharacter=Scene.Character;
             Ui.ShowingCharacters=()=>Scene.VisibleActors;
             Scene.ForegroundItem=()=>Ui.Chat is {Visible:true} chat?new(chat.SortingOrder,chat.PlaneDistance*chat.PlaneDistance,()=>chat.Draw(Scene.Camera)):null;
             Frames=new(archive,site,manifest,definition,language,Loop,tweens,gl,supersample){Localize=Ui.Localize};Frames.Bind(Player);Frames.Preload(rows);
             Stills=new(archive,site,manifest,definition,language,Loop,tweens,gl,rows);Stills.Bind(Player);
-            Video=new(archive,site,manifest,definition,settings,Loop,tweens,Audio,Ui,gl,ffmpeg);Video.Bind(Player);
+            Video=new(archive,site,manifest,definition,settings,Loop,tweens,Audio,Ui,gl,ffmpeg){TimingOnly=timingOnly};Video.Bind(Player);
             AdvAlphaCommands.Bind(Player,Loop,Stills.SetAlpha,Video.SetAlpha);
             Scene.TalkShakeGet=()=>Ui.ShakeOffset;Scene.TalkShakeSet=v=>Ui.ShakeOffset=v;
             Scene.StillShakeGet=()=>Stills.ShakeOffset;Scene.StillShakeSet=v=>Stills.ShakeOffset=v;
@@ -65,9 +66,9 @@ public sealed class AdvStoryRenderer : IDisposable
             Player.Prepare=p=>Ui.Prepare();Player.Start();
         }catch{Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
     }
-    public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null)
+    public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
     {
-        RenderFrame(frame,clean,previewEdits);
+        RenderFrame(frame,clean,previewEdits,stopAtEnd);
         var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,Scene.DirectorTransparent));Loop.Drain();Player.ThrowIfFailed();return pixels;
     }
     public IReadOnlyList<PreviewTarget> PreviewTargets()
@@ -75,12 +76,36 @@ public sealed class AdvStoryRenderer : IDisposable
         double top=viewportY/(double)outputHeight,height=gl.Height/(double)supersample/outputHeight;
         return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height}).ToArray();
     }
-    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null)
+    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
     {
         if(frame<Loop.Frame)throw new ArgumentException("Frame requests must be increasing");
-        Measure("simulation",()=>{while(Loop.Frame<frame){Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
+        Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
         if(previewEdits is {Count:>0})Scene.ApplyPreviewEdits(previewEdits,Player);
         Draw(clean);
+    }
+    /// <summary>
+    /// Runs the same handlers and resource-based waits as export, without drawing or
+    /// reading every frame. Render-dependent capture waits still use AdvanceRenderState.
+    /// </summary>
+    public NativePlaybackTiming AnalyzeTiming(string projectHash,Action<NativePlaybackTiming>? progress=null,
+        CancellationToken cancellationToken=default,int maximumFrames=30*36000)
+    {
+        if(maximumFrames<1||maximumFrames>30*36000)throw new ArgumentOutOfRangeException(nameof(maximumFrames));
+        long reported=Stopwatch.GetTimestamp();
+        while(!Player.Finished&&Loop.Frame<maximumFrames)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();
+            if(Stopwatch.GetElapsedTime(reported).TotalMilliseconds>=250)
+            {
+                progress?.Invoke(new(projectHash,false,null,null,[],Loop.Frame));
+                reported=Stopwatch.GetTimestamp();
+            }
+        }
+        Loop.Drain();Player.ThrowIfFailed();
+        int? end=Player.Finished&&!Player.Cancelled?Player.CompletionFrame:null;
+        return new(projectHash,end.HasValue,end,end.HasValue?(end.Value+1)/30d:null,Player.CommandTimings(),Loop.Frame,
+            end.HasValue?null:"剧情未在十小时分析上限内结束，请检查循环指令或使用自由时长。");
     }
     public int PendingFrames=>gl.PendingPixels;
     public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,Scene.DirectorTransparent));Loop.Drain();Player.ThrowIfFailed();}
@@ -132,7 +157,7 @@ public sealed class AdvStoryRenderer : IDisposable
                 if(untilEnd&&finished)break;
             }
             while(renderer.PendingFrames>0)EncodeQueued();
-            encoder.StandardInput.Close();encoder.WaitForExit();if(encoder.ExitCode!=0)throw new IOException(errors.GetAwaiter().GetResult());
+            encoder.StandardInput.Close();encoder.WaitForExit();if(encoder.ExitCode!=0)throw VideoEncoding.EncoderFailure(encoder.ExitCode,errors.GetAwaiter().GetResult());
             if(untilEnd&&!finished)throw new InvalidOperationException("Story did not finish within --duration; increase the cap or inspect its command timeline. No incomplete video was published.");
             var merge=new ProcessStartInfo(ffmpeg){UseShellExecute=false,CreateNoWindow=true,RedirectStandardError=true};
             var mergeArgs=new List<string>{"-v","error","-y","-i",video,"-f","f32le","-ar","48000","-ac","2","-i",audio,"-map","0:v:0","-map","1:a:0","-c:v","copy"};
@@ -142,6 +167,8 @@ public sealed class AdvStoryRenderer : IDisposable
             foreach(var a in mergeArgs)merge.ArgumentList.Add(a);
             using var joined=Process.Start(merge)??throw new IOException("Cannot start audio mux");var err=joined.StandardError.ReadToEndAsync();joined.WaitForExit();if(joined.ExitCode!=0)throw new IOException(err.GetAwaiter().GetResult());File.Move(mux,output,overwrite);
             return JsonOutput.Object(("output", output), ("frames", written), ("width", width), ("height", height), ("supersample", supersample), ("fps", 30*speed), ("speed", speed), ("sourceDuration", written/30d), ("duration", outputDuration), ("audioHz", 48000), ("codec", codec), ("cineformQuality", codec=="cineform"?VideoEncoding.NormalizeCineFormQuality(cineformQuality):null), ("alpha", codec=="h264"?"none":"straight"), ("finished", finished), ("performance", JsonOutput.Object(("Device", renderer.Device), ("initializationMilliseconds", initializationMs), ("wallSeconds", wall.Elapsed.TotalSeconds), ("framesPerSecond", written/wall.Elapsed.TotalSeconds), ("cpuSubmissionMilliseconds", renderer.Timings), ("encoderWriteMilliseconds", encodeMs), ("audioMixMilliseconds", audioMs))));
-        }finally{if(encoder is not null){if(!encoder.HasExited)encoder.Kill(true);encoder.Dispose();}foreach(var path in new[]{video,audio,mux})if(File.Exists(path))File.Delete(path);}
+        }catch(IOException error)when(encoder is not null&&encoder.HasExited&&encoder.ExitCode!=0)
+        {throw VideoEncoding.EncoderFailure(encoder.ExitCode,errors?.GetAwaiter().GetResult()??"",error);}
+        finally{if(encoder is not null){if(!encoder.HasExited)encoder.Kill(true);encoder.Dispose();}foreach(var path in new[]{video,audio,mux})if(File.Exists(path))File.Delete(path);}
     }
 }

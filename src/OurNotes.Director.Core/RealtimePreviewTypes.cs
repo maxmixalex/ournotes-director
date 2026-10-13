@@ -5,7 +5,29 @@ public sealed record PreviewTarget(string Id, string Label, double X, double Y, 
 
 /// <summary>A private project snapshot, using the same document and renderer as final scene export.</summary>
 public sealed record ScenePreviewSource(string ArchivePath, string ProjectPath, string CubismPath,
-    string FfmpegPath, int Width = 960, int Height = 540, double Duration = 60);
+    string FfmpegPath, int Width = 960, int Height = 540, double Duration = 60,
+    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed);
+
+public enum PreviewDurationMode { Fixed, Automatic }
+
+/// <summary>An observed execution, including repeated visits caused by GoTo.</summary>
+public sealed record NativeCommandTiming(string Section,int Index,string Command,int StartFrame,
+    int? EndFrame,int Ordinal,string Key);
+
+/// <summary>
+/// Duration is present only after the real interpreter finishes. Analysis progress is
+/// a source frame count, never an estimate obtained by adding command durations.
+/// </summary>
+public sealed record NativePlaybackTiming(string ProjectHash,bool IsComplete,int? EndFrame,
+    double? Duration,IReadOnlyList<NativeCommandTiming> Commands,int AnalyzedFrame=0,string? Error=null);
+
+public sealed record PreviewPerformance(double SimulationMilliseconds,double SceneMilliseconds,
+    double ReadbackMilliseconds,double TargetMilliseconds,long AllocatedBytes,int SimulationFrames);
+
+public sealed record PreviewLipSync(string TargetId,string Engine,bool IsActive,float MouthOpen,string? Missing);
+
+/// <summary>Actual active native requests; fades, physics and lip pose remain renderer state.</summary>
+public sealed record PreviewActorAnimation(string TargetId,string Model,string Motion,string Expression,double MotionTime);
 
 /// <summary>Preview resolution is independent from the saved project's final export resolution.</summary>
 public sealed record HomePreviewSource(string ArchivePath, HomeProject Project, string? Character = null,
@@ -14,7 +36,14 @@ public sealed record HomePreviewSource(string ArchivePath, HomeProject Project, 
 /// <summary>One directly read native RGBA frame; no image or video intermediary is involved.</summary>
 public sealed record PreviewFrame(long Sequence, long SessionId, int Frame, double Time, Pixels Pixels,
     IReadOnlyList<PreviewTarget> Targets, double RenderMilliseconds, double FramesPerSecond,
-    bool IsPlaying, string Device);
+    bool IsPlaying, string Device,double Duration=0,
+    PreviewDurationMode DurationMode=PreviewDurationMode.Fixed,NativePlaybackTiming? Timing=null,
+    PreviewPerformance? Performance=null,IReadOnlyList<PreviewLipSync>? LipSync=null,
+    IReadOnlyList<PreviewActorAnimation>? ActorAnimations=null)
+{
+    public NativePlaybackTiming? NativeTiming=>Timing;
+    public bool DurationResolved=>DurationMode==PreviewDurationMode.Fixed||Timing?.IsComplete==true;
+}
 
 /// <summary>Canvas-normalized drag displacement, cumulative from the initial pointer press.</summary>
 public sealed record PreviewDrag(string TargetId, double DeltaX, double DeltaY, bool IsCompleted);

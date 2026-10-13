@@ -140,6 +140,11 @@ public partial class App : Application
         }
         catch (Exception exception)
         {
+            if (smokeReportPath is not null && sender is FrameworkElement failedRoot)
+            {
+                try { captures.Add(await CaptureAsync(failedRoot, Path.ChangeExtension(smokeReportPath, "failed.png"))); }
+                catch (Exception captureError) { TraceStartup("Failure screenshot unavailable: " + captureError.Message); }
+            }
             WriteFailure(exception);
             Environment.Exit(1);
         }
@@ -214,6 +219,7 @@ public partial class App : Application
                 catch { report = new JsonObject(); }
                 report["schema"] ??= "ournotes-director/desktop-smoke/1";
                 report["ok"] = false;
+                report["status"] = "failed";
                 report["exception"] = exception.ToString();
                 report["message"] = message;
                 report["managedStack"] = Environment.StackTrace;

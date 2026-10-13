@@ -37,6 +37,7 @@ public sealed partial class AdvScene : IDisposable
     public AdvCamera Camera{get;}
     public IReadOnlyDictionary<int,Actor> Shown=>shown;
     public string StageName{get;private set;}="";
+    internal bool TimingOnly{get;init;}
     public AdvScene(Archive archive,string site,string dll,JsonNode manifest,JsonNode definition,JsonNode scene,string language,OffscreenGl gl,AdvLoop loop,AdvTweens tweens)
     {
         this.archive=archive;this.site=site;this.dll=dll;this.manifest=manifest;this.definition=definition;this.language=language;this.gl=gl;this.loop=loop;this.tweens=tweens;
@@ -60,7 +61,7 @@ public sealed partial class AdvScene : IDisposable
             stageEffects[entry.Key]=new(scene["stages"]![entry.Key]!,stagePrefabs[entry.Key],collection,stageAnimationRecords,effectRandom,loop);
         }
         shot.Output=new(){Width=gl.Width,Height=gl.Height,RenderScale=1};
-        loop.On(AdvPhase.PreLateEnd,()=>{foreach(var actor in shown.Values.Concat(directorActors.Keys).Distinct())actor.Step(shot,loop.Time,(float)loop.DeltaTime);});
+        loop.On(AdvPhase.PreLateEnd,()=>{if(!TimingOnly)foreach(var actor in shown.Values.Concat(directorActors.Keys).Distinct())actor.Step(shot,loop.Time,(float)loop.DeltaTime);});
         loop.On(AdvPhase.Animation,AnimateEffects);
     }
     public void Preload(IEnumerable<AdvRow> rows)
@@ -261,7 +262,7 @@ public sealed partial class AdvScene : IDisposable
         }
         DrawDirectorActors(globals);
         DrawForeground?.Invoke();
-        if(!DirectorTransparent)post.Render(AdvVolume.Evaluate(volumes),Camera,loop.Frame,new[]{1f,.85f,.65f,.45f,.30f,.15f,0f}[Math.Clamp(focusDistance,0,6)]);
+        if(!DirectorTransparent)post.Render(VolumeStack(),Camera,loop.Frame,new[]{1f,.85f,.65f,.45f,.30f,.15f,0f}[Math.Clamp(focusDistance,0,6)]);
     }
     public void Dispose(){foreach(var actor in actors.Values)actor.Dispose();effectMaterials?.Dispose();shaders.Dispose();}
 }

@@ -8,6 +8,7 @@ public sealed class AdvJob
     private readonly AdvLoop loop;
     public AdvWait Completed { get; }
     public bool Finished { get; private set; }
+    public int? EndFrame { get; private set; }
     public Exception? Error { get; private set; }
     public AdvJob(AdvLoop loop, IEnumerable<AdvWait> routine)
     {
@@ -20,9 +21,9 @@ public sealed class AdvJob
         try
         {
             if(routine.MoveNext())routine.Current.OnCompleted(Advance);
-            else { Finished=true;routine.Dispose();Completed.Resolve(true); }
+            else { Finished=true;EndFrame=loop.Frame;routine.Dispose();Completed.Resolve(true); }
         }
-        catch(Exception ex){Error=ex;Finished=true;routine.Dispose();Completed.Resolve(false);}
+        catch(Exception ex){Error=ex;Finished=true;EndFrame=loop.Frame;routine.Dispose();Completed.Resolve(false);}
     }
     public void ThrowIfFailed(){if(Error is not null)System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(Error).Throw();}
 }
@@ -38,6 +39,7 @@ public sealed class AdvPlayback
     private readonly object delayGroup=new();
     private readonly object playbackDelayGroup=new();
     private readonly AdvProgram program;
+    private readonly List<ObservedCommand> observed=[];
     private AdvJob? main;
     private int nextStep;
     private bool auto;
@@ -47,6 +49,10 @@ public sealed class AdvPlayback
     public int ListIndex{get;private set;}=-1;
     public bool Cancelled{get;private set;}
     public bool Finished=>main?.Finished??false;
+    public int? CompletionFrame=>main?.EndFrame;
+    public IReadOnlyList<NativeCommandTiming> CommandTimings()=>observed.Select((item,ordinal)=>
+        new NativeCommandTiming(item.Section,item.Index,item.Row.Command,item.StartFrame,
+            item.Job?.EndFrame,ordinal,item.Row.Text("Key"))).ToArray();
     public bool Paused{get;set;}
     public bool ForcedAuto{get;private set;}
     public bool AutoPlay=>auto||ForcedAuto;
@@ -128,10 +134,22 @@ public sealed class AdvPlayback
         if(p.Cancelled||!p.AutoPlay)yield break;
         yield return p.Loop.Delay(p.CalcDuration(p.program.AutoWaitSeconds),p.playbackDelayGroup);
     }
-    private AdvJob Execute(AdvRow row)
+    private AdvJob Execute(AdvRow row,string? section=null,int index=-1)
     {
         OnCommand?.Invoke(row,Loop.Frame);
-        return new(Loop,handlers[row.Command](row,this));
+        ObservedCommand? item=null;
+        if(section is not null){item=new(section,index,row,Loop.Frame);observed.Add(item);}
+        var job=new AdvJob(Loop,handlers[row.Command](row,this));
+        if(item is not null)item.Job=job;
+        return job;
+    }
+    private sealed class ObservedCommand(string section,int index,AdvRow row,int startFrame)
+    {
+        public string Section{get;}=section;
+        public int Index{get;}=index;
+        public AdvRow Row{get;}=row;
+        public int StartFrame{get;}=startFrame;
+        public AdvJob? Job{get;set;}
     }
     private IEnumerable<AdvWait> Play()
     {
@@ -139,10 +157,11 @@ public sealed class AdvPlayback
         if(Cancelled){OnStop?.Invoke();yield break;}
         var initial=Execute(new("-1","TalkWindow",new JsonObject{["TargetName"]="UIDefaultTalkWindow"}));
         detached.Add(initial); // The reference starts this without awaiting it.
-        foreach(var row in program.Initialize)
+        for(int i=0;i<program.Initialize.Length;i++)
         {
             if(Cancelled){OnStop?.Invoke();yield break;}
-            var job=Execute(row);yield return job.Completed;job.ThrowIfFailed();
+            var row=program.Initialize[i];if(row.Ignored)continue;
+            var job=Execute(row,"initialize",i);yield return job.Completed;job.ThrowIfFailed();
         }
         ListIndex=0;
         while(ListIndex<program.Rows.Length)
@@ -150,12 +169,15 @@ public sealed class AdvPlayback
             if(Cancelled){OnStop?.Invoke();yield break;}
             var index=ListIndex;var row=program.Rows[index];
             if(row.Ignored){ListIndex++;continue;}
-            var job=Execute(row);yield return job.Completed;job.ThrowIfFailed();
+            var job=Execute(row,"commands",index);yield return job.Completed;job.ThrowIfFailed();
             if(index==ListIndex)ListIndex++;
             while(Paused&&!Cancelled)yield return Loop.YieldUpdate();
         }
         if(Cancelled){OnStop?.Invoke();yield break;}
-        foreach(var row in program.Finalize){var job=Execute(row);yield return job.Completed;job.ThrowIfFailed();}
+        for(int i=0;i<program.Finalize.Length;i++){
+            var row=program.Finalize[i];if(row.Ignored)continue;
+            var job=Execute(row,"finalize",i);yield return job.Completed;job.ThrowIfFailed();
+        }
         OnStop?.Invoke();
     }
 }

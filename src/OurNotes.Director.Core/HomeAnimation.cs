@@ -26,7 +26,7 @@ public sealed class HomeResources(HomeScene scene)
 }
 
 /// <summary>Mutable animation state, independent of the graphics context and encoder.</summary>
-public sealed class HomeAnimation
+public sealed partial class HomeAnimation
 {
     public sealed class Part(string path, SpineActor actor, float[] world, int sortingOrder, int queue, bool depthWrite, bool? straightAlphaInput)
     {
@@ -77,7 +77,7 @@ public sealed class HomeAnimation
             var pageMaterials = new List<JsonNode>();
             foreach (var texture in asset.Textures)
             {
-                string? named = extra?["pageMaterials"]?[texture.File]?.ToString();
+                string? named = (extra?["pageMaterials"]?[texture.File] ?? part["pageMaterials"]?[texture.File])?.ToString();
                 var material = named is not null ? materials[named] : materials.Count == 1 ? materials.First().Value
                     : materials[Path.GetFileNameWithoutExtension(texture.File) + "_Material"];
                 if (material is not null) pageMaterials.Add(material);
@@ -225,6 +225,8 @@ public sealed class HomeAnimation
     {
         ["site"] = Scene.Site, ["spotId"] = Scene.SpotId, ["advId"] = Scene.AdvId, ["character"] = Character?.Key,
         ["sourceDuration"] = Duration, ["runtime"] = "Spine " + SpineAsset.RuntimeVersion,
+        ["spineRecoveries"] = new JsonArray(Scene.SpineRecoveries.Where(r => Parts.Any(p => p.Path == r.Path)).Select(r => (JsonNode?)r.ToJson()).ToArray()),
+        ["unresolvedSpineParts"] = new JsonArray(Scene.UnresolvedSpineParts.Select(p => (JsonNode?)p.DeepClone()).ToArray()),
         ["parts"] = new JsonArray(Parts.Select(p => (JsonNode?)new JsonObject
         {
             ["path"] = p.Path, ["skeleton"] = p.Actor.Asset.Name, ["version"] = p.Actor.Asset.Version,
@@ -237,36 +239,7 @@ public sealed class HomeAnimation
     /// <summary>One fixed crop for the entire requested interval; geometry is sampled at every output frame.</summary>
     public float[] Fit(float aspect, int firstFrame, int frameCount, int fps, float margin = .06f)
     {
-        if (!float.IsFinite(margin) || margin < 0 || margin >= .5f) throw new ArgumentOutOfRangeException(nameof(margin));
-        var projection = Camera.ViewProjection(aspect);
-        var min = new Vector2(float.PositiveInfinity); var max = new Vector2(float.NegativeInfinity);
-        bool visible = false;
-        try
-        {
-            for (int f = firstFrame; f < checked(firstFrame + frameCount); f++)
-            {
-                Advance(f, fps);
-                for (int i = 0; i < Parts.Count; i++)
-                {
-                    if (!TransformFor(Parts[i], f / (double)fps).Visible) continue;
-                    var matrix = EditedMatrix(Parts[i], projection, aspect, f / (double)fps);
-                    foreach (var batch in Parts[i].Actor.Mesh.Batches)
-                        for (int v = 0; v < batch.Positions.Length; v += 3)
-                        {
-                            var p = AdvMatrix.Transform(matrix, new(batch.Positions[v], batch.Positions[v + 1], batch.Positions[v + 2], 1));
-                            if (p.W <= 0) throw new NotSupportedException("Cannot fit home geometry crossing behind the scene camera; use --framing scene.");
-                            var point = new Vector2(p.X / p.W, p.Y / p.W);
-                            min = Vector2.Min(min, point); max = Vector2.Max(max, point); visible = true;
-                        }
-                }
-            }
-        }
-        finally { Reset(); }
-        if (!visible) throw new InvalidDataException("No visible Spine geometry in the requested animation interval.");
-        var size = max - min; var center = (min + max) / 2;
-        float zoom = Math.Min(2 * (1 - margin) / Math.Max(size.X, 1e-6f), 2 * (1 - margin) / Math.Max(size.Y, 1e-6f));
-        var crop = AdvMatrix.Identity(); crop[0] = crop[5] = zoom; crop[12] = -center.X * zoom; crop[13] = -center.Y * zoom;
-        return crop;
+        return MeasureBounds(aspect, firstFrame, frameCount, fps).Crop(margin);
     }
 }
 

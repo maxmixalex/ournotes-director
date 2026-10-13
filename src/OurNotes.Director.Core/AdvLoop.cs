@@ -71,13 +71,15 @@ public sealed class AdvLoop
         {
             Frame++; DeltaTime = TimeScale == 1 ? 1.0 / 30 : 1.0 / 30 * TimeScale; Time = (float)(Time + DeltaTime);
             var ys = update; update = []; foreach (var w in ys) w.Resolve(true);
-            foreach (var d in delays.ToArray())
+            for(int i=0;i<delays.Count;)
             {
-                if (d.Elapsed == 0 && d.Created == Frame) continue;
+                var d=delays[i];
+                if (d.Elapsed == 0 && d.Created == Frame) {i++;continue;}
                 d.Elapsed = (float)(d.Elapsed + (float)DeltaTime);
-                if (DelaySeconds(d.Seconds) <= d.Elapsed) { delays.Remove(d); d.Wait.Resolve(true); }
+                if (DelaySeconds(d.Seconds) <= d.Elapsed) { delays.RemoveAt(i); d.Wait.Resolve(true); }
+                else i++;
             }
-            foreach (var w in frames.ToArray()) if (Frame >= w.Target) { frames.Remove(w); w.Wait.Resolve(true); }
+            for(int i=0;i<frames.Count;){var w=frames[i];if(Frame>=w.Target){frames.RemoveAt(i);w.Wait.Resolve(true);}else i++;}
             Drain(); Run(AdvPhase.Update); Drain(); Run(AdvPhase.Tweens); Drain();
             Run(AdvPhase.Animation); Run(AdvPhase.LateUpdate); Run(AdvPhase.PreLateEnd); Run(AdvPhase.PostLate);
             ys = postLate; postLate = []; foreach (var w in ys) w.Resolve(true);
@@ -85,7 +87,7 @@ public sealed class AdvLoop
         }
         finally { stepping = false; }
     }
-    private void Run(AdvPhase phase) { foreach (var hook in hooks[phase].ToArray()) hook(); }
+    private void Run(AdvPhase phase) { var phaseHooks=hooks[phase];int count=phaseHooks.Count;for(int i=0;i<count;i++)phaseHooks[i](); }
     private sealed class DelayEntry(double seconds, int created, AdvWait wait, object? group)
     {
         public double Seconds { get; } = seconds;

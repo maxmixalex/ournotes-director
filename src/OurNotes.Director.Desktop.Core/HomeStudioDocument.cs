@@ -69,6 +69,19 @@ public sealed class HomeStudioDocument
     public void SetSource(HomeProjectSource source) => Change(Project with { Source = source });
     public void SetDuration(double duration) { Change(Project with { Duration = duration }); Playhead = Math.Min(Playhead, duration); }
     public void SetOutput(HomeProjectOutput output) => Change(Project with { Output = output });
+    /// <summary>Pure managed measurement of the saved composition at the original artwork's pixel scale.</summary>
+    public HomeNativeCanvas MeasureNativeCanvas(string archivePath, int? fps = null, double? duration = null,
+        string? codec = null, string? character = null, CancellationToken cancellationToken = default)
+    {
+        var project = Project;
+        string selected = character ?? SelectedCharacterKey ?? throw new InvalidOperationException("请先选择要导出的角色。");
+        cancellationToken.ThrowIfCancellationRequested();
+        var scene = new HomeCatalog(new Archive(archivePath)).Open(project.Source.SpotId, project.Source.Site, project.Source.AdvId);
+        var animation = new HomeAnimation(new(scene), scene.SelectCharacter(selected));
+        animation.SetEditState(project.EditState);
+        return animation.MeasureNativeCanvas(fps ?? project.Output.Fps, duration ?? project.Duration, codec ?? project.Output.Codec,
+            project.Output.Width / (float)project.Output.Height, cancellationToken);
+    }
     public void SetScene(bool? background = null, bool? postProcessing = null, string? framing = null)
         => Change(Project with { EditState = Project.EditState with { Background = background ?? Project.EditState.Background,
             PostProcessing = postProcessing ?? Project.EditState.PostProcessing, Framing = framing ?? Project.EditState.Framing } });

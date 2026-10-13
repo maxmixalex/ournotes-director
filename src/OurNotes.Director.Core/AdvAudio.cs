@@ -118,6 +118,16 @@ public sealed class AdvAudio
         for(int i=0;i<count;i++){long at=Wrap(sound,sound.StartSample+previousSample+i);if(at>=0&&at<sound.Cue.Samples)result[i]=sound.Cue.Pcm[checked((int)at)*sound.Cue.Channels];}
         previousSample=now;return result;
     }
+    public int ReadRecentMono(AdvSound sound,Span<float> destination)
+    {
+        long elapsed=Math.Max(0,Position(sound)-sound.StartSample);int count=(int)Math.Min(destination.Length,elapsed);
+        for(int i=0;i<count;i++)
+        {
+            long at=Wrap(sound,sound.StartSample+elapsed-count+i);
+            destination[i]=at>=0&&at<sound.Cue.Samples?sound.Cue.Pcm[checked((int)at)*sound.Cue.Channels]:0;
+        }
+        return count;
+    }
     private static int Category(string name)=>name switch{"Bgm"=>0,"Se"=>1,"Voice"=>2,_=>-1};
     public float GetVolume(string name){int c=Category(name);return c>=0?categoryVolumes[c]:float.NaN;}
     public void ChangeVolume(string name,float volume)

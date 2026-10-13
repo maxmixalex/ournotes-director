@@ -110,7 +110,8 @@ public sealed class Shot
     {
         if(Source is not null&&(string.IsNullOrWhiteSpace(Source.Adv)||string.IsNullOrWhiteSpace(Source.Site)||string.IsNullOrWhiteSpace(Source.Language)))throw new ArgumentException("Shot source requires adv, site and language");
         if(Version!=1||Fps!=30||!double.IsFinite(Duration)||Duration<=0||Duration>600||Math.Abs(Duration*Fps-Math.Round(Duration*Fps))>1e-5)throw new ArgumentException("Shot requires version 1, fps 30, duration 0..600 with an integral frame count");
-        if(Output.Width<16||Output.Height<16||Output.Width>7680||Output.Height>4320||Output.RenderScale is <1 or >4||WarmupFrames is <0 or >300)throw new ArgumentException("Invalid resolution/renderScale/warmupFrames");
+        if(Output.Width<16||Output.Height<16||Output.Width>RenderDimensions.MaxSide||Output.Height>RenderDimensions.MaxSide||Output.RenderScale is <1 or >4||WarmupFrames is <0 or >300)throw new ArgumentException("Invalid resolution/renderScale/warmupFrames");
+        RenderDimensions.Validate(Output.Width,Output.Height,Output.RenderScale);
         if(Background.Length!=4||Background.Any(v=>!float.IsFinite(v)||v<0||v>1))throw new ArgumentException("background must be RGBA 0..1");
         if(Stage is not null&&BackgroundImage is not null)throw new ArgumentException("Use stage or backgroundImage, not both");
         if(!float.IsFinite(Grade.Exposure)||Grade.Exposure is < -8 or > 8||!float.IsFinite(Grade.Contrast)||Grade.Contrast is <0 or >4||!float.IsFinite(Grade.Saturation)||Grade.Saturation is <0 or >4||!float.IsFinite(Grade.Vignette)||Grade.Vignette is <0 or >1)throw new ArgumentException("Invalid grade");

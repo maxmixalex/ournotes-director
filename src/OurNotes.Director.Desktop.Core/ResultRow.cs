@@ -53,7 +53,7 @@ public sealed record ResultRow(string Id, string Title, string Subtitle, JsonNod
                 return rows;
             }
             foreach (string key in new[] { "files", "parameters", "resources", "models", "characters", "parts", "commands", "cells", "streams" })
-                if (root[key] is JsonArray values) { Add(values, key == "parameters" ? "parameter" : "data"); return rows; }
+                if (root[key] is JsonArray values) { Add(values, key == "parameters" ? "parameter" : key == "models" ? "model" : "data"); return rows; }
             return [];
         }
         if (node is JsonArray array) Add(array, KindFor(command));
@@ -84,7 +84,7 @@ public sealed record ResultRow(string Id, string Title, string Subtitle, JsonNod
                     ["path"] = part["path"]?.DeepClone(), ["skeleton"] = part["skeleton"]?.DeepClone(),
                     ["duration"] = (part["animations"] as JsonArray)?.OfType<JsonObject>().First(animation => Text(animation, "name") == name)["duration"]?.DeepClone()
                 }).ToArray());
-                return new ResultRow(name, name, "全部 " + parts.Length + " 个骨架均可使用", new JsonObject { ["name"] = name, ["parts"] = details })
+                return new ResultRow(name, DisplayNames.Animation(name), name + " · 全部 " + parts.Length + " 个骨架均可使用", new JsonObject { ["name"] = name, ["parts"] = details })
                     { Kind = "home.animation", Context = ReadOnly(inherited) };
             }).ToArray();
         }
@@ -237,7 +237,8 @@ public sealed record ResultRow(string Id, string Title, string Subtitle, JsonNod
         if (node is JsonValue scalar)
         {
             string scalarValue = scalar.ToString();
-            return new(scalarValue, scalarValue, kind == "expression" ? "表情" : kind == "motion" ? "动作" : "", node.DeepClone()) { Kind = kind, Context = ReadOnly(context) };
+            string label = kind is "expression" or "motion" ? DisplayNames.Animation(scalarValue) : scalarValue;
+            return new(scalarValue, label, Join(label != scalarValue ? scalarValue : "", kind == "expression" ? "表情" : kind == "motion" ? "动作" : ""), node.DeepClone()) { Kind = kind, Context = ReadOnly(context) };
         }
         string id = kind switch
         {
@@ -259,6 +260,9 @@ public sealed record ResultRow(string Id, string Title, string Subtitle, JsonNod
         if (title.Length == 0 && kind == "command") title = Text(obj, "cmd", "name");
         if (title.Length == 0) title = id.Length > 0 ? id : "资源";
         if (kind == "home.source") title = "来源剧情 " + id;
+        if (kind == "model" && DisplayNames.Model(id) is var modelTitle && modelTitle != id) title = modelTitle;
+        if (kind is "motion" or "expression") title = DisplayNames.Animation(title);
+        if (kind is "home.character" or "home.part") title = DisplayNames.Character(title);
         var details = new List<string>();
         if (id.Length > 0 && id != title) details.Add(id);
         string site = context.GetValueOrDefault("site") ?? "";
@@ -270,7 +274,7 @@ public sealed record ResultRow(string Id, string Title, string Subtitle, JsonNod
         string duration = Text(obj, "sourceDuration", "duration"); if (duration.Length > 0) details.Add(duration + " 秒");
         if (kind == "home.part")
         {
-            string animation = Text(obj, "animation"); if (animation.Length > 0) details.Add("当前动画：" + animation);
+            string animation = Text(obj, "animation"); if (animation.Length > 0) details.Add("当前动画：" + DisplayNames.Animation(animation) + "（" + animation + "）");
             if (obj?["animations"] is JsonArray animations) details.Add(animations.Count + " 个可用动画");
         }
         if (Text(obj, "exportSupported") == "false") details.Add("独立导出暂不支持");

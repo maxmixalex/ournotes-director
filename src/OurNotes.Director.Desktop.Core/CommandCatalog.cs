@@ -298,8 +298,8 @@ public static class CommandCatalog
             .Select(value => new CommandChoice(value, value == "film1" ? "film1（推荐平衡）" : value == "high" ? "high（较小体积）" : value + " 质量档位")).ToArray(), advanced: true);
     private static CommandField[] Dimensions(bool contact, bool home, bool project = false) =>
     [
-        Integer("width", "画面宽度", project ? "留空使用项目设置；没有设置时为操作默认尺寸。" : "最终输出宽度；CineForm 要求为 16 的倍数。", project ? null : contact ? "640" : "1920", 16, 7680),
-        Integer("height", "画面高度", project ? "留空使用项目设置；没有设置时为操作默认尺寸。" : "最终输出高度；CineForm 要求为 8 的倍数且至少 32。", project ? null : contact ? "360" : "1080", 16, home ? 7680 : 4320),
+        Integer("width", "画面宽度", project ? "留空使用项目设置；没有设置时为操作默认尺寸。" : "最终输出宽度；CineForm 要求为 16 的倍数。", project ? null : contact ? "640" : "1920", 16, OurNotes.Director.Core.RenderDimensions.MaxSide),
+        Integer("height", "画面高度", project ? "留空使用项目设置；没有设置时为操作默认尺寸。" : "最终输出高度；CineForm 要求为 8 的倍数且至少 32。", project ? null : contact ? "360" : "1080", 16, OurNotes.Director.Core.RenderDimensions.MaxSide),
         Integer("supersample", "超采样倍数", "更高倍数改善边缘，同时增加渲染时间和显存占用。", project ? null : "2", 1, 4, true)
     ];
     private static CommandField[] StoryRenderFields(string verb, bool project = false)
