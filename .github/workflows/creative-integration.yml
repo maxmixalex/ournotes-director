@@ -1,0 +1,37 @@
+name: Integrate Windows creative playback
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.dev/integrate.py, .github/workflows/creative-integration.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Apply anchored integration edits
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; p=Path('.dev/integrate.py'); p.write_text(p.read_text(encoding='utf-8').replace(',3)\n',',4)\n'), encoding='utf-8')"
+          python .dev/integrate.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rm .dev/integrate.py .github/workflows/creative-integration.yml
+          git add src .github/workflows/build.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect Windows device-clocked preview audio and clip scheduling'
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile playback core
+        run: dotnet build OurNotes.Director.sln -c Release --nologo
+      - name: Compile Windows frontend
+        run: dotnet publish src/OurNotes.Director.WinUI -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false -o artifacts/frontend --nologo
