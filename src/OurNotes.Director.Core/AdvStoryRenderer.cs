@@ -37,7 +37,10 @@ public sealed class AdvStoryRenderer : IDisposable
         outputWidth=width;outputHeight=height;this.supersample=supersample;
         float target=width>height?2.1666667f:1.7777778f;int viewportHeight=height;
         var supplied=projectDocument??(script is null?null:DirectorProject.Document(script));
-        isolateActor = supplied?["output"]?["isolateActor"]?.ToString();
+        var sourceOutput = (supplied as JsonObject)?["output"] as JsonObject;
+        isolateActor = sourceOutput?["isolateActor"]?.ToString();
+        var playbackViewport = sourceOutput?["playbackViewport"];
+        ActorIsolation.ValidateViewport(playbackViewport);
         bool noLetterbox=isolateActor is not null || supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
         if(!noLetterbox&&width/(float)height+.0001f<target&&(height-width/target)/2>1)viewportHeight=(int)MathF.Floor(width/target+.5f);
         viewportY=(int)MathF.Floor((height-viewportHeight)/2f+.5f);
@@ -64,7 +67,8 @@ public sealed class AdvStoryRenderer : IDisposable
             var rows=program.Initialize.Concat(program.Rows).Concat(program.Finalize).Where(r=>!r.Ignored).ToArray();
             foreach(var row in rows)DirectorValidation.Check(row);
             Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg)};Audio.Bind(Player);
-            Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=viewportHeight<height,MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
+            Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=playbackViewport is null ? viewportHeight<height : ActorIsolation.HasLetterbox(
+                playbackViewport["width"]!.GetValue<int>(),playbackViewport["height"]!.GetValue<int>(),playbackViewport["letterbox"]!.ToString()),MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
             Ui.ResolveCharacter=Scene.Character;
             Ui.ShowingCharacters=()=>Scene.VisibleActors;
             Scene.ForegroundItem=()=>Ui.Chat is {Visible:true} chat?new(chat.SortingOrder,chat.PlaneDistance*chat.PlaneDistance,()=>chat.Draw(Scene.Camera)):null;
@@ -164,7 +168,7 @@ public sealed class AdvStoryRenderer : IDisposable
             var mixedPcm=new float[AdvAudio.SamplesPerFrame*2];
             using(var pcm=File.Create(audio))for(int i=0;i<count;i++){
                 renderer.QueueFrame(start+i,clean);if(renderer.PendingFrames>=3)EncodeQueued();
-                if(codec=="h264"&&renderer.Scene.DirectorTransparent)throw new ArgumentException("Transparent scenes require --codec cineform, prores, or ffv1");
+                if(codec=="h264"&&renderer.TransparentOutput)throw new ArgumentException("Transparent scenes require --codec cineform, prores, or ffv1");
                 long stamp=Stopwatch.GetTimestamp();renderer.Audio.MixFrame(mixedPcm);pcm.Write(MemoryMarshal.AsBytes(mixedPcm.AsSpan()));audioMs+=Stopwatch.GetElapsedTime(stamp).TotalMilliseconds;
                 written++;finished=renderer.Player.Finished;
                 if(i%30==0)Console.Error.WriteLine($"story render {i+1}/{count}");

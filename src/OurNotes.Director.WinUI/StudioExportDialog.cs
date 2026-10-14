@@ -113,6 +113,11 @@ internal static class StudioExportDialog
         void Update()
         {
             bool video = Ui.Selected(kind) == "clip";
+            // The batch encoder produces videos. Never silently substitute MOV for
+            // the requested current PNG or image sequence.
+            ((ComboBoxItem)scope.Items[2]).IsEnabled = video;
+            ((ComboBoxItem)scope.Items[3]).IsEnabled = video;
+            if (!video && (Ui.Selected(scope) is "all" or "both")) scope.SelectedIndex = isolated ? 1 : 0;
             format.Visibility = video ? Visibility.Visible : Visibility.Collapsed;
             qualityBox.Visibility = video && Ui.Selected(format) == "cineform" ? Visibility.Visible : Visibility.Collapsed;
             range.Visibility = Ui.Selected(kind) == "frame" || automaticDuration && Ui.Selected(rangeMode) == "complete" ? Visibility.Collapsed : Visibility.Visible;

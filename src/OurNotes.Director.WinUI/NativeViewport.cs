@@ -29,7 +29,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     readonly TextBlock selectionText=new(){FontSize=12,Foreground=Brush(231,247,255)};
     readonly Border selectionLabel=new(){Background=Brush(18,66,92),CornerRadius=new(3),Padding=new(7,3,7,3)};
     readonly Rectangle[] handles=Enumerable.Range(0,4).Select(_=>new Rectangle{Width=7,Height=7,Fill=Brush(217,243,255),Stroke=Brush(24,83,109),StrokeThickness=1}).ToArray();
-    readonly RectangleGeometry selectionClip=new();
+    readonly RectangleGeometry selectionClip=new(),surfaceClip=new();
     readonly ToolTip diagnostics=new();
     readonly TextBlock status=new(){Text="打开项目，开始预览",FontSize=12,Foreground=Brush(205,215,230),TextWrapping=TextWrapping.Wrap};
     readonly object frameGate=new();
@@ -77,7 +77,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         var root=new Grid();
         root.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
         root.RowDefinitions.Add(new(){Height=GridLength.Auto});
-        surface.Children.Add(checker);surface.Children.Add(image);surface.Children.Add(overlay);
+        surface.Children.Add(checker);surface.Children.Add(image);surface.Children.Add(overlay);surface.Clip=surfaceClip;
         selectionLabel.Child=selectionText;overlay.Children.Add(outline);overlay.Children.Add(selectionLabel);
         foreach(var handle in handles)overlay.Children.Add(handle);
         overlay.Clip=selectionClip;overlay.Visibility=Visibility.Collapsed;
@@ -85,12 +85,12 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         var bar=new Border{Background=Brush(27,31,40),Padding=new(12,7,12,7),Child=status};
         Grid.SetRow(bar,1);root.Children.Add(bar);Content=root;
         AutomationProperties.SetName(this,"实时画布");
-        AutomationProperties.SetHelpText(this,"点击角色选择，拖动改变位置，鼠标滚轮缩放。");
+        AutomationProperties.SetHelpText(this,"点击选择、拖动角色；滚轮缩放画布，Ctrl+滚轮缩放角色。");
         ToolTipService.SetToolTip(status,diagnostics);
         diagnostics.Opened+=(_,_)=>
         {
             if(diagnosticFailure||LastFrame is not {} frame)return;
-            diagnostics.Content=$"{frame.PresentationFallback??"OpenGL → D3D11 共享纹理；无 CPU 帧传输"}\n实际刷新 {frame.FramesPerSecond:0.0} fps · 渲染 {frame.RenderMilliseconds:0.0} ms · 显示 {PresentationMilliseconds:0.0} ms\n{frame.Pixels.Width} × {frame.Pixels.Height} · 第 {frame.Frame} 帧\n{frame.Device}";
+            diagnostics.Content=$"{(frame.IsGpuPresented?"OpenGL → D3D11 共享纹理；无 CPU 帧传输":frame.PresentationFallback??"OpenGL 绘制，CPU 像素显示")}\n实际刷新 {frame.FramesPerSecond:0.0} fps · 渲染 {frame.RenderMilliseconds:0.0} ms · 显示 {PresentationMilliseconds:0.0} ms\n{frame.Pixels.Width} × {frame.Pixels.Height} · 第 {frame.Frame} 帧\n{frame.Device}";
         };
         surface.SizeChanged+=(_,_)=>LayoutCanvas();
         surface.PointerPressed+=OnPointerPressed;
@@ -277,11 +277,11 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         double scale=Math.Min(surface.ActualWidth/width,surface.ActualHeight/height)*viewZoom;
         var rect=new Rect((surface.ActualWidth-width*scale)/2+viewPan.X,(surface.ActualHeight-height*scale)/2+viewPan.Y,
             width*scale,height*scale);
-        image.Width=rect.Width;image.Height=rect.Height;
-        image.RenderTransform=new TranslateTransform{X=rect.X,Y=rect.Y};
         LayoutGpu(rect);
         if(imageRect!=rect)
         {
+            image.Width=rect.Width;image.Height=rect.Height;
+            image.RenderTransform=new TranslateTransform{X=rect.X,Y=rect.Y};
             imageRect=rect;checker.Children.Clear();
             const int cell=24;
             var light=Brush(57,63,75);var dark=Brush(43,49,60);
@@ -295,7 +295,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         }
         var clip=new Rect(0,0,surface.ActualWidth,surface.ActualHeight);
         if(selectionClip.Rect!=clip)selectionClip.Rect=clip;
-        surface.Clip=new RectangleGeometry{Rect=clip};
+        if(surfaceClip.Rect!=clip)surfaceClip.Rect=clip;
         DrawSelection();
     }
 

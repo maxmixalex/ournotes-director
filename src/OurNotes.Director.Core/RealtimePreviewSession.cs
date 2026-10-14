@@ -477,7 +477,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             if(next.Adv!=project.Adv||next.Site!=project.Site||next.Language!=project.Language||source.Width!=Source.Width||source.Height!=Source.Height
                 ||source.ArchivePath!=Source.ArchivePath||source.CubismPath!=Source.CubismPath||source.FfmpegPath!=Source.FfmpegPath
                 ||(next.Output["clean"]?.GetValue<bool>()??false)!=clean||Archive.S(next.Output,"letterbox")!=Archive.S(project.Output,"letterbox")
-                ||Archive.S(next.Output,"isolateActor")!=Archive.S(project.Output,"isolateActor"))
+                ||Archive.S(next.Output,"isolateActor")!=Archive.S(project.Output,"isolateActor")
+                ||!JsonNode.DeepEquals(next.Output["playbackViewport"],project.Output["playbackViewport"]))
                 throw new ArgumentException("Changing source, viewport or presentation requires reloading the scene.");
             if(!double.IsFinite(source.Duration)||source.Duration<=0||source.Duration>36000)throw new ArgumentOutOfRangeException(nameof(source));
             Source=source;Duration=source.Duration;NeedsReplay=true;project=next;

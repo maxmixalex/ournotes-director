@@ -35,7 +35,7 @@ public sealed unsafe partial class OffscreenGl
             if (gpuSurface.Present(gpuComposite.Value.Framebuffer, width, height, out var failure)) return true;
             DisableGpuPresentation(failure ?? "GPU 显示不可用");
         }
-        catch (Exception failure) when (failure is InvalidOperationException or NotSupportedException or System.Runtime.InteropServices.COMException)
+        catch (Exception failure) when (failure is InvalidOperationException or NotSupportedException or InvalidDataException or System.Runtime.InteropServices.COMException)
         { DisableGpuPresentation("GPU 显示未能初始化：" + failure.Message); }
         return false;
     }

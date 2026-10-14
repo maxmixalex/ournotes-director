@@ -20,7 +20,7 @@ public sealed partial class NativeViewport
     void InitializeGpuPresentation()
     {
         surface.Children.Insert(surface.Children.IndexOf(overlay), gpuPanel);
-        gpuPanel.CompositionScaleChanged += (_, _) => LayoutCanvas();
+        gpuPanel.CompositionScaleChanged += (_, _) => { scaledGpu = null; LayoutCanvas(); };
     }
     bool PresentGpu(PreviewFrame frame)
     {

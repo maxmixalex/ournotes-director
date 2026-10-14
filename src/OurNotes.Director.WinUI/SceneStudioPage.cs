@@ -763,6 +763,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         try
         {
             _viewport.RunGpuCompositionSmoke(check);
+            await RunBlankWorkspaceSmokeAsync(check);
             var model = StudioSceneDocument.Create(new("42", "intl", "zh-Hans"), 4);
             string actor = model.AddActor("fixture-model", "测试角色");
             SetDocument(model); _document!.SelectedId = actor;
@@ -770,6 +771,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             model.SetActorTransform(actor, .7, .5, .8, 0, 2, true);
             check(Math.Abs(model.Sample(1).Actors.Single().Transform.X - .5) < .02, "场景时间轴真实插值角色位置");
             SelectObject(actor); _document.Time = 1; RefreshValues(); RefreshTimeline(); UpdateLayout();
+            await RunObjectMenuSmokeAsync(check);
             SelectObject(StudioSceneDocument.CameraId);
             check(_document.SelectedId == StudioSceneDocument.CameraId && _numbers.ContainsKey("zoom"), "由角色切换到相机不会被画布的空选择回调清除");
             SelectObject(actor); SelectObject(StudioSceneDocument.SceneId);

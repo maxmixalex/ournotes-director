@@ -24,6 +24,11 @@ internal static class StudioWorkflowTests
         check(JsonNode.DeepEquals(isolated.Root["commands"], scene.Document.Root["commands"]) && isolated.Output.Letterbox == "none",
             "isolated export preserves authored motion timing and removes scene letterbox");
         check(!isolated.Validate().HasErrors, "image canvas is not rejected because the default video codec has alignment limits");
+        check(isolated.Root["output"]?["playbackViewport"]?["letterbox"]?.ToString() == scene.Document.Output.Letterbox,
+            "isolation preserves the source viewport's opening chronology separately from exported letterbox pixels");
+        var twice = SceneAssetExport.Isolate(isolated, actor, mov.Width, mov.Height);
+        check(JsonNode.DeepEquals(twice.Root["output"]?["playbackViewport"], isolated.Root["output"]?["playbackViewport"]),
+            "changing isolated output resolution never overwrites the source playback viewport");
         using var snapshot = isolated.CreateSnapshot(Path.Combine(Path.GetTempPath(), "ournotes-workflow-" + Guid.NewGuid().ToString("N")));
         var native = DirectorProject.Read(snapshot.FilePath);
         check(native.Adv == DirectorProject.LibrarySource && native.Site == "jp" && native.Output["isolateActor"]?.ToString() == actor,

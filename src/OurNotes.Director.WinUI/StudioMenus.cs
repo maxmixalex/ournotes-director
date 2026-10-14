@@ -13,7 +13,13 @@ internal static class StudioMenus
         var item = new MenuFlyoutItem { Text = title, IsEnabled = enabled };
         if (glyph is not null) item.Icon = new FontIcon { Glyph = glyph };
         if (shortcut is not null) item.KeyboardAcceleratorTextOverride = shortcut;
-        item.Click += (_, _) => action(); return item;
+        item.Click += async (_, _) =>
+        {
+            try { action(); }
+            catch (OperationCanceledException) { }
+            catch (Exception error) { if (MainWindow.Current is { } window) await window.ShowErrorAsync(error.Message); }
+        };
+        return item;
     }
     internal static MenuFlyoutItem Async(string title, Func<Task> action, string? glyph = null, bool enabled = true, string? shortcut = null)
         => Item(title, async () =>

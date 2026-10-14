@@ -156,11 +156,14 @@ API HRESULT __cdecl OurNotesGpuPresent(Surface* s, GLuint sourceFramebuffer, UIN
     if (!s || !s->IsOwner() || !s->object) return E_INVALIDARG;
     if (!s->f.lock(s->interopDevice, 1, &s->object)) return DXGI_ERROR_DEVICE_REMOVED;
     GLint read{}, draw{}; glGetIntegerv(0x8CAA, &read); glGetIntegerv(0x8CA6, &draw);
+    const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
     s->f.bind(ReadFramebuffer, sourceFramebuffer); s->f.bind(DrawFramebuffer, s->framebuffer);
     // OpenGL origin is bottom-left. D3D/WinUI samples the first row at the top.
     s->f.blit(0, static_cast<GLint>(sourceHeight), static_cast<GLint>(sourceWidth), 0,
         0, 0, static_cast<GLint>(s->width), static_cast<GLint>(s->height), GL_COLOR_BUFFER_BIT, GL_NEAREST);
     s->f.bind(ReadFramebuffer, static_cast<GLuint>(read)); s->f.bind(DrawFramebuffer, static_cast<GLuint>(draw));
+    if (scissor) glEnable(GL_SCISSOR_TEST);
     if (!s->f.unlock(s->interopDevice, 1, &s->object)) return DXGI_ERROR_DEVICE_REMOVED;
     s->context->CopyResource(s->back.Get(), s->shared.Get());
     HRESULT hr = s->swap->Present(0, DXGI_PRESENT_DO_NOT_WAIT);

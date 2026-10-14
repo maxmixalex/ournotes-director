@@ -30,10 +30,7 @@ public static class SceneAssetExport
         if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("请选择要导出的角色。");
         RenderDimensions.Validate(width, height, supersample);
         var root = source.Root;
-        var output = root["output"] as JsonObject;
-        if (output is null) { output = new JsonObject(); root["output"] = output; }
-        output["width"] = width; output["height"] = height; output["supersample"] = supersample;
-        output["clean"] = true; output["letterbox"] = "none"; output["isolateActor"] = target;
+        root["output"] = ActorIsolation.Output(root["output"] as JsonObject, target, width, height, supersample);
         return SceneDocument.Parse(root.ToJsonString(DesktopSettings.JsonOptions), baseDirectory: source.BaseDirectory);
     }
 }
