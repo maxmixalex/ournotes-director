@@ -1,40 +1,40 @@
-# Windows 创作编辑器重构：实际状态
+# Windows 创作编辑器：开发状态
 
-状态：开发中，不能作为可运行新版交付。主分支尚未替换。用户明确要求 Windows，不扩展或交付 Linux 产品。
+本文件替换上轮未编译草稿说明。开发分支 `feat/windows-creative-editor` 已将独立的 `CreativeScenePage` 接到默认场景入口，不再使用旧指令表单作为默认编辑器。产品和发布工作流只面向 Windows x64；兼容源码保留不等于继续交付 Linux 产品。
 
-## 交互方向
+## 已接入的工作流
 
-主要工作流是空白画布 → 添加角色 → 在常驻素材栏选择动作、表情或声音 → 拖入角色轨道编排 → 导出。角色、动作、表情、语音与位置片段是编辑模型；原生指令是编译结果和高级兼容入口，不能反过来成为默认创作 UI。
+空白画布 → 添加角色 → 常驻素材栏选择动作、表情或声音 → 拖入角色轨道 → 直接摆放和安排时间 → 图片或视频导出。`ournotes-director/scene` 的角色和片段是项目内容，原生指令是编译结果；JSON 仍可粘贴和编辑。
 
-具体参考：
+- 素材替换直接修改当前片段，保留开始时间，不再先删后加。
+- 场景长度随片段变化，尾部停留是可选择、可删除的普通片段，没有隐藏的 minimumDuration。
+- 原剧情按实际执行时间展开，保留原生数据副本。动作与表情显示持续区间。
+- 角色拖动先更新当前原生画面，提交鼠标操作不立即重载模型；需要重放历史时才重建执行状态。
+- 原剧情角色使用投影后的偏移层，保留游戏站位、动作和相机。单人原始画布导出忽略这层构图偏移。
+- 时间轴按可见时间范围和轨道创建控件；播放只移动播放头。整段适应、吸附、裁剪后的声音波形以及片段右键菜单已接入。
+- Windows 音频设备播放已接入。声音由独立原生执行器准备，绘制跟随已消费的音频样本位置；静音不改变导出。纯无声创作场景不创建音频设备和第二个声音准备器；不影响音频的摆放/颜色调整复用已有声音缓存。
+- 口型修正作用于真正提交给 Cubism 的嘴部参数，而不是只报告提前两帧的模拟值。原剧情的一般动画缓冲仍保留。
 
-- Live2D Cubism 官方音频工作流：音频进入时间轴、指定模型、由音频生成场景时长。https://docs.live2d.com/en/cubism-editor-manual/generating-scene-from-audio-file/
-- Live2D 时间轴与音轨/模型关联：https://docs.live2d.com/en/cubism-editor-manual/timelinepalatte/
-- Godot Animation track types：动画、属性与音频轨道各有自己的操作语义。https://docs.godotengine.org/en/stable/tutorials/animation/animation_track_types.html
-- Godot 官方音轨编辑设计：波形、音频入出点、定位时从正确声音位置开始。https://godotengine.org/article/godot-gets-brand-new-animation-editor-cinematic-support/
+## 已获得的运行证据
 
-不声称已经完整复制这些产品的功能或完成 UX 验收。
+`7a52a5bbaec0507909a517eb0092b9e19764c2ce` 的 Windows 工作流 `38589904605` 已 completed/success：引擎和实际 WinUI 编译、核心回归、打包、透明媒体检查、真实剧情在新默认工作台加载和定位、产物上传均通过。该运行发生在后续嘴部显示队列/声音缓存/虚拟化时间轴修正之前，不能代替后续提交的验证。
 
-## 已保存的代码
+新提交的构建结果以其对应 GitHub Actions 为准。CI 窗口检查不是硬件 GPU 帧率测试，也没有人员实际听音，不声称音画已达到最终质量标准。
 
-- `CreativeScene.cs`：独立的 `ournotes-director/scene` 文档，角色和有明确开始时间的片段；编译成原生项目，保留原始项目副本。
-- `ClipTimeline.cs` 与 `CreativeScenePage*.cs`：独立角色/素材栏、片段拖放、语音波形、选择关联检查器、JSON 入口、当前角色导出。尚未替换 MainWindow 的默认 SceneStudioPage。
-- `PreviewSoundtrack.cs`：使用同一原生执行器生成场景 PCM，独立于绘图线程，提供可定位的音频缓存。
-- `WindowsPreviewAudio.cs` / `NativeViewport.Audio.cs`：Windows waveOut 设备输出、暂停、定位、音量及已消费样本时钟；绘图跟随声音时间，音频错误明确显示。
-- `Actor.LipSync.cs` / `NativeMotionSync.cs`：取消统一强加的最低开口量和额外平滑，保留模型映射；足够完整音频块立即分析；新对白重建原生分析状态。
-- `AdvUi.ClipVoice.cs`：独立角色声音所有权的实现草稿，尚未接入现有 Voice 分发。
+## 仍然明确存在的边界
 
-## 已知未完成事项，继续前必须处理
+1. 主页工作台仍沿用上一轮实现；本轮主要重写场景创作流程，并非整个应用已全面重写完成。
+2. 多个声音重叠仍受原生全局语音策略影响。独立角色声音分发草稿尚未接入，相关写入被工具层拦截，未绕过或重试。不要声称独立混音完成。
+3. 修改有状态的原生演出历史、向后定位仍可能重放和重新加载。拖动提交和时间轴控件开销已减少，但用户机器硬件性能和稳定帧率尚未验收。
+4. 原剧情导入是一次执行结果的片段展开，不是完整分支/交互逻辑的无损可视化编辑。原始项目保留供高级操作。
+5. 表情保持到后续表情；原有复杂动作的内部速度/循环/等待不能仅靠缩窄色块任意更改。替换源角色动作后的原站位衔接仍需要进一步检查。
+6. 暂停恢复、设备切换、重叠语音和实际嘴形自然度需要真实音频设备验收。不得用嘴部参数变化或无声 CI 截图代替。
 
-1. Windows 集成运行 38580372158 在核心编译阶段失败：CreativeScene 的三处 `JsonArray.Add(JsonObject)` 选择了不支持 AOT 的泛型重载。没有通过编译，不得标记为完成。
-2. 新 UI 文件保存于提交 `db1b4a4b92098d35ba030dc68b18019a62bcab22`，尚未编译或接入主窗口。Inspector 的 `Easing` 字段应按引擎实际 `Ease` 枚举修正；页面再次 Loaded 不应清除已加载画布。
-3. 原剧情导入仍保留了 minimumDuration；应替换为可见可编辑的结束停留，不能重新引入用户反对的隐藏固定时长。
-4. 动作片段的结束/保持语义必须落实到渲染，不允许只缩短色块但动作继续播放；表情保持到下一表情也必须在时间轴中明确呈现。
-5. 声音片段重叠时的独立所有权分发、裁剪边界、文件波形入点、暂停恢复的实际音频时钟仍需完成。
-6. 主构建工作流还未完成 Windows-only 改动；本轮没有启动 Linux 构建。保留旧源码不等于继续开发 Linux 产品。
-7. 实际 Windows 音频设备播放、声音与嘴形的观看/听音验收、完整创作流程和新 UI 截图均未完成。不能用参数变化或编译通过代替这些验收。
-8. 主页工作台目前仍是旧实现。不能将本轮场景编辑器代码称为整个应用重新设计完成。
+## 参考与实际采用部分
 
-## 工具状态
+- Live2D Cubism 音频场景工作流：声音和模型同在时间轴，声音长度参与场景长度，右键操作直接作用于相应音轨。https://docs.live2d.com/en/cubism-editor-manual/generating-scene-from-audio-file/
+- Live2D 时间轴：按模型/属性组织轨道，位置与素材属于不同层次。https://docs.live2d.com/en/cubism-editor-manual/timelinepalatte/
+- Live2D 素材替换命令：替换当前轨道素材，不要求删除整条演出。https://docs.live2d.com/en/cubism-editor-manual/animation-menu/
+- Windows 播放时钟：检查驱动实际返回单位，打开/重置设备后以新的样本原点计算。https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/nf-mmeapi-waveoutgetposition
 
-一组后续集成脚本的 create_blob 请求被工具安全层拦截，未写入。没有执行或换途径执行该脚本。随后仅保存了此前已经获准创建的独立源码 blob 和本说明，主分支没有改动。临时 creative-integration.yml 工作流仍在开发分支，旧集成脚本已删除；不要直接重跑该旧工作流。
+这些是采用的交互和技术依据，不表示已经实现上述产品的全部专业编辑能力。
