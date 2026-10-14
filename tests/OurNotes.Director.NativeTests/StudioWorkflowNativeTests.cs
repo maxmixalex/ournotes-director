@@ -44,8 +44,10 @@ static class StudioWorkflowNativeTests
             var script = new JsonArray(new JsonObject { ["cmd"] = "Delay", ["Frames"] = 1 });
             string legacyPath = Path.Combine(root, "legacy-script.json");
             File.WriteAllText(legacyPath, script.ToJsonString());
-            using (var renderer = new AdvStoryRenderer(new Archive(root), "intl", "", "43", "zh-Hans", 128, 96, legacyPath, "", 1))
-                Check(renderer.Frame(1, true).Rgba.Length == 128 * 96 * 4, "Legacy CLI command arrays remain renderable after actor isolation was introduced");
+            // This minimal fixture has no letterbox artwork. A wide viewport isolates
+            // the legacy-array parsing contract from unrelated UI asset coverage.
+            using (var renderer = new AdvStoryRenderer(new Archive(root), "intl", "", "43", "zh-Hans", 128, 32, legacyPath, "", 1))
+                Check(renderer.Frame(1, true).Rgba.Length == 128 * 32 * 4, "Legacy CLI command arrays remain renderable after actor isolation was introduced");
             CheckGpuComposite(Check);
             Console.WriteLine($"Passed {checks} blank-scene, pixel-fallback and GPU-preview shader checks."); return 0;
         }
