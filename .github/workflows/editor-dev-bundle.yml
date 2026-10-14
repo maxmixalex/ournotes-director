@@ -1,4 +1,4 @@
-name: Editor development bundle
+name: Editor validation
 on:
   push:
     branches: [feat/studio-ux-gpu]
@@ -6,30 +6,17 @@ on:
 permissions:
   contents: read
 jobs:
-  source:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+  frontend:
+    runs-on: windows-2022
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Archive exact tracked source
-        run: |
-          mkdir -p dev-bundle
-          git archive --format=tar HEAD | gzip > dev-bundle/source.tar.gz
-          git rev-parse HEAD > dev-bundle/source-commit.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/setup-dotnet@v6
         with:
-          name: editor-source
-          path: dev-bundle/source*
-          retention-days: 3
-      - name: Capture verified fixture assets
-        run: |
-          python scripts/fetch-studio-fixture.py fixtures/scene
-          python scripts/fetch-home-fixture.py fixtures/home
-          tar -czf dev-bundle/real-fixtures.tar.gz -C fixtures .
-      - uses: actions/upload-artifact@v7
-        with:
-          name: editor-real-fixtures
-          path: dev-bundle/real-fixtures.tar.gz
-          retention-days: 3
+          dotnet-version: 10.0.x
+      - name: Compile native shared-texture bridge
+        run: ./scripts/build-gpu-preview.ps1 -OutputDirectory artifacts/frontend
+      - name: Publish WinUI
+        run: dotnet publish src/OurNotes.Director.WinUI -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false -o artifacts/frontend --nologo
