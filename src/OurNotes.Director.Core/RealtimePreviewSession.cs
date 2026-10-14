@@ -28,6 +28,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     TimingJob? timingJob;
     readonly Dictionary<string,NativePlaybackTiming> timingCache=new(StringComparer.Ordinal);
     readonly List<Task> timingTasks=[];
+    public IPreviewPlaybackClock? PlaybackClock { get; set; }
     public event EventHandler<PreviewFrame>? FrameReady;
     public event EventHandler<Exception>? Failed;
     public PreviewFrame? LastFrame=>Volatile.Read(ref lastFrame);
@@ -126,12 +127,13 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             RequireRenderer();
             if(Volatile.Read(ref playRequested)==0)return;
             if(renderer is SceneState {NeedsReplay:true})Render(frame,[],replay:true);
-            playing=true;playFrom=frame;playClock=Stopwatch.GetTimestamp();ResetRate();
+            playing=true;playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);ResetRate();
         }));
     }
 
     public void Pause()
     {
+        PlaybackClock?.Pause();
         if(Interlocked.Exchange(ref playRequested,0)==0)return;
         Observe(Enqueue(()=>
         {
@@ -177,7 +179,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     void Load(Func<RendererState> factory,double duration)
     {
         if(!double.IsFinite(duration)||duration<=0||duration>36000)throw new ArgumentOutOfRangeException(nameof(duration));
-        playing=false;Interlocked.Exchange(ref playRequested,0);
+        PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
         CancelTiming();
         renderer?.Dispose();renderer=null;
         // A context must be created after the old context is disposed on this thread.
@@ -202,7 +204,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             if(update.SceneEdits.Count>0&&renderer is not SceneState)throw new InvalidOperationException("Load a scene project before applying scene edits.");
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
             Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue);
-            if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();}
+            if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
             foreach(var waiter in update.Waiters)waiter.TrySetResult();
         }
         catch(Exception exception)
@@ -288,16 +290,19 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                     // is slower, intermediate presentation frames are skipped while
                     // the underlying animation still evaluates its required steps.
                     double elapsed=Stopwatch.GetElapsedTime(playClock).TotalSeconds;
-                    int target=FrameAt(playFrom/(double)renderer.Fps+elapsed);
+                    double? audioPosition=PlaybackClock?.PositionSeconds;
+                    int target=FrameAt(audioPosition??(playFrom/(double)renderer.Fps+elapsed));
                     if(target>frame)Render(target,[]);
-                    if(frame>=renderer.EndFrame)
+                    if(frame>=renderer.EndFrame&&(audioPosition is null||audioPosition.Value>=(renderer.EndFrame+1)/(double)renderer.Fps-0.00001))
                     {
-                        playing=false;Interlocked.Exchange(ref playRequested,0);
+                        PlaybackClock?.Pause();
+                        PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
                         Publish(LastFrame!.Pixels,0);
                         continue;
                     }
                     // Rendering consumed wall time too. Waiting against the timestamp
                     // taken before it would add a second frame interval on a busy GPU.
+                    if(audioPosition is not null){wake.WaitOne(5);continue;}
                     double remaining=(frame-playFrom+1)/(double)renderer.Fps-Stopwatch.GetElapsedTime(playClock).TotalSeconds;
                     if(remaining>0)wake.WaitOne(Math.Clamp((int)Math.Ceiling(remaining*1000),1,34));
                 }
@@ -306,7 +311,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         }
         finally
         {
-            playing=false;Interlocked.Exchange(ref playRequested,0);
+            PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
             CancelTiming();
             try{renderer?.Dispose();renderer=null;}
             catch(Exception exception){ReportFailure(exception);}
@@ -328,7 +333,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
 
     void ReportFailure(Exception exception)
     {
-        playing=false;Interlocked.Exchange(ref playRequested,0);
+        PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
         // A failed native draw never replaces the last successfully rendered pixels.
         try{Failed?.Invoke(this,exception);}catch{ }
     }
@@ -455,7 +460,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public override void DisableGpu(string reason)=>native.DisableGpuPresentation(reason);
         public int NativeFrame=>native.Loop.Frame;
         public bool Finished=>native.Player.Finished&&!native.Player.Cancelled;
-        public override int EndFrame=>Source.DurationMode==PreviewDurationMode.Automatic?Timing?.EndFrame??30*36000:base.EndFrame;
+        public override int EndFrame=>Source.DurationMode==PreviewDurationMode.Automatic?Timing?.EndFrame??30*36000:Math.Max(0,checked((int)Math.Ceiling(Duration*Fps))-1);
         PreviewPerformance measured=new(0,0,0,0,0,0);
         public override PreviewPerformance Performance=>measured;
         public SceneState(ScenePreviewSource source,JsonNode? document=null,DirectorProject? metadata=null,AdvCueCache? cueCache=null)

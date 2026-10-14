@@ -12,7 +12,7 @@ public static class DirectorValidation
         float Number(JsonNode? node,string name,float min=float.NegativeInfinity,float max=float.PositiveInfinity){
             if(node is null||!float.TryParse(node.ToString(),NumberStyles.Float,CultureInfo.InvariantCulture,out float n)||!float.IsFinite(n)||n<min||n>max){Error("Invalid "+name);return 0;}return n;
         }
-        var allowed=new[]{"cmd","i","Command","raw","TargetName","Values","Duration","Ease","IsNoWait","IgnoreData","Space","Parameter","Operation","Value","Key"};
+        var allowed=new[]{"cmd","i","Command","raw","TargetName","Values","Duration","Ease","IsNoWait","IgnoreData","Space","Parameter","Operation","Value","Key","AtFrame"};
         foreach(var pair in row.Data.AsObject())if(!allowed.Contains(pair.Key))Error("Unknown field "+pair.Key);
         if(row.Data["Duration"] is {} duration)Number(duration,"Duration",0,36000);
         if(row.Text("Ease") is {Length:>0} ease&&(!Enum.TryParse<AdvEase>(ease,out var parsed)||!Enum.IsDefined(parsed)||parsed is >=AdvEase.Flash and <=AdvEase.INTERNAL_Custom))Error("Unsupported Ease");

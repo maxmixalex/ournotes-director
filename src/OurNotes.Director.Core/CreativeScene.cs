@@ -175,7 +175,7 @@ public sealed class CreativeScene
             if (t.Command is "Delay" or "Wait" or "GoTo" or "ForceAuto" or "CancelDelay") continue;
             var row = (JsonObject)data.DeepClone(); row["cmd"] = t.Command;
             string actor = Text(row, "TargetName"), kind = Kind(t.Command);
-            if (t.Command == "Character" && actor.Length > 0 && !scene.Actors.OfType<JsonObject>().Any(a => Text(a, "id") == actor))
+            if (t.Command == "Character" && actor.Length > 0 && Text(row, "Model").Length > 0 && !scene.Actors.OfType<JsonObject>().Any(a => Text(a, "id") == actor))
                 scene.Actors.Add(new JsonObject { ["id"] = actor, ["name"] = actor, ["model"] = Text(row, "Model"), ["fromSource"] = true });
             string label = t.Command is "Talk" or "Voice" ? DialogueLabel(native, row, scene.Language) : Text(row, "MotionName", Text(row, "ExpressionName", t.Command));
             scene.AddClip(actor, kind, t.StartFrame / 30d, Math.Max(1, (t.EndFrame ?? t.StartFrame + 30) - t.StartFrame) / 30d, row, label);

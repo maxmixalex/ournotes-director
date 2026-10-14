@@ -111,9 +111,9 @@ public sealed class AdvAudio
         return position>=end?start+(position-start)%(end-start):position;
     }
     // Source channel zero, before gain: suitable for the later native MotionSync/CRI Lips integration.
-    public float[] PcmSince(AdvSound sound,ref long previousSample)
+    public float[] PcmSince(AdvSound sound,ref long previousSample,int lookAheadSamples=0)
     {
-        long now=Math.Max(0,Position(sound)-sound.StartSample);int count=checked((int)Math.Max(0,now-previousSample));
+        long now=Math.Max(0,Position(sound)-sound.StartSample+lookAheadSamples);int count=checked((int)Math.Max(0,now-previousSample));
         var result=new float[count];
         for(int i=0;i<count;i++){long at=Wrap(sound,sound.StartSample+previousSample+i);if(at>=0&&at<sound.Cue.Samples)result[i]=sound.Cue.Pcm[checked((int)at)*sound.Cue.Channels];}
         previousSample=now;return result;

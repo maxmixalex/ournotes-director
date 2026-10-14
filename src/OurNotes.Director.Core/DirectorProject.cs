@@ -9,7 +9,7 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
     public static string SourceId(JsonNode? source)
         => string.IsNullOrWhiteSpace(source?["adv"]?.ToString()) ? LibrarySource : source!["adv"]!.ToString();
     public const string Format="ournotes-director/project";
-    public static JsonNode Document(string path){var node=Archive.ReadJson(path);return node is JsonObject obj&&obj["format"] is null&&obj["actors"] is JsonArray?ShotProject.Convert(path):node;}
+    public static JsonNode Document(string path){var node=Archive.ReadJson(path);if(node is JsonObject creative&&Archive.S(creative,"format")==CreativeScene.Format)return new CreativeScene(creative).Compile();return node is JsonObject obj&&obj["format"] is null&&obj["actors"] is JsonArray?ShotProject.Convert(path):node;}
     public static DirectorProject Read(string path)
     {
         var root=Document(path) as JsonObject??throw new ArgumentException("Project must be an object");

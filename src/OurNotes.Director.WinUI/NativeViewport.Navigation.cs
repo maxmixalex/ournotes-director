@@ -18,7 +18,7 @@ public sealed partial class NativeViewport
     public void SetEmptyCanvas(int width, int height)
     {
         if (width < 16 || height < 16) throw new ArgumentOutOfRangeException(nameof(width));
-        showingEmptyCanvas = true; sourceVersion++; session.Pause(); HasCurrentSource = false; loading = false;
+        previewAudio.Clear(); showingEmptyCanvas = true; sourceVersion++; session.Pause(); HasCurrentSource = false; loading = false;
         emptyWidth = width; emptyHeight = height;
         lock (frameGate) { pendingFrame = null; Volatile.Write(ref lastFrame, null); }
         DetachGpu(); image.Source = null; HideSelection(); status.Text = "空白画布 · 添加角色或素材开始创作";

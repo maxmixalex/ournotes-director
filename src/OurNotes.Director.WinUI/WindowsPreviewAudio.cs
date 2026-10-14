@@ -5,7 +5,7 @@ namespace OurNotes.Director.WinUI;
 
 /// <summary>Windows device-clocked PCM playback. Only the pump owns WAVEHDRs and the
 /// output handle. The render thread reads the consumed-sample clock; it never feeds audio.</summary>
-internal sealed unsafe class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposable
+internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposable
 {
     const int BlockSamples = 960, BlockBytes = BlockSamples * 4, BufferCount = 3;
     const uint Done = 1, Prepared = 2, TimeSamples = 2, TimeBytes = 4;
@@ -70,7 +70,7 @@ internal sealed unsafe class WindowsPreviewAudio : IPreviewPlaybackClock, IAsync
         try { StatusChanged?.Invoke(value); } catch { }
     }
 
-    void Pump()
+    unsafe void Pump()
     {
         Thread.CurrentThread.Name ??= "OurNotes Windows audio output";
         nint device = 0; WaveHeader** headers = stackalloc WaveHeader*[BufferCount];
@@ -163,12 +163,12 @@ internal sealed unsafe class WindowsPreviewAudio : IPreviewPlaybackClock, IAsync
         var values = MemoryMarshal.Cast<byte, short>(bytes);
         for (int i = 0; i < values.Length; i++) values[i] = (short)Math.Round(values[i] * volume);
     }
-    static void CloseDevice(ref nint device, WaveHeader** headers)
+    static unsafe void CloseDevice(ref nint device, WaveHeader** headers)
     {
         if (device != 0) _ = waveOutReset(device);
         for (int i = 0; i < BufferCount; i++)
         {
-            if (headers[i] is null) continue;
+            if (headers[i] == null) continue;
             if (device != 0 && (headers[i]->Flags & Prepared) != 0)
                 _ = waveOutUnprepareHeader(device, headers[i], (uint)sizeof(WaveHeader));
             NativeMemory.Free((void*)headers[i]->Data); NativeMemory.Free(headers[i]); headers[i] = null;
@@ -194,9 +194,9 @@ internal sealed unsafe class WindowsPreviewAudio : IPreviewPlaybackClock, IAsync
     [StructLayout(LayoutKind.Explicit, Size = 12)] struct MultimediaTime
     { [FieldOffset(0)] public uint Type; [FieldOffset(4)] public uint Value; }
     [DllImport("winmm.dll")] static extern uint waveOutOpen(out nint output, uint device, ref WaveFormat format, nuint callback, nuint instance, uint flags);
-    [DllImport("winmm.dll")] static extern uint waveOutPrepareHeader(nint output, WaveHeader* header, uint size);
-    [DllImport("winmm.dll")] static extern uint waveOutUnprepareHeader(nint output, WaveHeader* header, uint size);
-    [DllImport("winmm.dll")] static extern uint waveOutWrite(nint output, WaveHeader* header, uint size);
+    [DllImport("winmm.dll")] static extern unsafe uint waveOutPrepareHeader(nint output, WaveHeader* header, uint size);
+    [DllImport("winmm.dll")] static extern unsafe uint waveOutUnprepareHeader(nint output, WaveHeader* header, uint size);
+    [DllImport("winmm.dll")] static extern unsafe uint waveOutWrite(nint output, WaveHeader* header, uint size);
     [DllImport("winmm.dll")] static extern uint waveOutGetPosition(nint output, ref MultimediaTime time, uint size);
     [DllImport("winmm.dll")] static extern uint waveOutPause(nint output);
     [DllImport("winmm.dll")] static extern uint waveOutRestart(nint output);

@@ -69,6 +69,7 @@ public sealed class AdvStoryRenderer : IDisposable
             Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg)};Audio.Bind(Player);
             Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=playbackViewport is null ? viewportHeight<height : ActorIsolation.HasLetterbox(
                 playbackViewport["width"]!.GetValue<int>(),playbackViewport["height"]!.GetValue<int>(),playbackViewport["letterbox"]!.ToString()),MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
+            Ui.AudioProjectDirectory=script is null?Environment.CurrentDirectory:Path.GetDirectoryName(Path.GetFullPath(script))!;Ui.AudioFfmpegPath=ffmpeg;
             Ui.ResolveCharacter=Scene.Character;
             Ui.ShowingCharacters=()=>Scene.VisibleActors;
             Scene.ForegroundItem=()=>Ui.Chat is {Visible:true} chat?new(chat.SortingOrder,chat.PlaneDistance*chat.PlaneDistance,()=>chat.Draw(Scene.Camera)):null;

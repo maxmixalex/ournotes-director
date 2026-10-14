@@ -151,6 +151,21 @@ public sealed class AdvPlayback
         public int StartFrame{get;}=startFrame;
         public AdvJob? Job{get;set;}
     }
+    private IEnumerable<AdvWait> PlayScheduled()
+    {
+        int previous=-1;
+        for(int i=0;i<program.Rows.Length;i++)
+        {
+            var row=program.Rows[i];if(row.Ignored)continue;
+            if(row.Data["AtFrame"] is not JsonValue value||!value.TryGetValue<int>(out int at)||at<previous||at<0||at>1080000)
+                throw new ArgumentException("Scheduled clips require ordered nonnegative AtFrame values");
+            if(row.Command is "GoTo" or "Wait" or "ForceAuto")throw new ArgumentException("Interactive flow cannot be a scheduled clip");
+            previous=at;
+            if(at>Loop.Frame)yield return Loop.DelayFrames(at-Loop.Frame);
+            if(Cancelled)yield break;
+            ListIndex=i;detached.Add(Execute(row,"commands",i));
+        }
+    }
     private IEnumerable<AdvWait> Play()
     {
         var prepared=new AdvJob(Loop,Prepare!(this));yield return prepared.Completed;prepared.ThrowIfFailed();
@@ -162,6 +177,11 @@ public sealed class AdvPlayback
             if(Cancelled){OnStop?.Invoke();yield break;}
             var row=program.Initialize[i];if(row.Ignored)continue;
             var job=Execute(row,"initialize",i);yield return job.Completed;job.ThrowIfFailed();
+        }
+        if(program.Rows.Any(row=>row.Data["AtFrame"] is not null))
+        {
+            foreach(var wait in PlayScheduled())yield return wait;
+            OnStop?.Invoke();yield break;
         }
         ListIndex=0;
         while(ListIndex<program.Rows.Length)

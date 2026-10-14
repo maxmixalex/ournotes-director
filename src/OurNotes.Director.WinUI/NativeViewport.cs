@@ -99,7 +99,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         surface.PointerCanceled+=OnPointerCanceled;
         surface.PointerCaptureLost+=OnPointerCanceled;
         surface.PointerWheelChanged+=OnPointerWheelChanged;
-        InitializeWorkspaceNavigation();InitializeGpuPresentation();
+        InitializeWorkspaceNavigation();InitializeGpuPresentation();InitializeAudioPresentation();
         Unloaded+=(_,_)=>{if(!disposed)session.Pause();};
         session.FrameReady+=OnFrameReady;session.Failed+=OnFailed;
     }
@@ -112,6 +112,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         try
         {
             await session.LoadSceneAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
+            if(version==sourceVersion)ConfigureAudio(source);
             if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
@@ -128,6 +129,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     }
     long BeginLoad(string message)
     {
+        previewAudio.Clear();
         showingEmptyCanvas=false;HasCurrentSource=false;loading=true;dragTarget=null;dragMoved=false;
         surface.ReleasePointerCaptures();HideSelection();status.Text=message;diagnostics.Content=null;diagnosticFailure=false;
         return ++sourceVersion;
@@ -138,7 +140,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     /// </summary>
     public void InvalidateSource()
     {
-        session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
+        previewAudio.Clear();session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
         dragTarget=null;dragMoved=false;surface.ReleasePointerCaptures();HideSelection();
         status.Text=LastFrame is null?"打开项目，开始预览":"等待载入，保留上一画面";
         diagnostics.Content=null;diagnosticFailure=false;
@@ -158,7 +160,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await session.SetHomeEditStateAsync(state);
         await AwaitPresentationAsync();
     }
-    public Task CommitSceneProjectAsync(ScenePreviewSource source)=>session.CommitSceneProjectAsync(source with{GpuPresentation=true});
+    public async Task CommitSceneProjectAsync(ScenePreviewSource source){await session.CommitSceneProjectAsync(source with{GpuPresentation=true});ConfigureAudio(source);}
     public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
     async Task AwaitPresentationAsync()
     {
@@ -384,7 +386,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             waiters.Clear();
         }
         session.FrameReady-=OnFrameReady;session.Failed-=OnFailed;
-        DetachGpu();await session.DisposeAsync();
+        DetachGpu();await session.DisposeAsync();await previewAudio.DisposeAsync();
         pixelStream?.Dispose();pixelStream=null;
     }
 }
