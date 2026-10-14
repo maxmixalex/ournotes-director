@@ -8,7 +8,7 @@ permissions:
 jobs:
   source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -22,4 +22,14 @@ jobs:
         with:
           name: editor-source
           path: dev-bundle/source*
+          retention-days: 3
+      - name: Capture verified fixture assets
+        run: |
+          python scripts/fetch-studio-fixture.py fixtures/scene
+          python scripts/fetch-home-fixture.py fixtures/home
+          tar -czf dev-bundle/real-fixtures.tar.gz -C fixtures .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: editor-real-fixtures
+          path: dev-bundle/real-fixtures.tar.gz
           retention-days: 3
