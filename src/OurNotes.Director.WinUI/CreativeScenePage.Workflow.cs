@@ -199,8 +199,8 @@ internal sealed partial class CreativeScenePage
                 bool same=viewport.HasCurrentSource&&loadedSourceKey==sourceKey;
                 if(same)await viewport.CommitSceneProjectAsync(source);else await viewport.LoadSceneAsync(source);
                 previewInput?.Dispose();previewInput=input;loadedSourceKey=sourceKey;previewDirty=false;
-                // A live transform already updated the native pose. Do not replay the scene,
-                // re-upload models or rebuild a context when the mouse button is released.
+                // Live placement has already updated the native pose. Mouse release must not
+                // immediately replay history or re-upload all models and textures.
                 if(!(preservePose&&same))await viewport.SeekAsync(Math.Min(restore,document.Duration));
                 viewport.SelectedTargetId=selectedActor;
             }
@@ -220,8 +220,11 @@ internal sealed partial class CreativeScenePage
     }
     async Task ExportAsync(string kind,bool actorOnly=false)
     {
-        viewport.Pause();var native=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);var editor=StudioSceneDocument.FromSceneDocument(native);
-        editor.SetPlaybackDuration(document.Duration+1d/30);
+        viewport.Pause();
+        var native=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);
+        // This read-only view supplies shared export settings without invoking the old
+        // sparse-keyframe compiler. AtFrame rows must reach the renderer unchanged.
+        var editor=StudioSceneDocument.CreateExportView(native,document.Duration+1d/30);
         string? actor=actorOnly?selectedActor:null;JsonNode? metadata=null;
         if(actor is not null)
         {
