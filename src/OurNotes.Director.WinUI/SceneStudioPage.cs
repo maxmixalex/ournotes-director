@@ -51,11 +51,11 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         App.TraceStartup("SceneStudioPage fields initialized");
         _window = window;
         HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch;
-        var file = new DropDownButton { Content = new FontIcon { Glyph = "\uE8E5", FontSize = 15 }, Padding = new(10, 7, 10, 7) };
+        var file = new DropDownButton { Content = "文件", Padding = new(10, 6, 10, 6) };
         var menu = new MenuFlyout();
         Menu("新建场景", () => NewAsync(false)); Menu("打开原剧情", () => NewAsync(true));
         menu.Items.Add(new MenuFlyoutSeparator()); Menu("打开项目…", () => OpenAsync()); Menu("另存为…", () => SaveAsync(true));
-        Menu("恢复草稿", RestoreDraftAsync); file.Flyout = menu; ToolTipService.SetToolTip(file, "文件");
+        Menu("恢复草稿", RestoreDraftAsync); menu.Items.Add(new MenuFlyoutSeparator()); Menu("场景 JSON…", ShowJsonAsync); file.Flyout = menu; ToolTipService.SetToolTip(file, "文件");
         void Menu(string label, Func<Task> action)
         {
             var item = new MenuFlyoutItem { Text = label }; item.Click += async (_, _) => await SafeAsync(action); menu.Items.Add(item);
@@ -64,22 +64,19 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         toolbar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var editTools = Ui.Row(5, file, StudioLayout.AsyncTool("保存", () => SaveAsync(), "\uE74E"),
-            StudioLayout.Tool("", UndoSceneEdit, "\uE7A7"), StudioLayout.Tool("", () => Edit(() => _document?.Redo()), "\uE7A6"));
-        ToolTipService.SetToolTip(editTools.Children[2], "撤销 · Ctrl+Z"); ToolTipService.SetToolTip(editTools.Children[3], "重做 · Ctrl+Y");
+        var editTools = Ui.Row(3, file, StudioMenus.Button("编辑", SceneEditMenu), StudioMenus.Button("视图", SceneViewMenu),
+            StudioLayout.AsyncTool("保存", () => SaveAsync(), "\uE74E"));
         toolbar.Children.Add(editTools); toolbar.Children.Add(_name); Grid.SetColumn(_name, 1);
-        var finalTools = Ui.Row(7, StudioLayout.AsyncTool("单人透明", () => CreateSingleActorShotAsync(false), "\uE77B"),
-            StudioLayout.AsyncTool("画布", CanvasSettingsAsync, "\uE740"), _loop, StudioLayout.AsyncTool("JSON", ShowJsonAsync, "\uE943"),
-            StudioLayout.AsyncTool("导出", ExportAsync, "\uE898", true));
+        var finalTools = Ui.Row(7, StudioLayout.AsyncTool("导出…", ExportAsync, "\uE898", true));
         toolbar.Children.Add(finalTools); Grid.SetColumn(finalTools, 2);
 
         var left = new Grid { RowSpacing = 9 };
         left.RowDefinitions.Add(new() { Height = GridLength.Auto }); left.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
         left.RowDefinitions.Add(new() { Height = GridLength.Auto });
         _addActor = StudioLayout.AsyncTool("添加角色", AddActorAsync, "\uE710");
-        left.Children.Add(Ui.Stack(8, StudioLayout.Section("场景对象"), _addActor));
+        left.Children.Add(Ui.Stack(8, Ui.Row(6, StudioLayout.Section("场景对象"), StudioMenus.Button("…", ActorContextMenu)), _addActor));
         left.Children.Add(_objects); Grid.SetRow(_objects, 1);
-        var objectFooter = Ui.Stack(8, _source, StudioLayout.Tool("移除所选角色", RemoveSelected, "\uE74D"));
+        var objectFooter = Ui.Stack(4, _source);
         left.Children.Add(objectFooter); Grid.SetRow(objectFooter, 2);
         _objects.SelectionChanged += (_, _) =>
         {
@@ -96,9 +93,11 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         _welcome.HorizontalAlignment = HorizontalAlignment.Center; _welcome.VerticalAlignment = VerticalAlignment.Center;
         var center = new Grid(); center.Children.Add(_viewport); center.Children.Add(_welcome);
         _notice.VerticalAlignment = VerticalAlignment.Top; _notice.Margin = new(8); center.Children.Add(_notice);
-        var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("属性"), _autoKey, _properties, _hint));
+        _hint.Visibility = Visibility.Collapsed;
+        ToolTipService.SetToolTip(_autoKey, "开启后，在播放头位置记录属性变化；关闭则整体调整。");
+        var right = Ui.Scroll(Ui.Stack(8, StudioLayout.Section("检查器"), _autoKey, _properties));
         Content = App.TraceConstruction("Scene StudioLayout", () => new StudioLayout(left, center, right, CreateCommandDock(), toolbar));
-        _properties.Children.Add(Ui.Text("在左侧或画布中选择角色、相机与画面。", 13, true));
+        _properties.Children.Add(Ui.Text("选择对象以编辑属性。", 13, true));
 
         _timeline.SeekRequested += time => _ = SafeAsync(() => SeekAsync(time));
         _timeline.PlayPauseRequested += () => _ = SafeAsync(TogglePlaybackAsync);
@@ -114,6 +113,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         _timeline.AddKeyRequested += AddKey;
         _timeline.DeleteKeyRequested += () => { if (_selectedMarker is { } key) Edit(() => _document?.DeleteKeyframe(key)); };
         _viewport.SelectionChanged += (_, id) => { if (!_selectingCommandTarget) SelectObject(id); };
+        _viewport.ContextMenuFactory = ActorContextMenu;
         _viewport.ObjectDragged += (_, drag) => _ = SafeAsync(() => DragAsync(drag));
         _viewport.ObjectScaled += (_, scale) => _ = SafeAsync(() => ScaleAsync(scale));
         _viewport.FramePresented += (_, frame) => OnFrame(frame);
@@ -135,7 +135,17 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         KeyDown += (_, args) =>
         {
             bool ctrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
-            if (!ctrl) return;
+            if (!ctrl)
+            {
+                if (args.OriginalSource is not TextBox and not NumberBox)
+                {
+                    if (args.Key == VirtualKey.F) { _viewport.FitCanvas(); args.Handled = true; }
+                    if (args.Key == VirtualKey.Delete && _objects.FocusState != FocusState.Unfocused) { RemoveSelected(); args.Handled = true; }
+                }
+                return;
+            }
+            if (args.Key == VirtualKey.J && (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0)
+            { args.Handled = true; _ = SafeAsync(ShowJsonAsync); return; }
             switch (args.Key)
             {
                 case VirtualKey.S: args.Handled = true; _ = SafeAsync(() => SaveAsync()); break;
@@ -184,8 +194,15 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
     private async Task NewAsync(bool original)
     {
         if (!await ConfirmReplaceAsync()) return;
+        if (!original)
+        {
+            SaveDraft(); SetDocument(StudioSceneDocument.CreateBlank(_window.Settings.Site, _window.Settings.Language));
+            _viewport.SetEmptyCanvas(_document!.Document.Output.Width, _document.Document.Output.Height);
+            SelectObject(StudioSceneDocument.SceneId);
+            return;
+        }
         var source = await ChooseSourceAsync(); if (source is null) return;
-        SaveDraft(); SetDocument(original ? StudioSceneDocument.FromSceneDocument(SceneTemplates.Create("story-patch", source)) : StudioSceneDocument.Create(source, 5));
+        SaveDraft(); SetDocument(StudioSceneDocument.FromSceneDocument(SceneTemplates.Create("story-patch", source)));
         await ReloadAsync();
     }
     internal async Task SetSourceAsync(string adv, string? site = null)
@@ -233,7 +250,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
     private void RefreshHeader()
     {
         _name.Text = (_document?.Document.FilePath is { } file ? Path.GetFileNameWithoutExtension(file) : "未命名场景") + (HasUnsavedChanges ? " · 未保存" : "");
-        _source.Text = _document is null ? "" : "素材来源 · " + _document.Document.Source.Adv;
+        _source.Text = _document is null ? "" : _document.Document.Source.IsLibrary ? "素材库 · 自由创作" : "原剧情 · " + _document.Document.Source.Adv;
     }
     private bool Edit(Action action)
     {
@@ -286,8 +303,12 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         Add(StudioSceneDocument.CameraId, "相机", "\uE722"); Add(StudioSceneDocument.SceneId, "画面与后处理", "\uE790");
         _objects.SelectedItem = _objects.Items.OfType<ListViewItem>().FirstOrDefault(i => i.Tag?.ToString() == _document.SelectedId);
         _refreshing = false;
-        void Add(string id, string name, string icon) => _objects.Items.Add(new ListViewItem { Tag = id,
-            Content = Ui.Row(8, new FontIcon { Glyph = icon, FontSize = 13 }, new TextBlock { Text = name, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis }), Padding = new(6, 8, 6, 8) });
+        void Add(string id, string name, string icon)
+        {
+            var item = new ListViewItem { Tag = id, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Content = Ui.Row(8, new FontIcon { Glyph = icon, FontSize = 13 }, new TextBlock { Text = name, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis }), Padding = new(6, 8, 6, 8) };
+            AttachActorMenu(item, id); _objects.Items.Add(item);
+        }
     }
     private void SelectObject(string? id)
     {
@@ -370,7 +391,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             _properties.Children.Add(StudioLayout.AsyncTool("选择动作", () => PickAnimationAsync(false), "\uE768"));
             _properties.Children.Add(StudioLayout.AsyncTool("选择表情", () => PickAnimationAsync(true), "\uE76E"));
             _properties.Children.Add(Ui.Text(string.Join(" · ", new[] { DisplayNames.Animation(actor.Motion ?? ""), DisplayNames.Animation(actor.Expression ?? "") }.Where(v => !string.IsNullOrEmpty(v))), 11, true));
-            _properties.Children.Add(StudioLayout.AsyncTool("单人透明导出…", () => CreateSingleActorShotAsync(true), "\uE898"));
+            
             bool screen = actor.Space == "screen";
             _properties.Children.Add(StudioLayout.Section("位置与大小"));
             AddNumber("x", screen ? "水平位置（%）" : "世界 X", actor.Transform.X * (screen ? 100 : 1), -1000, 1000, screen ? .5 : .01);
@@ -382,6 +403,8 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             if (!screen) _properties.Children.Add(Ui.Text("这个对象使用原场景世界坐标，可在这里调整。", 11, true));
         }
         else _properties.Children.Add(Ui.Text("选择一个对象开始编辑。", 13, true));
+        foreach (var pair in new[] { ("x", "y"), ("height", "roll"), ("cx", "cy"), ("zoom", "cr"), ("exposure", "contrast"), ("saturation", "vignette") })
+            if (_numbers.TryGetValue(pair.Item1, out var first) && _numbers.TryGetValue(pair.Item2, out var second)) StudioLayout.PairFields(_properties, first, second);
         _refreshing = false;
     }
     private void AddNumber(string key, string label, double value, double minimum, double maximum, double step)
@@ -566,7 +589,9 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         try
         {
             if (version != _loadVersion || _disposed || _document is null) return;
-            if (!Directory.Exists(_window.Settings.ArchivePath)) { Notice("请选择素材库，之后即可在这里播放和编辑。", false); return; }
+            if (_document.Document.Source.IsLibrary && _document.Actors.Count == 0 && !Directory.Exists(_window.Settings.ArchivePath))
+            { _viewport.SetEmptyCanvas(_document.Document.Output.Width, _document.Document.Output.Height); return; }
+            if (!Directory.Exists(_window.Settings.ArchivePath)) { Notice("添加素材前，请从右上角选择素材库。", false); return; }
             var editor = _document;
             bool inherited = editor.CommandSections.Any(section => section.IsInherited);
             var expanded = StudioSceneDocument.FromSceneDocument(editor.ToSceneDocument());
@@ -693,7 +718,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
     }
     private string AgentInstructions() => """
         请为 OurNotes Director 生成完整场景 JSON，只返回一个 JSON 对象。
-        格式为 ournotes-director/project，version 为 1；source 必须沿用实际素材来源，不能编造模型、动作或表情名。
+        格式为 ournotes-director/project，version 为 1；source 的 site 和 language 沿用当前素材库。自由场景不需要 source.adv；仅引用原剧情时填写实际 adv。不能编造模型、动作或表情名。
         新项目必须明确提供 initialize、commands、finalize；[] 表示空段，省略表示继承原剧情。output 使用 codec=cineform、cineformQuality=film1。
         角色用 Character 创建，再用 Director.Actor（Space=screen）摆放；position=[x,y] 从左上归一化，height 为画布比例。
         原生项目使用 Motion、Expression、Director.Camera、Director.Scene 和 Delay 编排；Delay.Frames 是 30 fps 的整数帧数，同一 Delay 不要同时提供非零 Duration。
@@ -737,6 +762,8 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
         _suppressReload = true;
         try
         {
+            _viewport.RunGpuCompositionSmoke(check);
+            await RunBlankWorkspaceSmokeAsync(check);
             var model = StudioSceneDocument.Create(new("42", "intl", "zh-Hans"), 4);
             string actor = model.AddActor("fixture-model", "测试角色");
             SetDocument(model); _document!.SelectedId = actor;
@@ -744,6 +771,7 @@ internal sealed partial class SceneStudioPage : UserControl, IAsyncDisposable
             model.SetActorTransform(actor, .7, .5, .8, 0, 2, true);
             check(Math.Abs(model.Sample(1).Actors.Single().Transform.X - .5) < .02, "场景时间轴真实插值角色位置");
             SelectObject(actor); _document.Time = 1; RefreshValues(); RefreshTimeline(); UpdateLayout();
+            await RunObjectMenuSmokeAsync(check);
             SelectObject(StudioSceneDocument.CameraId);
             check(_document.SelectedId == StudioSceneDocument.CameraId && _numbers.ContainsKey("zoom"), "由角色切换到相机不会被画布的空选择回调清除");
             SelectObject(actor); SelectObject(StudioSceneDocument.SceneId);

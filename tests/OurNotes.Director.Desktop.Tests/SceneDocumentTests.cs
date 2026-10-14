@@ -107,8 +107,8 @@ public static class SceneDocumentTests
         var dimensions = Project("""
             "source":{"adv":"42"},"output":{"codec":"cineform","width":1919,"height":1080}
             """);
-        check(dimensions.Validate().Issues.Any(issue => issue.Code == "output.encoding-size"),
-            "scene local output validation enforces actual CineForm dimensions without changing the crop");
+        check(!dimensions.Validate().HasErrors,
+            "scene canvas is codec-independent; CineForm alignment is enforced when exporting video, not PNG or editing");
         dimensions.SetOutput(width: 1920, codec: "CFHD", cineformQuality: "HIGH+");
         check(!dimensions.Validate().HasErrors && dimensions.Output.Codec == "cineform" && dimensions.Output.CineformQuality == "high+",
             "scene uses the common encoder's codec and quality normalization");

@@ -23,8 +23,8 @@ public sealed class MainWindow : Window
     private readonly ContentControl _content = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch,
         VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly Dictionary<string, FrameworkElement> _pages = new(StringComparer.Ordinal);
-    private readonly ToggleButton _sceneTab = new() { Content = "场景工作台", Padding = new(22, 9, 22, 9) };
-    private readonly ToggleButton _homeTab = new() { Content = "主页工作台", Padding = new(22, 9, 22, 9) };
+    private readonly ToggleButton _sceneTab = new() { Content = "场景工作台", Padding = new(18, 6, 18, 6) };
+    private readonly ToggleButton _homeTab = new() { Content = "主页工作台", Padding = new(18, 6, 18, 6) };
     private readonly TextBlock _status = Ui.Text("准备就绪", 12, true);
     private readonly ProgressBar _progress = new() { Width = 100, Height = 4, Minimum = 0, Maximum = 1, Visibility = Visibility.Collapsed };
     private readonly TextBlock _archiveStatus = Ui.Text("", 12, true);
@@ -66,11 +66,11 @@ public sealed class MainWindow : Window
         _root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
         _root.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var header = new Grid { Padding = new(16, 9, 16, 9), ColumnSpacing = 18 };
+        var header = new Grid { Padding = new(14, 7, 14, 7), ColumnSpacing = 18 };
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        header.Children.Add(new TextBlock { Text = "OURNOTES", FontSize = 18, VerticalAlignment = VerticalAlignment.Center,
+        header.Children.Add(new TextBlock { Text = "OURNOTES", FontSize = 14, VerticalAlignment = VerticalAlignment.Center,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         var tabs = Ui.Row(4, _sceneTab, _homeTab); tabs.HorizontalAlignment = HorizontalAlignment.Center;
         header.Children.Add(tabs); Grid.SetColumn(tabs, 1);
@@ -79,7 +79,7 @@ public sealed class MainWindow : Window
             StudioLayout.Tool("", () => Navigate("tasks"), "\uE9F9"), StudioLayout.Tool("", () => Navigate("settings"), "\uE713"));
         ToolTipService.SetToolTip(actions.Children[1], "导出任务"); ToolTipService.SetToolTip(actions.Children[2], "设置");
         header.Children.Add(actions); Grid.SetColumn(actions, 2); _root.Children.Add(header);
-        _content.Margin = new(10, 0, 10, 0); _root.Children.Add(_content); Grid.SetRow(_content, 1);
+        _content.Margin = new(0); _root.Children.Add(_content); Grid.SetRow(_content, 1);
         var footer = new Grid { Padding = new(14, 5, 14, 6), ColumnSpacing = 10 };
         footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         footer.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });

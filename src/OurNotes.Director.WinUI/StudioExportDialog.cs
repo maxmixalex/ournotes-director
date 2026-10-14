@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using OurNotes.Director.Core;
@@ -9,20 +10,24 @@ namespace OurNotes.Director.WinUI;
 /// <summary>One final-output workflow, shared by both editors and independent of preview resolution.</summary>
 internal static class StudioExportDialog
 {
-    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false)
+    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false, string initialKind = "clip", string? actorId = null, JsonNode? actorMetadata = null)
     {
         var document = scene.ToSceneDocument(); var output = document.Output;
-        var settings = await ChooseAsync(window, singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, output.Codec,
-            output.CineformQuality, scene.ResolvedDuration ?? scene.Duration, playhead, false, false, output.Supersample,
-            scene.DurationMode == StudioDurationMode.Automatic);
+        Func<string, int, Task<(int Width, int Height)>>? canvas = actorMetadata is null ? null
+            : (codec, _) => Task.FromResult(SceneAssetExport.Canvas(actorMetadata, codec));
+        var settings = await ChooseAsync(window, actorId is not null ? "导出角色素材" : singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, actorId is not null ? "cineform" : output.Codec,
+            output.CineformQuality, scene.ResolvedDuration ?? scene.Duration, playhead, false, actorId is not null, actorId is not null ? 1 : output.Supersample,
+            scene.DurationMode == StudioDurationMode.Automatic, nativeCanvas: canvas, initialKind: initialKind,
+            isolated: actorId is not null);
         if (settings is null) return;
+        if (actorId is not null) document = SceneAssetExport.Isolate(document, actorId, settings.Width, settings.Height, settings.Supersample);
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
         var values = Values(settings); values["project"] = snapshot.FilePath;
         string id = "render." + settings.Kind;
         Enqueue(window, id, "导出场景", values, window.Settings.Context(document.BaseDirectory));
     }
 
-    internal static async Task ShowHomeAsync(MainWindow window, HomeStudioDocument document, double playhead)
+    internal static async Task ShowHomeAsync(MainWindow window, HomeStudioDocument document, double playhead, string initialKind = "clip", bool isolated = false)
     {
         var project = document.Project; var output = project.Output;
         async Task<(int Width, int Height)> NativeCanvas(string selectedCodec, int selectedFps)
@@ -32,7 +37,7 @@ internal static class StudioExportDialog
         }
         var settings = await ChooseAsync(window, "导出主页", output.Width, output.Height, output.Fps, output.Codec,
             output.CineformQuality, project.Duration, playhead, true, !string.IsNullOrEmpty(document.SelectedCharacterKey), output.Supersample,
-            nativeCanvas: NativeCanvas);
+            nativeCanvas: NativeCanvas, initialKind: initialKind, isolated: isolated);
         if (settings is null) return;
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
         var values = Values(settings); values["project"] = snapshot.FilePath;
@@ -65,7 +70,7 @@ internal static class StudioExportDialog
         var build = CommandLineBuilder.Build(id, values, context);
         if (!build.IsValid) throw new ArgumentException(string.Join(Environment.NewLine, build.Errors.Select(e => e.Message)));
         window.Jobs.Enqueue(new(id, title, build.Arguments, context.WorkingDirectory ?? Environment.CurrentDirectory, build.OutputPath, build.OutputKind));
-        window.SetStatus(title + "已加入队列，可以继续编辑。"); window.Navigate("tasks");
+        window.SetStatus(title + "已加入队列，可从右上角任务查看进度。");
     }
 
     private sealed record ExportSettings(string Kind, string Scope, int Width, int Height, int Fps, int Supersample,
@@ -73,10 +78,10 @@ internal static class StudioExportDialog
 
     private static async Task<ExportSettings?> ChooseAsync(MainWindow window, string title, int width, int height,
         int fps, string codec, string quality, double duration, double playhead, bool home, bool selected,
-        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null)
+        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false)
     {
-        var kind = Ui.Choice("导出内容", [("clip", "视频"), ("sequence", "PNG 帧序列"), ("frame", "当前画面 PNG")], "clip");
-        var scope = Ui.Choice("导出范围", [("scene", "完整主页"), ("selected", "选中的角色"), ("all", "每个角色分别导出"), ("both", "完整主页与全部角色")], "scene");
+        var kind = Ui.Choice("导出内容", [("frame", "图片 · 当前姿态 PNG"), ("clip", "动画 · 视频"), ("sequence", "动画 · PNG 帧序列")], initialKind);
+        var scope = Ui.Choice("导出范围", [("scene", "完整主页"), ("selected", "选中的角色"), ("all", "每个角色分别导出"), ("both", "完整主页与全部角色")], isolated && home ? "selected" : "scene");
         if (!selected) ((ComboBoxItem)scope.Items[1]).IsEnabled = false;
         scope.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
         var format = Ui.Choice("视频格式", [("cineform", "透明 MOV · CineForm（推荐）"), ("prores", "透明 MOV · ProRes 4444"),
@@ -108,6 +113,11 @@ internal static class StudioExportDialog
         void Update()
         {
             bool video = Ui.Selected(kind) == "clip";
+            // The batch encoder produces videos. Never silently substitute MOV for
+            // the requested current PNG or image sequence.
+            ((ComboBoxItem)scope.Items[2]).IsEnabled = video;
+            ((ComboBoxItem)scope.Items[3]).IsEnabled = video;
+            if (!video && (Ui.Selected(scope) is "all" or "both")) scope.SelectedIndex = isolated ? 1 : 0;
             format.Visibility = video ? Visibility.Visible : Visibility.Collapsed;
             qualityBox.Visibility = video && Ui.Selected(format) == "cineform" ? Visibility.Visible : Visibility.Collapsed;
             range.Visibility = Ui.Selected(kind) == "frame" || automaticDuration && Ui.Selected(rangeMode) == "complete" ? Visibility.Collapsed : Visibility.Visible;
@@ -184,7 +194,7 @@ internal static class StudioExportDialog
                 string encoding = Ui.Selected(format);
                 RenderDimensions.Validate(checked((int)w.Value), checked((int)h.Value), int.Parse(Ui.Selected(sampling), CultureInfo.InvariantCulture));
                 if (mode == "clip") VideoEncoding.Validate(encoding, checked((int)w.Value), checked((int)h.Value), Ui.Selected(qualityBox));
-                if (mode == "clip" && encoding == "h264" && home && selection != "scene") throw new ArgumentException("透明角色请选择透明 MOV 或无损 MKV。");
+                if (mode == "clip" && encoding == "h264" && (isolated || home && selection != "scene")) throw new ArgumentException("透明角色请选择透明 MOV 或无损 MKV。");
                 bool explicitRange = mode != "frame" && !(automaticDuration && Ui.Selected(rangeMode) == "complete");
                 if (explicitRange && (!double.IsFinite(start.Value) || start.Value < 0 || !double.IsFinite(length.Value)
                     || length.Value <= 0 || start.Value + length.Value > 36000)) throw new ArgumentException("请检查导出的时间范围。");
@@ -200,6 +210,8 @@ internal static class StudioExportDialog
             catch (Exception failure) when (failure is ArgumentException or IOException or OverflowException)
             { args.Cancel = true; error.Title = "请调整导出设置"; error.Message = failure.Message; error.IsOpen = true; }
         };
+        if (isolated && selected && nativeCanvas is not null)
+        { resolution.SelectedItem = resolution.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "native"); await UpdateResolutionAsync(); }
         Update(); return await dialog.ShowAsync() == ContentDialogResult.Primary ? result : null;
     }
 

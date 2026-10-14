@@ -22,6 +22,9 @@ public sealed partial class StudioSceneDocument
         => FromSceneDocument(SceneDocument.Parse(json, filePath, baseDirectory));
     public static StudioSceneDocument Open(string path) => FromSceneDocument(SceneDocument.Open(path));
 
+    public static StudioSceneDocument CreateBlank(string site = "intl", string language = "zh-Hans", double duration = 5)
+        => Create(new SceneSource("", site, language), duration);
+
     public static StudioSceneDocument Create(SceneSource source, double duration = 3)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -41,6 +44,7 @@ public sealed partial class StudioSceneDocument
                 (JsonNode)new JsonObject { ["cmd"] = "Delay", ["Frames"] = count },
                 (JsonNode)new JsonObject { ["cmd"] = "Delay", ["Frames"] = 0, ["Key"] = Marker + "duration/" + count.ToString(CultureInfo.InvariantCulture) })
         };
+        if (source.IsLibrary) root["source"]!.AsObject().Remove("adv");
         return FromSceneDocument(SceneDocument.Parse(root.ToJsonString(DesktopSettings.JsonOptions)));
     }
 

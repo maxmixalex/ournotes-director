@@ -29,7 +29,11 @@ public sealed record SceneValidationResult(IReadOnlyList<SceneValidationIssue> I
         : "JSON 结构检查通过；尚未验证归档资源、模型参数或完整动画。请继续原生验证和预览。";
 }
 
-public sealed record SceneSource(string Adv, string Site, string Language);
+public sealed record SceneSource(string Adv, string Site, string Language)
+{
+    public bool IsLibrary => string.IsNullOrWhiteSpace(Adv) || Adv == DirectorProject.LibrarySource;
+    public string EffectiveAdv => IsLibrary ? DirectorProject.LibrarySource : Adv;
+}
 public sealed record SceneOutput(int Width, int Height, int Supersample, string Codec,
     string CineformQuality, bool Clean, string Letterbox);
 public sealed record SceneRowLocation(string Section, int Index);
@@ -410,11 +414,14 @@ public sealed partial class SceneDocument
         }
         Keys(root, ["format", "version", "source", "output", "initialize", "commands", "finalize", "text"], "$");
         if (Scalar(root["version"]) != "1") Error("project.version", "$.version", "统一项目 version 必须为 1。");
-        if (root["source"] is not JsonObject source) Error("source.required", "$.source", "需要 source 对象和 source.adv。");
+        if (root["source"] is not JsonObject source) Error("source.required", "$.source", "需要 source 对象指定素材站点。空白场景不需要 adv。");
         else
         {
             Keys(source, ["adv", "site", "language"], "$.source");
-            if (string.IsNullOrWhiteSpace(Scalar(source["adv"]))) Error("source.adv", "$.source.adv", "source.adv 不能为空。");
+            if (Source.IsLibrary && Sections.Any(section => root[section] is not JsonArray))
+                Error("source.sections", "$.source", "空白场景必须明确提供开场、正文和结束数组，不能继承不存在的原剧情。");
+            if (source["adv"] is {} advValue && (advValue is not JsonValue av || !av.TryGetValue<string>(out _)))
+                Error("source.adv", "$.source.adv", "原剧情编号必须为字符串，空白场景请省略 adv。");
             foreach (string key in new[] { "site", "language" })
                 if (source[key] is { } value && (value is not JsonValue v || !v.TryGetValue<string>(out string? s) || string.IsNullOrWhiteSpace(s)))
                     Error("source.value", "$.source." + key, key + " 必须是非空字符串。");
@@ -423,10 +430,14 @@ public sealed partial class SceneDocument
             Error("output.object", "$.output", "output 必须是对象。");
         else if (root["output"] is JsonObject output)
         {
-            Keys(output, ["width", "height", "supersample", "codec", "cineformQuality", "clean", "letterbox"], "$.output");
+            Keys(output, ["width", "height", "supersample", "codec", "cineformQuality", "clean", "letterbox", "isolateActor", "playbackViewport"], "$.output");
             foreach (string key in new[] { "width", "height", "supersample" })
                 if (output[key] is { } value && (!TryInteger(value, out int n) || n < (key == "supersample" ? 1 : 16) || n > (key == "supersample" ? 4 : RenderDimensions.MaxSide)))
                     Error("output.integer", "$.output." + key, key + " 超出范围或不是整数。");
+            if (output["isolateActor"] is {} isolated && (isolated is not JsonValue iv || !iv.TryGetValue<string>(out var target) || string.IsNullOrWhiteSpace(target)))
+                Error("output.actor", "$.output.isolateActor", "独立素材必须指定角色标识。");
+            try { ActorIsolation.ValidateViewport(output["playbackViewport"]); }
+            catch (ArgumentException error) { Error("output.playbackViewport", "$.output.playbackViewport", error.Message); }
             if (output["clean"] is { } clean && (clean is not JsonValue boolean || !boolean.TryGetValue<bool>(out _)))
                 Error("output.boolean", "$.output.clean", "clean 必须为布尔值。");
             try { if (output["codec"] is not null) _ = VideoEncoding.NormalizeCodec(Scalar(output["codec"])); }
@@ -438,7 +449,7 @@ public sealed partial class SceneDocument
             if (!issues.Any(issue => issue.Path.StartsWith("$.output", StringComparison.Ordinal)))
             {
                 var current = Output;
-                try { RenderDimensions.Validate(current.Width, current.Height, current.Supersample); VideoEncoding.Validate(current.Codec, current.Width, current.Height, current.CineformQuality); }
+                try { RenderDimensions.Validate(current.Width, current.Height, current.Supersample); }
                 catch (ArgumentException error) { Error("output.encoding-size", "$.output", error.Message); }
             }
         }

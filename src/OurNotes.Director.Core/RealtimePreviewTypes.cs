@@ -6,7 +6,7 @@ public sealed record PreviewTarget(string Id, string Label, double X, double Y, 
 /// <summary>A private project snapshot, using the same document and renderer as final scene export.</summary>
 public sealed record ScenePreviewSource(string ArchivePath, string ProjectPath, string CubismPath,
     string FfmpegPath, int Width = 960, int Height = 540, double Duration = 60,
-    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed);
+    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed, bool GpuPresentation = false);
 
 public enum PreviewDurationMode { Fixed, Automatic }
 
@@ -31,16 +31,19 @@ public sealed record PreviewActorAnimation(string TargetId,string Model,string M
 
 /// <summary>Preview resolution is independent from the saved project's final export resolution.</summary>
 public sealed record HomePreviewSource(string ArchivePath, HomeProject Project, string? Character = null,
-    int Width = 960, int Height = 540);
+    int Width = 960, int Height = 540, bool GpuPresentation = false);
 
-/// <summary>One directly read native RGBA frame; no image or video intermediary is involved.</summary>
+/// <summary>A native rendered frame. GPU presentation carries a shared surface and dimensions,
+/// with an empty Rgba buffer; pixel-mode clients retain the original complete RGBA contract.</summary>
 public sealed record PreviewFrame(long Sequence, long SessionId, int Frame, double Time, Pixels Pixels,
     IReadOnlyList<PreviewTarget> Targets, double RenderMilliseconds, double FramesPerSecond,
     bool IsPlaying, string Device,double Duration=0,
     PreviewDurationMode DurationMode=PreviewDurationMode.Fixed,NativePlaybackTiming? Timing=null,
     PreviewPerformance? Performance=null,IReadOnlyList<PreviewLipSync>? LipSync=null,
-    IReadOnlyList<PreviewActorAnimation>? ActorAnimations=null)
+    IReadOnlyList<PreviewActorAnimation>? ActorAnimations=null, GpuPreviewSurface? GpuSurface=null, string? PresentationFallback=null)
 {
+    public bool IsGpuPresented => GpuSurface is not null;
+    public long CpuPixelTransferBytes => Pixels.Rgba.LongLength;
     public NativePlaybackTiming? NativeTiming=>Timing;
     public bool DurationResolved=>DurationMode==PreviewDurationMode.Fixed||Timing?.IsComplete==true;
 }

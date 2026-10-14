@@ -4,7 +4,7 @@ using System.Text;
 namespace OurNotes.Director.Core;
 
 // Hidden Win32 context; pixels are rendered only to FBOs, never captured from a window.
-public sealed unsafe class OffscreenGl : IDisposable
+public sealed unsafe partial class OffscreenGl : IDisposable
 {
     const string GL="opengl32.dll";
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern nint CreateWindowExW(uint ex,string cls,string title,uint style,int x,int y,int w,int h,nint parent,nint menu,nint instance,nint param);
@@ -83,7 +83,8 @@ public sealed unsafe class OffscreenGl : IDisposable
     readonly Dictionary<uint,uint> stencilBuffers=[];int stencilDepth;
     public readonly record struct GlSurface(uint Texture,uint Framebuffer,int Width,int Height);
     public int Width{get;} public int Height{get;} public string Device{get;}
-    int Loc(string name)=>Fn<Location>("glGetUniformLocation")(program,name);
+    readonly Dictionary<string,int> uniformLocations=new(StringComparer.Ordinal);
+    int Loc(string name){if(!uniformLocations.TryGetValue(name,out int location))uniformLocations[name]=location=Fn<Location>("glGetUniformLocation")(program,name);return location;}
     void Float(string name,float v)=>Fn<Uniform1>("glUniform1f")(Loc(name),v);
     void Vec4(string name,float a,float b,float c,float d)=>Fn<Uniform4>("glUniform4f")(Loc(name),a,b,c,d);
     void TextureUnit(uint unit,uint texture){Fn<One>("glActiveTexture")(0x84C0+unit);glBindTexture(0x0DE1,texture);}
@@ -396,6 +397,7 @@ public sealed unsafe class OffscreenGl : IDisposable
         try {
             glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);
             glViewport(0,0,sw,sh);drawBands(sw,sh,Height);
+            if(!queued&&TryGpuPresentation(target,width,height,supersample))return new Pixels(width,height,[]);
             return ResolvePresentation(target,width,height,supersample,queued,!transparent);
         }finally{Fn<Bind>("glBindFramebuffer")(0x8D40,drawTarget);glViewport(0,0,Width,Height);}
     }
@@ -448,5 +450,5 @@ public sealed unsafe class OffscreenGl : IDisposable
         Grade(grade);CopySurface(new(maskTexture,mask,Width,Height),CurrentSurface);
     }
     bool disposed;
-    public void Dispose(){if(disposed)return;disposed=true;resolveShader?.Dispose();foreach(var buffer in stencilBuffers.Values){var b=buffer;Fn<Delete>("glDeleteRenderbuffers")(1,ref b);}foreach(var buffer in pixelBuffers){var b=buffer;Fn<Delete>("glDeleteBuffers")(1,ref b);}foreach(var framebuffer in framebuffers){var f=framebuffer;Fn<Delete>("glDeleteFramebuffers")(1,ref f);}foreach(var texture in textures){var t=texture;glDeleteTextures(1,ref t);}Fn<One>("glDeleteProgram")(program);if(linuxContext is not null)linuxContext.Dispose();else{wglMakeCurrent(0,0);wglDeleteContext(rc);ReleaseDC(window,dc);DestroyWindow(window);}}
+    public void Dispose(){if(disposed)return;disposed=true;gpuSurface?.Dispose();gpuSurface=null;gpuCompositeShader?.Dispose();resolveShader?.Dispose();foreach(var buffer in stencilBuffers.Values){var b=buffer;Fn<Delete>("glDeleteRenderbuffers")(1,ref b);}foreach(var buffer in pixelBuffers){var b=buffer;Fn<Delete>("glDeleteBuffers")(1,ref b);}foreach(var framebuffer in framebuffers){var f=framebuffer;Fn<Delete>("glDeleteFramebuffers")(1,ref f);}foreach(var texture in textures){var t=texture;glDeleteTextures(1,ref t);}Fn<One>("glDeleteProgram")(program);if(linuxContext is not null)linuxContext.Dispose();else{wglMakeCurrent(0,0);wglDeleteContext(rc);ReleaseDC(window,dc);DestroyWindow(window);}}
 }

@@ -17,8 +17,15 @@ public sealed class AdvStoryRenderer : IDisposable
     public AdvStills Stills{get;}
     public AdvVideo Video{get;}
     public string Device=>gl.Device;
+    public bool PreferGpuPresentation { get => gl.PreferGpuPresentation; set => gl.PreferGpuPresentation = value; }
+    public GpuPreviewSurface? GpuSurface => gl.GpuSurface;
+    public string? GpuFallbackReason => gl.GpuFallbackReason;
+    public void DisableGpuPresentation(string reason) => gl.DisableGpuPresentation(reason);
+
     readonly OffscreenGl gl;
     readonly int outputWidth,outputHeight,supersample,viewportY;
+    readonly string? isolateActor;
+    bool TransparentOutput => isolateActor is not null || Scene.DirectorTransparent;
     readonly Dictionary<string,double> milliseconds=[];
     T Measure<T>(string name,Func<T> action){long start=Stopwatch.GetTimestamp();try{return action();}finally{milliseconds[name]=milliseconds.GetValueOrDefault(name)+Stopwatch.GetElapsedTime(start).TotalMilliseconds;}}
     void Measure(string name,Action action)=>Measure(name,()=>{action();return 0;});
@@ -30,14 +37,24 @@ public sealed class AdvStoryRenderer : IDisposable
         outputWidth=width;outputHeight=height;this.supersample=supersample;
         float target=width>height?2.1666667f:1.7777778f;int viewportHeight=height;
         var supplied=projectDocument??(script is null?null:DirectorProject.Document(script));
-        bool noLetterbox=supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
+        var sourceOutput = (supplied as JsonObject)?["output"] as JsonObject;
+        isolateActor = sourceOutput?["isolateActor"]?.ToString();
+        var playbackViewport = sourceOutput?["playbackViewport"];
+        ActorIsolation.ValidateViewport(playbackViewport);
+        bool noLetterbox=isolateActor is not null || supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
         if(!noLetterbox&&width/(float)height+.0001f<target&&(height-width/target)/2>1)viewportHeight=(int)MathF.Floor(width/target+.5f);
         viewportY=(int)MathF.Floor((height-viewportHeight)/2f+.5f);
         var manifest=archive.Manifest(site,"stories",id);var definition=JsonNode.Parse(archive.Logical(site,manifest,"story.json"))!;
         var episode=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"episode")))!;
         var scene=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"scene")))!;var settings=scene["settings"]!["playerSettings"]!.DeepClone();
+        if(id==DirectorProject.LibrarySource)
+        {
+            // The library pack provides materials, never a source episode's performance.
+            episode["commands"]=new JsonArray(); episode["text"]=new JsonObject();
+            settings["_initializeEpisodes"]=new JsonArray(); settings["_finalizeEpisodes"]=new JsonArray();
+        }
         if(supplied is not null){var custom=supplied;bool project=custom is JsonObject&&Archive.S(custom,"format")==DirectorProject.Format;
-            if(project){if(projectDocument is null)_=DirectorProject.Read(script!);if(Archive.S(custom["source"]!,"adv")!=id)throw new ArgumentException("Project source does not match story ID");}
+            if(project){if(projectDocument is null)_=DirectorProject.Read(script!);if(DirectorProject.SourceId(custom["source"])!=id)throw new ArgumentException("Project source does not match story ID");}
             var commands=custom is JsonArray?custom:custom["commands"];
             if(commands is not null)episode["commands"]=commands.DeepClone();else if(!project)throw new ArgumentException("Script needs a commands array");
             if(custom is JsonObject){if(custom["text"] is JsonObject text)foreach(var pair in text)episode["text"]![pair.Key]=pair.Value?.DeepClone();if(custom["initialize"] is JsonArray init)settings["_initializeEpisodes"]=init.DeepClone();if(custom["finalize"] is JsonArray fin)settings["_finalizeEpisodes"]=fin.DeepClone();}
@@ -50,7 +67,8 @@ public sealed class AdvStoryRenderer : IDisposable
             var rows=program.Initialize.Concat(program.Rows).Concat(program.Finalize).Where(r=>!r.Ignored).ToArray();
             foreach(var row in rows)DirectorValidation.Check(row);
             Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg)};Audio.Bind(Player);
-            Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=viewportHeight<height,MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
+            Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=playbackViewport is null ? viewportHeight<height : ActorIsolation.HasLetterbox(
+                playbackViewport["width"]!.GetValue<int>(),playbackViewport["height"]!.GetValue<int>(),playbackViewport["letterbox"]!.ToString()),MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
             Ui.ResolveCharacter=Scene.Character;
             Ui.ShowingCharacters=()=>Scene.VisibleActors;
             Scene.ForegroundItem=()=>Ui.Chat is {Visible:true} chat?new(chat.SortingOrder,chat.PlaneDistance*chat.PlaneDistance,()=>chat.Draw(Scene.Camera)):null;
@@ -69,7 +87,7 @@ public sealed class AdvStoryRenderer : IDisposable
     public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
     {
         RenderFrame(frame,clean,previewEdits,stopAtEnd);
-        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,Scene.DirectorTransparent));Loop.Drain();Player.ThrowIfFailed();return pixels;
+        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();return pixels;
     }
     public IReadOnlyList<PreviewTarget> PreviewTargets()
     {
@@ -108,9 +126,9 @@ public sealed class AdvStoryRenderer : IDisposable
             end.HasValue?null:"剧情未在十小时分析上限内结束，请检查循环指令或使用自由时长。");
     }
     public int PendingFrames=>gl.PendingPixels;
-    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,Scene.DirectorTransparent));Loop.Drain();Player.ThrowIfFailed();}
+    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();}
     public Pixels ReadQueuedFrame()=>Measure("readbackAndResolve",gl.ReadQueued);
-    void Draw(bool clean){Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
+    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor));return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
     public void Dispose(){Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();gl.Dispose();}
     public static object Contact(Archive archive,string site,string dll,string id,string language,string? script,string output,int width,int height,double[] times,int columns,bool clean,bool overwrite,string ffmpeg,int supersample=2)
     {
@@ -150,7 +168,7 @@ public sealed class AdvStoryRenderer : IDisposable
             var mixedPcm=new float[AdvAudio.SamplesPerFrame*2];
             using(var pcm=File.Create(audio))for(int i=0;i<count;i++){
                 renderer.QueueFrame(start+i,clean);if(renderer.PendingFrames>=3)EncodeQueued();
-                if(codec=="h264"&&renderer.Scene.DirectorTransparent)throw new ArgumentException("Transparent scenes require --codec cineform, prores, or ffv1");
+                if(codec=="h264"&&renderer.TransparentOutput)throw new ArgumentException("Transparent scenes require --codec cineform, prores, or ffv1");
                 long stamp=Stopwatch.GetTimestamp();renderer.Audio.MixFrame(mixedPcm);pcm.Write(MemoryMarshal.AsBytes(mixedPcm.AsSpan()));audioMs+=Stopwatch.GetElapsedTime(stamp).TotalMilliseconds;
                 written++;finished=renderer.Player.Finished;
                 if(i%30==0)Console.Error.WriteLine($"story render {i+1}/{count}");

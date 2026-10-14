@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
@@ -17,7 +18,7 @@ internal sealed partial class SceneStudioPage
     private readonly TextBlock _commandTime = Ui.Text("", 11, true);
     private readonly TextBlock _durationStatus = Ui.Text("", 11, true);
     private readonly Slider _commandSeek = new() { Minimum = 0, Maximum = 5, StepFrequency = 1d / 30, MinWidth = 110 };
-    private RadioButton? _commandsTab, _timelineTab;
+    private ToggleButton? _commandsTab, _timelineTab;
     private FrameworkElement? _commandPanel;
     private Button? _commandPlay;
     private string? _selectedCommand;
@@ -39,8 +40,8 @@ internal sealed partial class SceneStudioPage
     // Keeping the two surfaces in one dock preserves the viewport while changing how a shot is authored.
     private FrameworkElement CreateCommandDock()
     {
-        var commandsTab = _commandsTab = new RadioButton { Content = "指令", GroupName = "SceneDock", IsChecked = true };
-        var timelineTab = _timelineTab = new RadioButton { Content = "时间轴", GroupName = "SceneDock" };
+        var commandsTab = _commandsTab = new ToggleButton { Content = "指令", IsChecked = true, Padding = new(14, 5, 14, 5) };
+        var timelineTab = _timelineTab = new ToggleButton { Content = "时间轴", Padding = new(14, 5, 14, 5) };
         var header = new Grid { Padding = new(10, 4, 10, 4), ColumnSpacing = 10 };
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
@@ -62,13 +63,7 @@ internal sealed partial class SceneStudioPage
         flyout.Items.Add(new MenuFlyoutSeparator());
         var all = new MenuFlyoutItem { Text = "所有指令…" }; all.Click += async (_, _) => await SafeAsync(ChooseCommandAsync); flyout.Items.Add(all); insert.Flyout = flyout;
         _commandPlay = StudioLayout.AsyncTool("播放", TogglePlaybackAsync, "\uE768");
-        var toolbar = Ui.Row(6, _commandPlay, insert,
-            StudioLayout.Tool("复制", DuplicateSelectedCommand, "\uE8C8"),
-            StudioLayout.Tool("", () => MoveSelectedCommand(-1), "\uE74A"),
-            StudioLayout.Tool("", () => MoveSelectedCommand(1), "\uE74B"),
-            StudioLayout.Tool("", RemoveSelectedCommand, "\uE74D"), _commandSection, _commandSearch, _commandTime);
-        ToolTipService.SetToolTip(toolbar.Children[3], "上移所选指令"); ToolTipService.SetToolTip(toolbar.Children[4], "下移所选指令");
-        ToolTipService.SetToolTip(toolbar.Children[5], "删除所选指令");
+        var toolbar = Ui.Row(6, _commandPlay, insert, StudioMenus.Button("…", CommandContextMenu), _commandSection, _commandSearch, _commandTime);
         var tools = new ScrollViewer { Content = toolbar, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new(8, 0, 8, 4) };
         panel.Children.Add(tools); panel.Children.Add(_commands); Grid.SetRow(_commands, 1);
@@ -80,11 +75,13 @@ internal sealed partial class SceneStudioPage
         _commandSeek.Margin = new(12, 0, 12, 0); root.Children.Add(_commandSeek); Grid.SetRow(_commandSeek, 2);
         void Switch(bool commandMode)
         {
+            commandsTab.IsChecked = commandMode; timelineTab.IsChecked = !commandMode;
             panel.Visibility = commandMode ? Visibility.Visible : Visibility.Collapsed;
             _timeline.Visibility = commandMode ? Visibility.Collapsed : Visibility.Visible;
             _commandSeek.Visibility = commandMode ? Visibility.Visible : Visibility.Collapsed;
         }
         commandsTab.Checked += (_, _) => Switch(true); timelineTab.Checked += (_, _) => Switch(false);
+        commandsTab.Click += (_, _) => Switch(true); timelineTab.Click += (_, _) => Switch(false);
         _commandSection.SelectionChanged += (_, _) => RefreshCommands(true);
         _commandSearch.TextChanged += (_, _) => RefreshCommands(true);
         _commands.SelectionChanged += (_, _) =>
@@ -97,6 +94,11 @@ internal sealed partial class SceneStudioPage
         _commands.KeyDown += (_, args) =>
         {
             if (args.OriginalSource is TextBox or NumberBox) return;
+            bool control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            bool alt = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            if (control && args.Key == Windows.System.VirtualKey.D) { DuplicateSelectedCommand(); args.Handled = true; return; }
+            if (alt && args.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down)
+            { MoveSelectedCommand(args.Key == Windows.System.VirtualKey.Up ? -1 : 1); args.Handled = true; return; }
             if (args.Key == Windows.System.VirtualKey.Delete) { RemoveSelectedCommand(); args.Handled = true; }
             else if (args.Key == Windows.System.VirtualKey.Space) { _ = SafeAsync(TogglePlaybackAsync); args.Handled = true; }
         };
@@ -111,7 +113,7 @@ internal sealed partial class SceneStudioPage
         if (_document is null) return;
         var commands = _document.Commands.Where(command => !command.IsGenerated).ToArray();
         string signature = _document.Document.Text;
-        _commandCount.Text = $"{commands.Length} 条指令 · 双击定位画面";
+        _commandCount.Text = $"{commands.Length} 条指令";
         static string TimeLabel(StudioCommand command) => command.Start is double start ? command.End is double end && end > start + .01 ? $"{start:0.00}–{end:0.00} s" : $"{start:0.00} s" : "依执行顺序";
         if (!force && signature == _commandListSignature)
         {
@@ -144,7 +146,8 @@ internal sealed partial class SceneStudioPage
             FrameworkElement[] cells = [enabled, position, title, detail, time];
             for (int i = 0; i < cells.Length; i++) { cells[i].VerticalAlignment = VerticalAlignment.Center; row.Children.Add(cells[i]); Grid.SetColumn(cells[i], i); }
             var item = new ListViewItem { Content = row, Tag = command.Id, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(8, 3, 8, 3) };
-            ToolTipService.SetToolTip(item, command.Command + " · " + command.Summary); _commands.Items.Add(item);
+            StudioMenus.Context(item, () => { SelectCommand(command.Id); return _selectedCommand == command.Id; }, CommandContextMenu);
+            ToolTipService.SetToolTip(item, command.Command + " · " + command.Summary + "\n双击定位 · 右键编辑操作"); _commands.Items.Add(item);
             if (command.Id == _selectedCommand) _commands.SelectedItem = item;
         }
         _updatingCommands = false;
@@ -251,18 +254,20 @@ internal sealed partial class SceneStudioPage
                 ApplyCommandDraft();
             }, "\uE8D6"));
         }
-        var fields = Ui.Stack(9);
+        var fields = Ui.Stack(9); var advancedFields = Ui.Stack(9);
         foreach (var entry in _commandDraft.ToArray())
         {
             if (entry.Key is "cmd" or "Command" or "Key" or "IgnoreData" or "i" || entry.Key == "AdvTextID" && _dialogueText is not null) continue;
-            BuildCommandField(fields, entry.Key, entry.Value, [entry.Key], descriptor, 0);
+            bool advanced = !descriptor.Fields.Any(field => field.Key == entry.Key) && entry.Key is not ("Values" or "TargetName" or "MotionName" or "ExpressionName" or "Frames" or "Duration" or "Model");
+            BuildCommandField(advanced ? advancedFields : fields, entry.Key, entry.Value, [entry.Key], descriptor, 0);
         }
         foreach (var field in descriptor.Fields.Where(field => !_commandDraft.ContainsKey(field.Key) && !field.Key.Contains('.') && field.Key is not ("IgnoreData" or "AdvTextID")))
             BuildCommandField(fields, field.Key, null, [field.Key], descriptor, 0);
         _properties.Children.Add(fields);
-        _properties.Children.Add(StudioLayout.Tool("应用指令", ApplyCommandDraft, "\uE73E"));
-        _properties.Children.Add(StudioLayout.Tool("撤销未应用修改", DiscardCommandDraft, "\uE7A7"));
-        _properties.Children.Add(StudioLayout.AsyncTool("添加字段…", AddCommandFieldAsync, "\uE710"));
+        _properties.Children.Remove(position); advancedFields.Children.Insert(0, position);
+        advancedFields.Children.Add(StudioLayout.AsyncTool("添加字段…", AddCommandFieldAsync, "\uE710"));
+        _properties.Children.Add(new Expander { Header = "高级参数", HorizontalAlignment = HorizontalAlignment.Stretch, Content = advancedFields });
+        _properties.Children.Add(Ui.Row(6, StudioLayout.Tool("应用", ApplyCommandDraft, "\uE73E"), StudioLayout.Tool("还原", DiscardCommandDraft, "\uE7A7")));
         _commandJson = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Consolas"), FontSize = 11, Height = 220 };
         _commandJson.Text = _commandDraft.ToJsonString(DesktopSettings.JsonOptions);

@@ -5,6 +5,9 @@ namespace OurNotes.Director.Core;
 // A project is an envelope around the original episode commands, not another player.
 public sealed record DirectorProject(string Adv,string Site,string Language,JsonObject Output)
 {
+    public const string LibrarySource = "library";
+    public static string SourceId(JsonNode? source)
+        => string.IsNullOrWhiteSpace(source?["adv"]?.ToString()) ? LibrarySource : source!["adv"]!.ToString();
     public const string Format="ournotes-director/project";
     public static JsonNode Document(string path){var node=Archive.ReadJson(path);return node is JsonObject obj&&obj["format"] is null&&obj["actors"] is JsonArray?ShotProject.Convert(path):node;}
     public static DirectorProject Read(string path)
@@ -14,10 +17,12 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
         if(Archive.S(root,"format")!=Format||Archive.S(root,"version")!="1")throw new ArgumentException("Project requires format ournotes-director/project and version 1");
         var source=root["source"] as JsonObject??throw new ArgumentException("Project source is required");
         CheckKeys(source,["adv","site","language"],"source");
-        string adv=Archive.S(source,"adv");if(string.IsNullOrWhiteSpace(adv))throw new ArgumentException("Project source.adv is required");
+        string adv=SourceId(source);
+        if(adv==LibrarySource && new[]{"initialize","commands","finalize"}.Any(key=>root[key] is not JsonArray))
+            throw new ArgumentException("A blank/library project requires explicit initialize, commands and finalize arrays; no story is inherited.");
         var output=root["output"] as JsonObject??new JsonObject();
         if(root["output"] is not null&&root["output"] is not JsonObject)throw new ArgumentException("Project output must be an object");
-        CheckKeys(output,["width","height","supersample","codec","cineformQuality","clean","letterbox"],"output");
+        CheckKeys(output,["width","height","supersample","codec","cineformQuality","clean","letterbox","isolateActor","playbackViewport"],"output");
         foreach(string key in new[]{"width","height","supersample"})if(output[key] is {} value){
             if(!int.TryParse(value.ToString(),out int n)||n<(key=="supersample"?1:16)||n>(key=="supersample"?4:RenderDimensions.MaxSide))throw new ArgumentException("Invalid project output."+key);
         }
@@ -27,6 +32,9 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
         if(output["codec"] is not null)_=VideoEncoding.NormalizeCodec(Archive.S(output,"codec"));
         if(output["cineformQuality"] is not null)_=VideoEncoding.NormalizeCineFormQuality(Archive.S(output,"cineformQuality"));
         if(output["letterbox"] is not null&&Archive.S(output,"letterbox") is not ("game" or "none"))throw new ArgumentException("Project output.letterbox must be game or none");
+        if(output["isolateActor"] is {} isolated && (isolated is not JsonValue iv || !iv.TryGetValue<string>(out var actor) || string.IsNullOrWhiteSpace(actor)))
+            throw new ArgumentException("Project output.isolateActor must be a non-empty actor ID");
+        ActorIsolation.ValidateViewport(output["playbackViewport"]);
         foreach(string section in new[]{"initialize","commands","finalize"}){
             if(root[section] is null)continue;
             if(root[section] is not JsonArray rows)throw new ArgumentException("Project "+section+" must be an array");

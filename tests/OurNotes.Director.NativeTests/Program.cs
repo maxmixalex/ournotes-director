@@ -7,7 +7,9 @@ try
     if (args.Length == 2 && args[0] == "--scene-fixture") return RealtimePreviewTests.WriteFixture(args[1]);
     if (args.Length == 3 && args[0] == "--studio-scene") return await StudioSceneRealTests.RunAsync(args[1], args[2]);
     if (args.Length == 3 && args[0] == "--studio-home") return StudioHomeRealTests.Run(args[1], args[2]);
-    int result = MaterialStateTests.Run();
+    int result = StudioWorkflowNativeTests.Run();
+    if (result != 0) return result;
+    result = MaterialStateTests.Run();
     if (result != 0) return result;
     result = SpineTests.RunGraphics();
     if (result != 0) return result;

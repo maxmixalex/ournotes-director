@@ -1,5 +1,4 @@
-<Application
-    x:Class="OurNotes.Director.WinUI.App"
+<Application x:Class="OurNotes.Director.WinUI.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
@@ -7,8 +6,33 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="StudioRootBrush" Color="#191B20" />
+                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#23262D" />
+                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#353A44" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="StudioRootBrush" Color="#E8EBF0" />
+                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#F5F6F8" />
+                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#D8DCE3" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="StudioRootBrush" Color="#E8EBF0" />
+                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#F5F6F8" />
+                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#D8DCE3" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+            <CornerRadius x:Key="ControlCornerRadius">3</CornerRadius>
+            <CornerRadius x:Key="TextControlCornerRadius">3</CornerRadius>
             <Style x:Key="WorkspaceRootStyle" TargetType="Grid">
-                <Setter Property="Background" Value="{ThemeResource ApplicationPageBackgroundThemeBrush}" />
+                <Setter Property="Background" Value="{ThemeResource StudioRootBrush}" />
+            </Style>
+            <Style x:Key="StudioPanelStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource StudioPanelBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource StudioDividerBrush}" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="0" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>
