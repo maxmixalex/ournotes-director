@@ -1,72 +1,49 @@
-name: Build native executables
-
+name: Build Windows editor
 on:
   push:
-    branches: [main]
+    branches: [main, feat/windows-creative-editor]
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
-  group: native-${{ github.workflow }}-${{ github.ref }}
+  group: windows-editor-${{ github.ref }}
   cancel-in-progress: true
-
 env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE: true
-
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE: 'true'
 jobs:
-  native:
-    name: ${{ matrix.rid }}
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            rid: linux-x64
-            executable: advkit
-          - os: windows-2022
-            rid: win-x64
-            executable: advkit.exe
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: 10.0.x
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install native compiler prerequisites
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libegl1 libgl1 libgl1-mesa-dri nasm pkg-config
-      - name: Set up Windows media compiler
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+      - name: Build engine and editing models
+        run: dotnet build OurNotes.Director.sln -c Release --nologo
+      - name: Compile the actual Windows frontend early
+        run: dotnet build src/OurNotes.Director.WinUI -c Release -p:Platform=x64 -p:PublishReadyToRun=false --nologo
+      - name: Check core and document regressions
+        run: |
+          dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release --no-build --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
-          install: >-
-            make
-            diffutils
-            curl
-            tar
-            xz
-            python
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-nasm
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-mesa
-      - name: Restore verified media build and SDK downloads
+          install: make diffutils curl tar xz python mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-mesa
+      - name: Restore media and native SDK downloads
         id: dependency-cache
         uses: actions/cache/restore@v4
         with:
@@ -74,33 +51,19 @@ jobs:
             artifacts/media-cache/downloads
             artifacts/media-cache/bundle
             artifacts/dependency-cache
-          key: native-deps-${{ matrix.os }}-${{ matrix.rid }}-${{ hashFiles('scripts/build-media.sh', 'scripts/media-sources.lock', 'scripts/native-sources.lock.json') }}
-      - name: Build managed development assemblies
-        run: dotnet build OurNotes.Director.sln -c Release --nologo
-      - name: Run core and archive tests
-        run: dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore
-      - name: Run desktop command and JSON contract tests
-        run: dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release
-      - name: Publish Native AOT
-        run: dotnet publish src/OurNotes.Director.Cli -c Release -r ${{ matrix.rid }} -o artifacts/${{ matrix.rid }} --nologo
-      - name: Stage native SDK runtimes and licenses
-        run: python scripts/stage-native.py --rid ${{ matrix.rid }} --output artifacts/${{ matrix.rid }}
-      - name: Publish native runtime and graphics tests
-        run: dotnet publish tests/OurNotes.Director.NativeTests -c Release -r ${{ matrix.rid }} -o artifacts/native-tests --nologo
-      - name: Verify native SDK loading and lip-sync analysis
-        shell: pwsh
+          key: native-deps-windows-2022-win-x64-${{ hashFiles('scripts/build-media.sh', 'scripts/media-sources.lock', 'scripts/native-sources.lock.json') }}
+      - name: Publish native engine and stage model runtimes
         run: |
-          $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
-          & $testBinary --runtime-package "artifacts/${{ matrix.rid }}"
+          dotnet publish src/OurNotes.Director.Cli -c Release -r win-x64 -o artifacts/win-x64 --nologo
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build and bundle media tools on Linux
-        if: runner.os == 'Linux'
-        run: bash scripts/build-media.sh ${{ matrix.rid }} artifacts/${{ matrix.rid }}
-      - name: Build and bundle media tools on Windows
-        if: runner.os == 'Windows'
+          python scripts/stage-native.py --rid win-x64 --output artifacts/win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish tests/OurNotes.Director.NativeTests -c Release -r win-x64 -o artifacts/native-tests --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Bundle FFmpeg and CineForm support
         shell: msys2 {0}
-        run: bash scripts/build-media.sh ${{ matrix.rid }} artifacts/${{ matrix.rid }}
-      - name: Save verified media build and SDK downloads
+        run: bash scripts/build-media.sh win-x64 artifacts/win-x64
+      - name: Save media cache
         if: steps.dependency-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
@@ -109,163 +72,43 @@ jobs:
             artifacts/media-cache/bundle
             artifacts/dependency-cache
           key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
-      - name: Verify standalone native executable
-        run: python tests/native-smoke.py --binary artifacts/${{ matrix.rid }}/${{ matrix.executable }}
-      - name: Archive incremental end-to-end test
-        run: python tests/archive-smoke.py --binary artifacts/${{ matrix.rid }}/${{ matrix.executable }}
-      - name: Run native graphics tests with software OpenGL
-        if: runner.os == 'Linux'
-        env:
-          LIBGL_ALWAYS_SOFTWARE: '1'
-          GALLIUM_DRIVER: llvmpipe
-        run: ./artifacts/native-tests/OurNotes.Director.NativeTests
-      - name: Verify home animation exports with bundled CineForm
-        if: runner.os == 'Linux'
-        env:
-          LIBGL_ALWAYS_SOFTWARE: '1'
-          GALLIUM_DRIVER: llvmpipe
-        run: >-
-          python tests/home-smoke.py
-          --binary artifacts/linux-x64/advkit
-          --fixture-writer artifacts/native-tests/OurNotes.Director.NativeTests
-          --ffmpeg artifacts/linux-x64/tools/ffmpeg
-          --ffprobe artifacts/linux-x64/tools/ffprobe
-      - name: Fetch verified original story and home regression assets
-        shell: pwsh
+      - name: Package the Windows editor
+        run: |
+          ./scripts/build-desktop.ps1 -OutputDirectory artifacts/win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item README.md, USER_GUIDE.md, UNIFIED_INTERFACE.md, HOME_SPINE.md, CINEFORM.md, SOURCE_REFERENCES.md, THIRD-PARTY.md, LICENSE artifacts/win-x64
+          Copy-Item samples artifacts/win-x64/samples -Recurse
+          New-Item -ItemType Directory -Path packages -Force | Out-Null
+          Compress-Archive -Path artifacts/win-x64/* -DestinationPath packages/ournotes-director-win-x64.zip
+          $hash = (Get-FileHash packages/ournotes-director-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ournotes-director-win-x64.zip" | Set-Content packages/ournotes-director-win-x64.zip.sha256 -Encoding ascii
+      - name: Verify transparent media from the extracted package
+        run: |
+          python tests/package-smoke.py --package packages/ournotes-director-win-x64.zip --native-tests artifacts/native-tests/OurNotes.Director.NativeTests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Launch the new workbench with real scene assets
         run: |
           python scripts/fetch-studio-fixture.py artifacts/real-scene-fixture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/fetch-home-fixture.py artifacts/real-home-fixture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify original duration, voice mouth animation, full canvas and missing home parts
-        shell: pwsh
-        env:
-          LIBGL_ALWAYS_SOFTWARE: '1'
-          GALLIUM_DRIVER: llvmpipe
-        run: |
-          $env:OURNOTES_TEST_PACKAGE = (Resolve-Path "artifacts/${{ matrix.rid }}").Path
-          if ($IsWindows) {
-            $mesa = Get-ChildItem "$env:RUNNER_TEMP/msys64/ucrt64/bin/opengl32.dll", 'C:/msys64/ucrt64/bin/opengl32.dll', 'D:/a/_temp/msys64/ucrt64/bin/opengl32.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($null -eq $mesa) { throw 'The MSYS2 Mesa test driver was not installed.' }
-            $env:OURNOTES_TEST_OPENGL = $mesa.FullName
-          }
-          $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
-          & $testBinary --studio-scene artifacts/real-scene-fixture artifacts/real-studio-evidence/scene
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $testBinary --studio-home artifacts/real-home-fixture artifacts/real-studio-evidence/home
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build and stage the self-contained WinUI frontend
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/build-desktop.ps1 -OutputDirectory artifacts/win-x64
-      - name: Package executable and documentation
-        shell: pwsh
-        run: |
-          $rid = '${{ matrix.rid }}'
-          $folder = "artifacts/$rid"
-          Copy-Item README.md, USER_GUIDE.md, UNIFIED_INTERFACE.md, HOME_SPINE.md, CINEFORM.md, SOURCE_REFERENCES.md, THIRD-PARTY.md, LICENSE $folder
-          Copy-Item samples "$folder/samples" -Recurse
-          New-Item -ItemType Directory -Path packages -Force | Out-Null
-          if ($IsWindows) {
-            Compress-Archive -Path "$folder/*" -DestinationPath "packages/ournotes-director-$rid.zip"
-          } else {
-            tar -czf "packages/ournotes-director-$rid.tar.gz" -C $folder .
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          @(Get-ChildItem packages -File) | ForEach-Object {
-            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)" | Set-Content "$($_.FullName).sha256" -Encoding ascii
-          }
-      - name: Verify the complete extracted release package
-        shell: pwsh
-        run: |
-          $rid = '${{ matrix.rid }}'
-          $extension = if ($IsWindows) { 'zip' } else { 'tar.gz' }
-          $testBinary = "artifacts/native-tests/OurNotes.Director.NativeTests$(if ($IsWindows) { '.exe' })"
-          python tests/package-smoke.py --package "packages/ournotes-director-$rid.$extension" --native-tests $testBinary
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Launch and verify WinUI from the extracted Windows package
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
           & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --home-fixture artifacts/studio-fixture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --scene-fixture artifacts/studio-fixture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $mesa = Get-ChildItem "$env:RUNNER_TEMP/msys64/ucrt64/bin/opengl32.dll", 'C:/msys64/ucrt64/bin/opengl32.dll', 'D:/a/_temp/msys64/ucrt64/bin/opengl32.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $mesa) { throw 'The MSYS2 Mesa test driver was not installed.' }
+          if ($null -eq $mesa) { throw 'The test OpenGL driver was not installed.' }
           ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 240
-      - name: Upload actual WinUI screenshots and smoke report
-        if: always() && runner.os == 'Windows'
-        continue-on-error: true
+      - name: Preserve actual window evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ournotes-director-winui-evidence
+          name: windows-creative-editor-evidence
           path: artifacts/desktop-smoke/*
           if-no-files-found: ignore
-          retention-days: 30
-      - name: Upload real story and home regression evidence
-        if: always()
-        continue-on-error: true
+          retention-days: 14
+      - name: Upload Windows package
         uses: actions/upload-artifact@v7
         with:
-          name: ournotes-director-real-studio-${{ matrix.rid }}
-          path: artifacts/real-studio-evidence/**
-          if-no-files-found: ignore
-          retention-days: 30
-      - uses: actions/upload-artifact@v7
-        id: artifact
-        continue-on-error: >-
-          ${{ (github.event_name == 'push' &&
-               (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
-              (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
-        with:
-          name: ournotes-director-${{ matrix.rid }}
+          name: ournotes-director-win-x64
           path: packages/*
           if-no-files-found: error
           retention-days: 30
-      - name: Preserve packages in an unpublished draft if artifact upload fails
-        if: >-
-          ${{ steps.artifact.outcome == 'failure' &&
-              ((github.event_name == 'push' &&
-                (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
-               (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RID: ${{ matrix.rid }}
-        run: |
-          $rid = $env:RID
-          $tag = "ci-artifacts-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$rid"
-          $assets = @(Get-ChildItem packages -File | Sort-Object Name | ForEach-Object { $_.FullName })
-          if ($assets.Count -ne 2) { throw 'Expected one package and its SHA-256 checksum.' }
-          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          $notes = Join-Path $env:RUNNER_TEMP 'artifact-fallback.md'
-          @(
-            'GitHub Actions artifact upload failed. This unpublished draft preserves the verified native package and SHA-256 checksum.'
-            ''
-            "Commit: $env:GITHUB_SHA"
-            "Target: $rid"
-            "Workflow run: $runUrl"
-          ) | Set-Content -LiteralPath $notes -Encoding utf8
-          $arguments = @(
-            'release', 'create', $tag,
-            '--repo', $env:GITHUB_REPOSITORY,
-            '--draft', '--latest=false',
-            '--target', $env:GITHUB_SHA,
-            '--title', "CI artifacts $env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT ($rid)",
-            '--notes-file', $notes
-          ) + $assets
-          $releaseUrl = & gh @arguments
-          if ($LASTEXITCODE -ne 0) { throw "Draft artifact upload failed (gh exit $LASTEXITCODE)." }
-          $releaseUrl = ($releaseUrl | Out-String).Trim()
-          Write-Output "::warning::Actions artifact upload failed; packages were preserved in an unpublished draft Release."
-          @(
-            '### Native package delivery'
-            ''
-            'Actions artifact upload failed. The package and SHA-256 checksum are available in an unpublished draft Release.'
-            ''
-            "[Download $rid package (repository write access required)]($releaseUrl)"
-            ''
-            "Commit: $env:GITHUB_SHA"
-          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
