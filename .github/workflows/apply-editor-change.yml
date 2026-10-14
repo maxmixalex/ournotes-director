@@ -1,0 +1,42 @@
+name: Apply verified editor source changes
+on:
+  push:
+    branches: [feat/studio-ux-gpu]
+    paths: [.github/workflows/apply-editor-change.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'maxmixalex/ournotes-director' && github.ref == 'refs/heads/feat/studio-ux-gpu'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Apply exact locally tested source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = 7eb9d02b34fd07355505eb740c09038bcf1da0f4
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, subprocess, os
+          data = b''.join(Path(f'.editor-transfer/part{i}.patch').read_bytes() for i in range(9))
+          # A known single transport indentation is normalized before the immutable hash check.
+          data = data.replace(b'\n diff --git ', b'\ndiff --git ')
+          assert hashlib.sha256(data).hexdigest() == 'a030890760f80b30723d5a754a0f04b3b7de28fb3997aa525a14013253bcff6e'
+          patch = Path(os.environ['RUNNER_TEMP']) / 'verified-editor.patch'
+          patch.write_bytes(data)
+          subprocess.run(['git','apply','--unidiff-zero','--check',str(patch)],check=True)
+          subprocess.run(['git','apply','--unidiff-zero',str(patch)],check=True)
+          PY
+          git rm -r .editor-transfer
+          git rm .github/workflows/apply-editor-change.yml
+          git add DESKTOP.md STUDIO_DESIGN.md native scripts src tests
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Redesign studio workflows and add GPU shared-texture presentation'
+          git push origin HEAD:refs/heads/feat/studio-ux-gpu
+          git rev-parse HEAD

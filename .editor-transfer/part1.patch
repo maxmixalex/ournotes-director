@@ -1,0 +1,198 @@
++    HRESULT hr = swap->QueryInterface(IID_PPV_ARGS(&composition)); if (FAILED(hr)) return hr;
++    DXGI_MATRIX_3X2_F matrix{}; matrix._11 = x; matrix._22 = y;
++    return composition->SetMatrixTransform(&matrix);
++}
++API HRESULT __cdecl OurNotesGpuAttachPanel(IUnknown* panel, IDXGISwapChain* swap) noexcept {
++    if (!panel) return E_POINTER;
++    ComPtr<IWinUISwapChainPanelNative> native;
++    HRESULT hr = panel->QueryInterface(IID_PPV_ARGS(&native));
++    return FAILED(hr) ? hr : native->SetSwapChain(swap);
++}
++// Explicit smoke-test entry point: validates the D3D/WinUI boundary on GPU-less runners.
++// Never selected by the automatic production renderer and never called a hardware benchmark.
++API HRESULT __cdecl OurNotesGpuCreateTest(UINT width, UINT height, Surface** result) noexcept {
++    if (!result) return E_POINTER; *result = nullptr;
++    if (width < 16 || height < 16 || width > 4096 || height > 4096) return E_INVALIDARG;
++    try {
++        auto s = std::make_unique<Surface>(); s->testOnly = true; s->width = width; s->height = height;
++        HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
++            nullptr, 0, D3D11_SDK_VERSION, &s->device, nullptr, &s->context); if (FAILED(hr)) return hr;
++        hr = CreateSwap(*s); if (FAILED(hr)) return hr;
++        ComPtr<ID3D11RenderTargetView> target; hr = s->device->CreateRenderTargetView(s->shared.Get(), nullptr, &target); if (FAILED(hr)) return hr;
++        const float color[] = { .125f, .5f, .75f, 1.f }; s->context->ClearRenderTargetView(target.Get(), color);
++        s->context->CopyResource(s->back.Get(), s->shared.Get()); hr = s->swap->Present(0, 0); if (FAILED(hr)) return hr;
++        *result = s.release(); return S_OK;
++    } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; } catch (...) { return E_FAIL; }
++}
++API HRESULT __cdecl OurNotesGpuTestPixel(Surface* s, uint32_t* rgba) noexcept {
++    if (!s || !s->testOnly || !s->IsOwner() || !rgba) return E_INVALIDARG;
++    D3D11_TEXTURE2D_DESC description{}; s->shared->GetDesc(&description);
++    description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0; description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++    ComPtr<ID3D11Texture2D> staging; HRESULT hr = s->device->CreateTexture2D(&description, nullptr, &staging); if (FAILED(hr)) return hr;
++    s->context->CopyResource(staging.Get(), s->shared.Get()); D3D11_MAPPED_SUBRESOURCE mapped{};
++    hr = s->context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped); if (FAILED(hr)) return hr;
++    std::memcpy(rgba, mapped.pData, 4); s->context->Unmap(staging.Get(), 0); return S_OK;
++}
+ diff --git a/scripts/build-desktop.ps1 b/scripts/build-desktop.ps1
+index 8707549..b329f91 100644
+--- a/scripts/build-desktop.ps1
++++ b/scripts/build-desktop.ps1
+@@ -60,0 +61 @@ try {
++    & (Join-Path $PSScriptRoot 'build-gpu-preview.ps1') -OutputDirectory $publishDirectory
+@@ -132,0 +134 @@ try {
++    Copy-Item -LiteralPath (Join-Path $repository 'STUDIO_DESIGN.md') -Destination (Join-Path $publishDirectory 'STUDIO_DESIGN.md')
+diff --git a/scripts/build-gpu-preview.ps1 b/scripts/build-gpu-preview.ps1
+new file mode 100644
+index 0000000..b1a4e1f
+--- /dev/null
++++ b/scripts/build-gpu-preview.ps1
+@@ -0,0 +1,27 @@
++[CmdletBinding()]
++param([Parameter(Mandatory)][string]$OutputDirectory)
++$ErrorActionPreference = 'Stop'
++Set-StrictMode -Version Latest
++if (-not $IsWindows) { throw 'The D3D11 presentation bridge is Windows-only.' }
++$source = Join-Path (Split-Path $PSScriptRoot -Parent) 'native/GpuPreview/GpuPreview.cpp'
++$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
++New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
++$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
++$installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
++if (-not $installation) { throw 'MSVC x64 build tools are required for GPU preview.' }
++$vcvars = Join-Path $installation 'VC/Auxiliary/Build/vcvars64.bat'
++$temporary = Join-Path ([IO.Path]::GetTempPath()) ('ournotes-gpu-' + [Guid]::NewGuid().ToString('N'))
++New-Item -ItemType Directory -Path $temporary | Out-Null
++try {
++    $script = Join-Path $temporary 'build.cmd'
++    @"
++@echo off
++call "$vcvars" >nul
++if errorlevel 1 exit /b %errorlevel%
++cl /nologo /std:c++17 /O2 /EHsc /MT /W4 /WX /LD /utf-8 "$source" /Fo"$temporary\GpuPreview.obj" /link /OUT:"$OutputDirectory\OurNotes.GpuPreview.dll" /IMPLIB:"$temporary\GpuPreview.lib" /INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT d3d11.lib dxgi.lib opengl32.lib
++exit /b %errorlevel%
++"@ | Set-Content -LiteralPath $script -Encoding ascii
++    & cmd.exe /d /c $script
++    if ($LASTEXITCODE -ne 0) { throw "GPU preview bridge build failed: $LASTEXITCODE" }
++    if (-not (Test-Path (Join-Path $OutputDirectory 'OurNotes.GpuPreview.dll'))) { throw 'GPU bridge was not produced.' }
++} finally { Remove-Item -LiteralPath $temporary -Recurse -Force }
+diff --git a/src/OurNotes.Director.Core/Actor.Game.cs b/src/OurNotes.Director.Core/Actor.Game.cs
+index 3da977a..999329d 100644
+--- a/src/OurNotes.Director.Core/Actor.Game.cs
++++ b/src/OurNotes.Director.Core/Actor.Game.cs
+@@ -8,0 +9 @@ public sealed unsafe partial class Actor
++    internal JsonNode CanvasMetadata => gameModel["canvas"]!;
+@@ -18 +19 @@ public sealed unsafe partial class Actor
+-    public bool GameLighting{set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
++    public bool GameLighting{get=>gameDrawing?.LightingEnabled??false;set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
+diff --git a/src/OurNotes.Director.Core/AdvScene.Isolated.cs b/src/OurNotes.Director.Core/AdvScene.Isolated.cs
+new file mode 100644
+index 0000000..84e966a
+--- /dev/null
++++ b/src/OurNotes.Director.Core/AdvScene.Isolated.cs
+@@ -0,0 +1,52 @@
++using System.Numerics;
++
++namespace OurNotes.Director.Core;
++
++public sealed partial class AdvScene
++{
++    /// <summary>Extracts the evaluated model, not a newly restarted animation. This only changes
++    /// the draw transform; source commands, voice, physics, fades and costume switches still run.</summary>
++    public void DrawIsolatedActor(string target)
++    {
++        gl.Begin([0, 0, 0, 0]);
++        var actor = Character(target);
++        if (actor is null) return; // The source has not created this actor yet.
++        bool director = directorActors.TryGetValue(actor, out var state);
++        if (director ? !state!.Visible : !shown.Values.Contains(actor)) return;
++        var canvas = actor.CanvasMetadata;
++        float width = Actor.N(canvas["width"]), height = Actor.N(canvas["height"]);
++        if (width <= 0 || height <= 0) throw new InvalidDataException("角色画布尺寸无效。");
++        float pixelsPerUnit = height / actor.CanvasHeight;
++        float scale = Math.Min(gl.Width / width, gl.Height / height);
++        var root = actor.Prefab.Root;
++        var parent = root.Parent; var position = root.Position; var rotation = root.Rotation; var size = root.Scale;
++        bool lighting = actor.GameLighting;
++        try
++        {
++            root.Parent = null; root.Rotation = Quaternion.Identity;
++            root.Position = new(((canvas["originX"] is null ? width / 2 : Actor.N(canvas["originX"])) - width / 2) * scale * 2 / gl.Height,
++                ((canvas["originY"] is null ? height / 2 : Actor.N(canvas["originY"])) - height / 2) * scale * 2 / gl.Height, 0);
++            root.Scale = Vector3.One * (2 * scale * pixelsPerUnit / gl.Height);
++            var projection = AdvMatrix.Identity(); projection[0] = gl.Height / (float)gl.Width; projection[10] = -.001f;
++            var globals = new Dictionary<string, float[]>(LightingGlobals(projection))
++            {
++                ["unity_MatrixVP"] = projection, ["unity_MatrixV"] = AdvMatrix.Identity(),
++                ["unity_MatrixInvV"] = AdvMatrix.Identity(), ["glstate_matrix_projection"] = projection,
++                ["_WorldSpaceCameraPos"] = [0, 0, -10]
++            };
++            actor.GameLighting = false;
++            if (director) actor.SetDirectorTint(actor.Spec.Tint, actor.Spec.Brightness);
++            int slot = director ? -1 : shown.First(pair => ReferenceEquals(pair.Value, actor)).Key;
++            int index = slot < 0 ? 0 : (slot - 1) / 2;
++            bool layer = !director && (slotAlpha[index] < 1 || slotBrightness[index] < 1 || slotBlur[index] > 0);
++            if (layer) gl.BeginLayer();
++            actor.DrawGame(globals);
++            if (layer) { gl.Blur(shaders, slotBlur[index], blurRadius); gl.EndLayer(slotAlpha[index], slotBrightness[index]); }
++        }
++        finally
++        {
++            root.Parent = parent; root.Position = position; root.Rotation = rotation; root.Scale = size;
++            actor.GameLighting = lighting;
++        }
++    }
++}
+diff --git a/src/OurNotes.Director.Core/AdvStoryRenderer.cs b/src/OurNotes.Director.Core/AdvStoryRenderer.cs
+index 53d4aca..e084970 100644
+--- a/src/OurNotes.Director.Core/AdvStoryRenderer.cs
++++ b/src/OurNotes.Director.Core/AdvStoryRenderer.cs
+@@ -19,0 +20,5 @@ public sealed class AdvStoryRenderer : IDisposable
++    public bool PreferGpuPresentation { get => gl.PreferGpuPresentation; set => gl.PreferGpuPresentation = value; }
++    public GpuPreviewSurface? GpuSurface => gl.GpuSurface;
++    public string? GpuFallbackReason => gl.GpuFallbackReason;
++    public void DisableGpuPresentation(string reason) => gl.DisableGpuPresentation(reason);
++
+@@ -21,0 +27,2 @@ public sealed class AdvStoryRenderer : IDisposable
++    readonly string? isolateActor;
++    bool TransparentOutput => isolateActor is not null || Scene.DirectorTransparent;
+@@ -33 +40,2 @@ public sealed class AdvStoryRenderer : IDisposable
+-        bool noLetterbox=supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
++        isolateActor = supplied?["output"]?["isolateActor"]?.ToString();
++        bool noLetterbox=isolateActor is not null || supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
+@@ -38,0 +47,6 @@ public sealed class AdvStoryRenderer : IDisposable
++        if(id==DirectorProject.LibrarySource)
++        {
++            // The library pack provides materials, never a source episode's performance.
++            episode["commands"]=new JsonArray(); episode["text"]=new JsonObject();
++            settings["_initializeEpisodes"]=new JsonArray(); settings["_finalizeEpisodes"]=new JsonArray();
++        }
+@@ -40 +54 @@ public sealed class AdvStoryRenderer : IDisposable
+-            if(project){if(projectDocument is null)_=DirectorProject.Read(script!);if(Archive.S(custom["source"]!,"adv")!=id)throw new ArgumentException("Project source does not match story ID");}
++            if(project){if(projectDocument is null)_=DirectorProject.Read(script!);if(DirectorProject.SourceId(custom["source"])!=id)throw new ArgumentException("Project source does not match story ID");}
+@@ -72 +86 @@ public sealed class AdvStoryRenderer : IDisposable
+-        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,Scene.DirectorTransparent));Loop.Drain();Player.ThrowIfFailed();return pixels;
++        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();return pixels;
+@@ -111 +125 @@ public sealed class AdvStoryRenderer : IDisposable
+-    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,Scene.DirectorTransparent));Loop.Drain();Player.ThrowIfFailed();}
++    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();}
+@@ -113 +127 @@ public sealed class AdvStoryRenderer : IDisposable
+-    void Draw(bool clean){Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
++    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor));return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
+diff --git a/src/OurNotes.Director.Core/Archive.cs b/src/OurNotes.Director.Core/Archive.cs
+index affacda..d238183 100644
+--- a/src/OurNotes.Director.Core/Archive.cs
++++ b/src/OurNotes.Director.Core/Archive.cs
+@@ -33,0 +34,6 @@ public sealed class Archive
++        if (type == "stories" && (string.IsNullOrWhiteSpace(id) || id == DirectorProject.LibrarySource))
++        {
++            var path = SitePath(site, "director/manifest.json");
++            if (!File.Exists(path)) throw new FileNotFoundException("素材库缺少创作资源索引。请在素材库中完成归档更新；空白场景不需要绑定原剧情。", path);
++            return ReadJson(path);
++        }
+diff --git a/src/OurNotes.Director.Core/DirectorProject.cs b/src/OurNotes.Director.Core/DirectorProject.cs
+index c2af858..e4aadcc 100644
+--- a/src/OurNotes.Director.Core/DirectorProject.cs
++++ b/src/OurNotes.Director.Core/DirectorProject.cs
+@@ -7,0 +8,3 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
++    public const string LibrarySource = "library";
++    public static string SourceId(JsonNode? source)
++        => string.IsNullOrWhiteSpace(source?["adv"]?.ToString()) ? LibrarySource : source!["adv"]!.ToString();

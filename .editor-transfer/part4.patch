@@ -1,0 +1,246 @@
+-internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
++internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
+@@ -25 +25 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-    readonly CheckBox autoKey = new() { Content = "在当前时间创建关键帧", IsChecked = true };
++    readonly CheckBox autoKey = new() { Content = "自动关键帧", IsChecked = true };
+@@ -59 +59 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-        Menu("选择主页 / 新建", ChooseHomeAsync); Menu("打开项目…", () => OpenAsync()); Menu("另存为…", () => SaveAsync(true)); Menu("恢复草稿", RestoreDraftAsync);
++        Menu("选择主页 / 新建", ChooseHomeAsync); Menu("打开项目…", () => OpenAsync()); Menu("另存为…", () => SaveAsync(true)); Menu("恢复草稿", RestoreDraftAsync); Menu("主页 JSON…", ShowJsonAsync);
+@@ -65,0 +66 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
++        edits.Children.Add(StudioMenus.Button("视图", HomeViewMenu));
+@@ -67 +68 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-        var finalTools = Ui.Row(7, repeat, StudioLayout.AsyncTool("JSON", ShowJsonAsync, "\uE943"), StudioLayout.AsyncTool("导出", ExportAsync, "\uE898", true));
++        var finalTools = Ui.Row(7, StudioLayout.AsyncTool("导出…", ExportAsync, "\uE898", true));
+@@ -72 +73 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-        left.Children.Add(Ui.Stack(8, StudioLayout.Section("主页对象"), StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5")));
++        left.Children.Add(Ui.Stack(8, Ui.Row(6, StudioLayout.Section("主页对象"), StudioMenus.Button("…", HomeObjectMenu)), StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5")));
+@@ -74 +75 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-        var footer = Ui.Stack(8, previewOnly, sourceLabel); left.Children.Add(footer); Grid.SetRow(footer, 2);
++        var footer = Ui.Stack(4, sourceLabel); left.Children.Add(footer); Grid.SetRow(footer, 2);
+@@ -83 +84 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-        var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("属性"), autoKey, properties));
++        var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("检查器"), autoKey, properties));
+@@ -90,0 +92 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
++        viewport.ContextMenuFactory = HomeObjectMenu;
+@@ -303 +305,2 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-                ToolTipService.SetToolTip(item, character.Supported ? "点击选择；在画布中拖动位置和滚轮缩放。" : character.Error);
++                ToolTipService.SetToolTip(item, character.Supported ? "拖动摆放 · Ctrl+滚轮缩放角色 · 右键导出素材" : character.Error);
++                StudioMenus.Context(item, () => { Select(character.Key); return document?.SelectedCharacterKey == character.Key; }, HomeObjectMenu);
+@@ -366 +369 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-            properties.Children.Add(Ui.Text(key, 12, true));
++            
+@@ -379,3 +382,3 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+-            properties.Children.Add(Ui.Text("拖动角色调整位置，滚轮调整缩放；影子和关联部件会一起移动。", 12, true));
+-            properties.Children.Add(StudioLayout.Tool("添加位置关键帧", () => Edit(() => document.AddTransformKey(key, document.Playhead)), "\uE710"));
+-            properties.Children.Add(StudioLayout.Tool("恢复此角色的原始状态", () => Edit(() => document.ResetCharacter(key)), "\uE777"));
++            
++            
++            
+@@ -382,0 +386,2 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
++        foreach (var pair in new[] { ("x", "y"), ("speed", "sourceTime"), ("canvasWidth", "canvasHeight"), ("exposure", "contrast"), ("saturation", "vignette") })
++            if (numbers.TryGetValue(pair.Item1, out var first) && numbers.TryGetValue(pair.Item2, out var second)) StudioLayout.PairFields(properties, first, second);
+diff --git a/src/OurNotes.Director.WinUI/MainWindow.cs b/src/OurNotes.Director.WinUI/MainWindow.cs
+index eb363e2..492d2e1 100644
+--- a/src/OurNotes.Director.WinUI/MainWindow.cs
++++ b/src/OurNotes.Director.WinUI/MainWindow.cs
+@@ -26,2 +26,2 @@ public sealed class MainWindow : Window
+-    private readonly ToggleButton _sceneTab = new() { Content = "场景工作台", Padding = new(22, 9, 22, 9) };
+-    private readonly ToggleButton _homeTab = new() { Content = "主页工作台", Padding = new(22, 9, 22, 9) };
++    private readonly ToggleButton _sceneTab = new() { Content = "场景工作台", Padding = new(18, 6, 18, 6) };
++    private readonly ToggleButton _homeTab = new() { Content = "主页工作台", Padding = new(18, 6, 18, 6) };
+@@ -69 +69 @@ public sealed class MainWindow : Window
+-        var header = new Grid { Padding = new(16, 9, 16, 9), ColumnSpacing = 18 };
++        var header = new Grid { Padding = new(14, 7, 14, 7), ColumnSpacing = 18 };
+@@ -73 +73 @@ public sealed class MainWindow : Window
+-        header.Children.Add(new TextBlock { Text = "OURNOTES", FontSize = 18, VerticalAlignment = VerticalAlignment.Center,
++        header.Children.Add(new TextBlock { Text = "OURNOTES", FontSize = 14, VerticalAlignment = VerticalAlignment.Center,
+@@ -82 +82 @@ public sealed class MainWindow : Window
+-        _content.Margin = new(10, 0, 10, 0); _root.Children.Add(_content); Grid.SetRow(_content, 1);
++        _content.Margin = new(0); _root.Children.Add(_content); Grid.SetRow(_content, 1);
+diff --git a/src/OurNotes.Director.WinUI/NativeViewport.Gpu.cs b/src/OurNotes.Director.WinUI/NativeViewport.Gpu.cs
+new file mode 100644
+index 0000000..5b35fe2
+--- /dev/null
++++ b/src/OurNotes.Director.WinUI/NativeViewport.Gpu.cs
+@@ -0,0 +1,91 @@
++using Microsoft.UI.Xaml;
++using Microsoft.UI.Xaml.Controls;
++using Microsoft.UI.Xaml.Media;
++using OurNotes.Director.Core;
++using System.Runtime.InteropServices;
++
++namespace OurNotes.Director.WinUI;
++
++public sealed partial class NativeViewport
++{
++    readonly SwapChainPanel gpuPanel = new()
++    {
++        Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left,
++        VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false
++    };
++    GpuPreviewSurface? attachedGpu;
++    string? displayFailure;
++    Windows.Foundation.Rect lastGpuRect;
++    GpuPreviewSurface? scaledGpu;
++    void InitializeGpuPresentation()
++    {
++        surface.Children.Insert(surface.Children.IndexOf(overlay), gpuPanel);
++        gpuPanel.CompositionScaleChanged += (_, _) => LayoutCanvas();
++    }
++    bool PresentGpu(PreviewFrame frame)
++    {
++        var gpu = frame.GpuSurface!;
++        try
++        {
++            if (!ReferenceEquals(attachedGpu, gpu))
++            {
++                nint swap = gpu.AcquireSwapChain(); if (swap == 0) return false; // Newer frame already queued after a seek.
++                try
++                {
++                    var panel = ((WinRT.IWinRTObject)gpuPanel).NativeObject;
++                    Marshal.ThrowExceptionForHR(GpuPreviewSurface.AttachPanel(panel.ThisPtr, swap));
++                    GC.KeepAlive(gpuPanel);
++                }
++                finally { GpuPreviewSurface.ReleaseSwapChain(swap); }
++                attachedGpu = gpu;
++            }
++            image.Visibility = Visibility.Collapsed; gpuPanel.Visibility = Visibility.Visible;
++            checker.Visibility = Visibility.Collapsed; displayFailure = null;
++            return true;
++        }
++        catch (Exception error) when (error is COMException or InvalidCastException or DllNotFoundException or EntryPointNotFoundException)
++        {
++            displayFailure = "GPU 画布绑定失败，已请求兼容显示：" + error.Message;
++            _ = DisableGpuAsync(frame.SessionId, displayFailure); return false;
++        }
++    }
++    async Task DisableGpuAsync(long expectedSession, string reason)
++    { try { await session.DisableGpuPresentationAsync(reason, expectedSession); } catch (Exception error) { PresentFailure(error); } }
++    void DetachGpu()
++    {
++        if (attachedGpu is not null)
++        {
++            var panel = ((WinRT.IWinRTObject)gpuPanel).NativeObject;
++            Marshal.ThrowExceptionForHR(GpuPreviewSurface.AttachPanel(panel.ThisPtr, 0));
++            attachedGpu = null;
++        }
++        gpuPanel.Visibility = Visibility.Collapsed; image.Visibility = checker.Visibility = Visibility.Visible;
++    }
++    void LayoutGpu(Windows.Foundation.Rect rect)
++    {
++        if (gpuPanel.Visibility != Visibility.Visible) return;
++        if (lastGpuRect == rect && ReferenceEquals(scaledGpu, attachedGpu)) return;
++        gpuPanel.Width = rect.Width; gpuPanel.Height = rect.Height;
++        try { attachedGpu?.SetDisplaySize(rect.Width, rect.Height); }
++        catch (COMException error) { if (LastFrame is { } frame) _ = DisableGpuAsync(frame.SessionId, "GPU 画布缩放失败：" + error.Message); return; }
++        gpuPanel.RenderTransform = new TranslateTransform { X = rect.X, Y = rect.Y };
++        lastGpuRect = rect; scaledGpu = attachedGpu;
++    }
++    internal void RunGpuCompositionSmoke(Action<bool, string> check)
++    {
++        using var test = GpuPreviewSurface.CreateCompositionTest(64, 64);
++        uint rgba = test.ReadCompositionTestPixel();
++        test.SetDisplaySize(128, 96);
++        check((rgba >> 24) == 255 && ((rgba >> 8) & 255) is >= 127 and <= 128 && ((rgba >> 16) & 255) is >= 191 and <= 192,
++            "独立 WARP 检查：D3D11 交换链生成真实像素，不冒充硬件互操作验证");
++        nint borrowed = test.AcquireSwapChain();
++        try
++        {
++            var panel = ((WinRT.IWinRTObject)gpuPanel).NativeObject;
++            check(borrowed != 0 && GpuPreviewSurface.AttachPanel(panel.ThisPtr, borrowed) >= 0,
++                "原生 WinUI SwapChainPanel 接受独立 COM 引用的交换链");
++            check(GpuPreviewSurface.AttachPanel(panel.ThisPtr, 0) >= 0, "交换链可在窗口线程解除绑定");
++        }
++        finally { GpuPreviewSurface.ReleaseSwapChain(borrowed); }
++    }
++}
+diff --git a/src/OurNotes.Director.WinUI/NativeViewport.Navigation.cs b/src/OurNotes.Director.WinUI/NativeViewport.Navigation.cs
+new file mode 100644
+index 0000000..58effae
+--- /dev/null
++++ b/src/OurNotes.Director.WinUI/NativeViewport.Navigation.cs
+@@ -0,0 +1,74 @@
++using Microsoft.UI.Xaml;
++using Microsoft.UI.Xaml.Controls;
++using Microsoft.UI.Xaml.Input;
++using Windows.Foundation;
++using Windows.System;
++
++namespace OurNotes.Director.WinUI;
++
++public sealed partial class NativeViewport
++{
++    internal Func<MenuFlyout>? ContextMenuFactory { get; set; }
++    bool showingEmptyCanvas, panning;
++    int emptyWidth = 1920, emptyHeight = 1080;
++    double viewZoom = 1;
++    Point viewPan, panStart, panOrigin;
++    uint panPointer;
++
++    public void SetEmptyCanvas(int width, int height)
++    {
++        if (width < 16 || height < 16) throw new ArgumentOutOfRangeException(nameof(width));
++        showingEmptyCanvas = true; sourceVersion++; session.Pause(); HasCurrentSource = false; loading = false;
++        emptyWidth = width; emptyHeight = height;
++        lock (frameGate) { pendingFrame = null; Volatile.Write(ref lastFrame, null); }
++        DetachGpu(); image.Source = null; HideSelection(); status.Text = "空白画布 · 添加角色或素材开始创作";
++        FitCanvas();
++    }
++    public void FitCanvas() { viewZoom = 1; viewPan = default; LayoutCanvas(); }
++
++    void InitializeWorkspaceNavigation()
++    {
++        IsTabStop = true;
++        ToolTipService.SetToolTip(surface, "滚轮缩放画布 · 中键拖动平移 · Ctrl+滚轮缩放角色 · F 适应窗口 · 右键对象操作");
++        surface.ContextRequested += (_, args) =>
++        {
++            if (ContextMenuFactory is null) return;
++            var options = new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions();
++            if (args.TryGetPosition(surface, out Point point))
++            {
++                options.Position = point;
++                if (InCanvas(point))
++                { var normalized = Normalize(point); SelectedTargetId = HitTest(normalized.X, normalized.Y)?.Id; }
++            }
++            ContextMenuFactory().ShowAt(surface, options); args.Handled = true;
++        };
++        surface.PointerPressed += (_, args) =>
++        {
++            var point = args.GetCurrentPoint(surface);
++            if (!point.Properties.IsMiddleButtonPressed) return;
++            panning = true; panPointer = args.Pointer.PointerId; panStart = point.Position; panOrigin = viewPan;
++            surface.CapturePointer(args.Pointer); args.Handled = true;
++        };
++        surface.PointerMoved += (_, args) =>
++        {
++            if (!panning || args.Pointer.PointerId != panPointer) return;
++            var point = args.GetCurrentPoint(surface).Position;
++            viewPan = new(panOrigin.X + point.X - panStart.X, panOrigin.Y + point.Y - panStart.Y);
++            LayoutCanvas(); args.Handled = true;
++        };
++        surface.PointerReleased += (_, args) =>
++        { if (panning && args.Pointer.PointerId == panPointer) { panning = false; surface.ReleasePointerCapture(args.Pointer); args.Handled = true; } };
++        surface.PointerCaptureLost += (_, _) => panning = false;
++        KeyDown += (_, args) => { if (args.Key == VirtualKey.F) { FitCanvas(); args.Handled = true; } };
++    }
++    void ZoomCanvas(Point anchor, int delta)
++    {
++        if (delta == 0 || imageRect.Width <= 0) return;
++        var coordinate = Normalize(anchor);
++        double next = Math.Clamp(viewZoom * Math.Pow(1.12, delta / 120d), .1, 12);
++        double ratio = next / viewZoom;
++        viewPan = new(anchor.X - surface.ActualWidth / 2 + (.5 - coordinate.X) * imageRect.Width * ratio,
++            anchor.Y - surface.ActualHeight / 2 + (.5 - coordinate.Y) * imageRect.Height * ratio);
++        viewZoom = next; LayoutCanvas();
++    }
++}
+diff --git a/src/OurNotes.Director.WinUI/NativeViewport.cs b/src/OurNotes.Director.WinUI/NativeViewport.cs
+index addcdb5..133c184 100644
+--- a/src/OurNotes.Director.WinUI/NativeViewport.cs
++++ b/src/OurNotes.Director.WinUI/NativeViewport.cs
+@@ -21 +21 @@ namespace OurNotes.Director.WinUI;
+-public sealed class NativeViewport : UserControl, IAsyncDisposable
++public sealed partial class NativeViewport : UserControl, IAsyncDisposable
+@@ -25 +25 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
+-    readonly Image image=new(){Stretch=Stretch.Uniform,IsHitTestVisible=false};
++    readonly Image image=new(){Stretch=Stretch.Fill,IsHitTestVisible=false,HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top};
