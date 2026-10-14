@@ -13,7 +13,7 @@ using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 namespace OurNotes.Director.WinUI;
 
 /// <summary>A native home composition editor. Selection, isolated preview and export scope are independent.</summary>
-internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
+internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
 {
     const string SceneId = "$scene";
     readonly MainWindow window;
@@ -22,7 +22,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
     readonly ListView objects = new() { SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     readonly StackPanel properties = Ui.Stack(11);
     readonly TextBlock title = Ui.Text("未打开主页", 15), sourceLabel = Ui.Text("", 12, true);
-    readonly CheckBox autoKey = new() { Content = "在当前时间创建关键帧", IsChecked = true };
+    readonly CheckBox autoKey = new() { Content = "自动关键帧", IsChecked = true };
     readonly CheckBox previewOnly = new() { Content = "仅预览此角色", IsEnabled = false };
     readonly CheckBox repeat = new() { Content = "循环播放", IsChecked = true };
     readonly InfoBar notice = new() { IsClosable = true };
@@ -56,22 +56,23 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         var file = StudioLayout.Tool("文件", () => { }, "\uE8B7");
         var menu = new MenuFlyout();
         void Menu(string text, Func<Task> action) { var item = new MenuFlyoutItem { Text = text }; item.Click += (_, _) => _ = SafeAsync(action); menu.Items.Add(item); }
-        Menu("选择主页 / 新建", ChooseHomeAsync); Menu("打开项目…", () => OpenAsync()); Menu("另存为…", () => SaveAsync(true)); Menu("恢复草稿", RestoreDraftAsync);
+        Menu("选择主页 / 新建", ChooseHomeAsync); Menu("打开项目…", () => OpenAsync()); Menu("另存为…", () => SaveAsync(true)); Menu("恢复草稿", RestoreDraftAsync); Menu("主页 JSON…", ShowJsonAsync);
         file.Flyout = menu;
         var toolbar = new Grid { ColumnSpacing = 8 };
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); toolbar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var edits = Ui.Row(5, file, StudioLayout.AsyncTool("保存", () => SaveAsync(), "\uE74E"),
             StudioLayout.Tool("", () => Edit(() => document?.Undo()), "\uE7A7"), StudioLayout.Tool("", () => Edit(() => document?.Redo()), "\uE7A6"));
         ToolTipService.SetToolTip(edits.Children[2], "撤销 · Ctrl+Z"); ToolTipService.SetToolTip(edits.Children[3], "重做 · Ctrl+Y");
+        edits.Children.Add(StudioMenus.Button("视图", HomeViewMenu));
         toolbar.Children.Add(edits); toolbar.Children.Add(title); Grid.SetColumn(title, 1); title.VerticalAlignment = VerticalAlignment.Center;
-        var finalTools = Ui.Row(7, repeat, StudioLayout.AsyncTool("JSON", ShowJsonAsync, "\uE943"), StudioLayout.AsyncTool("导出", ExportAsync, "\uE898", true));
+        var finalTools = Ui.Row(7, StudioLayout.AsyncTool("导出…", ExportAsync, "\uE898", true));
         toolbar.Children.Add(finalTools); Grid.SetColumn(finalTools, 2);
 
         var left = new Grid { RowSpacing = 9 };
         left.RowDefinitions.Add(new() { Height = GridLength.Auto }); left.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); left.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        left.Children.Add(Ui.Stack(8, StudioLayout.Section("主页对象"), StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5")));
+        left.Children.Add(Ui.Stack(8, Ui.Row(6, StudioLayout.Section("主页对象"), StudioMenus.Button("…", HomeObjectMenu)), StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5")));
         left.Children.Add(objects); Grid.SetRow(objects, 1);
-        var footer = Ui.Stack(8, previewOnly, sourceLabel); left.Children.Add(footer); Grid.SetRow(footer, 2);
+        var footer = Ui.Stack(4, sourceLabel); left.Children.Add(footer); Grid.SetRow(footer, 2);
         welcome = Ui.Stack(13, new TextBlock { Text = "让主页动起来", FontSize = 21, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center },
             Ui.Text("选择主页，在画布中摆放角色，用时间轴编排动作。", 13, true),
             Ui.Row(8, StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5", true), StudioLayout.AsyncTool("打开项目", () => OpenAsync(), "\uE8E5")),
@@ -80,7 +81,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         foreach (var label in welcome.Children.OfType<TextBlock>()) label.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 220, 230, 241));
         var center = new Grid(); center.Children.Add(viewport); center.Children.Add(welcome);
         notice.VerticalAlignment = VerticalAlignment.Top; notice.Margin = new(8); center.Children.Add(notice);
-        var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("属性"), autoKey, properties));
+        var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("检查器"), autoKey, properties));
         Content = new StudioLayout(left, center, right, timeline, toolbar);
         properties.Children.Add(Ui.Text("在左侧或画布中选择角色，调整其动作与位置。", 13, true));
 
@@ -88,6 +89,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         previewOnly.Checked += (_, _) => { if (!refreshing) _ = SafeAsync(ReloadPreviewAsync); };
         previewOnly.Unchecked += (_, _) => { if (!refreshing) _ = SafeAsync(ReloadPreviewAsync); };
         viewport.SelectionChanged += (_, id) => Select(id ?? SceneId);
+        viewport.ContextMenuFactory = HomeObjectMenu;
         viewport.ObjectDragged += (_, drag) => Drag(drag);
         viewport.ObjectScaled += (_, scale) => ScaleCharacter(scale);
         viewport.FramePresented += (_, frame) => OnFrame(frame);
@@ -300,7 +302,8 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
             {
                 bool visible = document.TransformAt(character.Key, document.Playhead).Visible;
                 var item = new ListViewItem { Tag = character.Key, Content = Ui.Stack(2, Ui.Text(character.Name + (visible ? "" : " · 已隐藏")), Ui.Text(character.Key, 11, true)) };
-                ToolTipService.SetToolTip(item, character.Supported ? "点击选择；在画布中拖动位置和滚轮缩放。" : character.Error);
+                ToolTipService.SetToolTip(item, character.Supported ? "拖动摆放 · Ctrl+滚轮缩放角色 · 右键导出素材" : character.Error);
+                StudioMenus.Context(item, () => { Select(character.Key); return document?.SelectedCharacterKey == character.Key; }, HomeObjectMenu);
                 objects.Items.Add(item);
             }
             objects.SelectedItem = objects.Items.OfType<ListViewItem>().FirstOrDefault(item => item.Tag?.ToString() == (document.SelectedCharacterKey ?? SceneId));
@@ -363,7 +366,7 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
         {
             var character = metadata?.Characters.FirstOrDefault(c => c.Key == key);
             properties.Children.Add(Ui.Text(DisplayNames.Character(character?.Name ?? key), 16));
-            properties.Children.Add(Ui.Text(key, 12, true));
+            
             if (character?.Supported == false) { properties.Children.Add(Ui.Text(character.Error ?? "该角色暂不支持独立编辑。", 13, true)); refreshing = false; return; }
             animationBox = Ui.Choice("动作", new[] { ("", "原始动作") }.Concat((character?.Animations ?? []).Select(name => (name, DisplayNames.Animation(name)))), "");
             loopBox = Ui.Choice("循环", [("source", "沿用原设置"), ("once", "播放一次"), ("loop", "持续循环")], "source");
@@ -376,10 +379,12 @@ internal sealed class HomeStudioPage : UserControl, IAsyncDisposable
             AddNumber("x", "水平位移（%）", -1000, 1000, 1, TransformChanged);
             AddNumber("y", "垂直位移（%）", -1000, 1000, 1, TransformChanged);
             AddNumber("scale", "缩放（%）", 1, 2000, 5, TransformChanged);
-            properties.Children.Add(Ui.Text("拖动角色调整位置，滚轮调整缩放；影子和关联部件会一起移动。", 12, true));
-            properties.Children.Add(StudioLayout.Tool("添加位置关键帧", () => Edit(() => document.AddTransformKey(key, document.Playhead)), "\uE710"));
-            properties.Children.Add(StudioLayout.Tool("恢复此角色的原始状态", () => Edit(() => document.ResetCharacter(key)), "\uE777"));
+            
+            
+            
         }
+        foreach (var pair in new[] { ("x", "y"), ("speed", "sourceTime"), ("canvasWidth", "canvasHeight"), ("exposure", "contrast"), ("saturation", "vignette") })
+            if (numbers.TryGetValue(pair.Item1, out var first) && numbers.TryGetValue(pair.Item2, out var second)) StudioLayout.PairFields(properties, first, second);
         refreshing = false; RefreshValues();
     }
     void ApplyCanvas()

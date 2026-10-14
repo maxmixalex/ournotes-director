@@ -23,6 +23,11 @@ public sealed class HomeRenderer : IDisposable
     bool background;
     IReadOnlyList<PreviewTarget> targets = [];
     public string Device => gl.Device;
+    public bool PreferGpuPresentation { get => gl.PreferGpuPresentation; set => gl.PreferGpuPresentation = value; }
+    public GpuPreviewSurface? GpuSurface => gl.GpuSurface;
+    public string? GpuFallbackReason => gl.GpuFallbackReason;
+    public void DisableGpuPresentation(string reason) => gl.DisableGpuPresentation(reason);
+
     public float[] Crop { get; private set; }
     public bool Transparent => animation.Character is not null || !background;
     public int PendingFrames => gl.PendingPixels;

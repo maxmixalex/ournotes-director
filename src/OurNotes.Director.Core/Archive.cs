@@ -31,6 +31,12 @@ public sealed class Archive
     }
     public JsonNode Manifest(string site, string type, string id)
     {
+        if (type == "stories" && (string.IsNullOrWhiteSpace(id) || id == DirectorProject.LibrarySource))
+        {
+            var path = SitePath(site, "director/manifest.json");
+            if (!File.Exists(path)) throw new FileNotFoundException("素材库缺少创作资源索引。请在素材库中完成归档更新；空白场景不需要绑定原剧情。", path);
+            return ReadJson(path);
+        }
         if (!Regex.IsMatch(id, "^[a-zA-Z0-9_-]+$")) throw new ArgumentException("Invalid manifest ID");
         return ReadJson(SitePath(site, $"{type}/{id}.json"));
     }

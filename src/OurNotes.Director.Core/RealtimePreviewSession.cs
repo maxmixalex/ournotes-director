@@ -81,6 +81,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         return await task!.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public Task DisableGpuPresentationAsync(string reason,long expectedSessionId)=>Enqueue(()=>
+    {
+        if(renderer is null||sessionId!=expectedSessionId)return;
+        renderer.DisableGpu(reason);Render(frame,[]);
+    });
+
     public Task SeekAsync(double seconds)
     {
         if(!double.IsFinite(seconds)||seconds<0||seconds>36000)throw new ArgumentOutOfRangeException(nameof(seconds));
@@ -250,7 +256,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         var scene=active as SceneState;
         var result=new PreviewFrame(++sequence,sessionId,frame,frame/(double)active.Fps,pixels,targets??LastFrame?.Targets??[],
             milliseconds,playing?measuredRate:0,playing,active.Device,active.Duration,scene?.Source.DurationMode??PreviewDurationMode.Fixed,
-            scene?.Timing,performance??LastFrame?.Performance,lips??LastFrame?.LipSync,animations??LastFrame?.ActorAnimations);
+            scene?.Timing,performance??LastFrame?.Performance,lips??LastFrame?.LipSync,animations??LastFrame?.ActorAnimations,active.GpuSurface,active.GpuFallbackReason);
         Volatile.Write(ref lastFrame,result);
         FrameReady?.Invoke(this,result);
     }
@@ -415,6 +421,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     abstract class RendererState : IDisposable
     {
         public double Duration{get;set;}
+        public virtual GpuPreviewSurface? GpuSurface=>null;
+        public virtual string? GpuFallbackReason=>null;
+        public abstract void DisableGpu(string reason);
         public abstract int Fps{get;}
         public abstract string Device{get;}
         public virtual int EndFrame=>checked((int)Math.Floor(Duration*Fps+1e-8));
@@ -441,6 +450,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public bool NeedsReplay{get;private set;}
         public override int Fps=>30;
         public override string Device=>native.Device;
+        public override GpuPreviewSurface? GpuSurface=>native.GpuSurface;
+        public override string? GpuFallbackReason=>native.GpuFallbackReason;
+        public override void DisableGpu(string reason)=>native.DisableGpuPresentation(reason);
         public int NativeFrame=>native.Loop.Frame;
         public bool Finished=>native.Player.Finished&&!native.Player.Cancelled;
         public override int EndFrame=>Source.DurationMode==PreviewDurationMode.Automatic?Timing?.EndFrame??30*36000:base.EndFrame;
@@ -456,7 +468,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             CueCache=cueCache??new();
             clean=project.Output["clean"]?.GetValue<bool>()??false;
             native=new(new Archive(source.ArchivePath),project.Site,source.CubismPath,project.Adv,project.Language,
-                source.Width,source.Height,source.ProjectPath,source.FfmpegPath,1,Document,false,CueCache);
+                source.Width,source.Height,source.ProjectPath,source.FfmpegPath,1,Document,false,CueCache){PreferGpuPresentation=source.GpuPresentation};
         }
         public void Commit(ScenePreviewSource source)
         {
@@ -464,7 +476,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             var next=DirectorProject.Read(source.ProjectPath);
             if(next.Adv!=project.Adv||next.Site!=project.Site||next.Language!=project.Language||source.Width!=Source.Width||source.Height!=Source.Height
                 ||source.ArchivePath!=Source.ArchivePath||source.CubismPath!=Source.CubismPath||source.FfmpegPath!=Source.FfmpegPath
-                ||(next.Output["clean"]?.GetValue<bool>()??false)!=clean||Archive.S(next.Output,"letterbox")!=Archive.S(project.Output,"letterbox"))
+                ||(next.Output["clean"]?.GetValue<bool>()??false)!=clean||Archive.S(next.Output,"letterbox")!=Archive.S(project.Output,"letterbox")
+                ||Archive.S(next.Output,"isolateActor")!=Archive.S(project.Output,"isolateActor"))
                 throw new ArgumentException("Changing source, viewport or presentation requires reloading the scene.");
             if(!double.IsFinite(source.Duration)||source.Duration<=0||source.Duration>36000)throw new ArgumentOutOfRangeException(nameof(source));
             Source=source;Duration=source.Duration;NeedsReplay=true;project=next;
@@ -494,6 +507,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         int last=-1;
         public override int Fps=>fps;
         public override string Device=>native.Device;
+        public override GpuPreviewSurface? GpuSurface=>native.GpuSurface;
+        public override string? GpuFallbackReason=>native.GpuFallbackReason;
+        public override void DisableGpu(string reason)=>native.DisableGpuPresentation(reason);
         public HomeState(HomePreviewSource source)
         {
             source.Project.Validate();
@@ -502,7 +518,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             var character=string.IsNullOrWhiteSpace(source.Character)?null:scene.SelectCharacter(source.Character);
             animation=new(new HomeResources(scene),character);fps=project.Output.Fps;
             native=new(animation,source.Width,source.Height,1,HomeTiming.Plan(project.Duration,fps:fps),
-                project.EditState.Framing,project.EditState.Background,project.EditState);
+                project.EditState.Framing,project.EditState.Background,project.EditState){PreferGpuPresentation=source.GpuPresentation};
         }
         public void SetEdits(HomeEditState state)=>native.SetEditState(state);
         public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits)

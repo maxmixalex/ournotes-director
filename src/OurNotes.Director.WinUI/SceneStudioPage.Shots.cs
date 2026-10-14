@@ -23,7 +23,7 @@ internal sealed partial class SceneStudioPage
             _properties.Children.Add(StudioLayout.Tool("插入动作", () => InsertNativeCommand("Motion"), "\uE768"));
             _properties.Children.Add(StudioLayout.Tool("插入表情", () => InsertNativeCommand("Expression"), "\uE76E"));
             _properties.Children.Add(StudioLayout.Tool("插入对白", () => InsertNativeCommand("Talk"), "\uE8BD"));
-            _properties.Children.Add(StudioLayout.AsyncTool("单人透明导出…", () => CreateSingleActorShotAsync(true), "\uE898"));
+            
             var related = _document.Commands.Where(command => !command.IsGenerated && command.Target.Split(',').Contains(actor.Id)).Take(12).ToArray();
             if (related.Length > 0) _properties.Children.Add(StudioLayout.Section("这个角色的指令"));
             foreach (var command in related)
@@ -45,7 +45,9 @@ internal sealed partial class SceneStudioPage
         if (!TryFlushCommandDraft(reload: false)) return;
         FlushProperty(); await _pendingPreviewCommit;
         if (commandChanged && !_suppressReload) await ReloadAsync();
-        SceneSource? source = _document?.Document.Source ?? await ChooseSourceAsync();
+        if (export) { await ExportActorAsync("frame"); return; }
+        if (!Directory.Exists(_window.Settings.ArchivePath)) { _window.ShowResourceManager(); return; }
+        SceneSource? source = _document?.Document.Source ?? new SceneSource("", _window.Settings.Site, _window.Settings.Language);
         if (source is null) return;
         StudioActor? actor = _document?.Sample(_document.Time).Actors.FirstOrDefault(a => a.Id == _document.SelectedId)
             ?? _document?.Actors.FirstOrDefault(a => a.Id == _document.SelectedId);
@@ -151,7 +153,7 @@ internal sealed partial class SceneStudioPage
                 if (!double.IsFinite(width.Value) || !double.IsFinite(height.Value) || width.Value != Math.Truncate(width.Value) || height.Value != Math.Truncate(height.Value)) throw new ArgumentException("画布宽高需要是整数像素。");
                 newWidth = checked((int)width.Value); newHeight = checked((int)height.Value); supersample = int.Parse(Ui.Selected(sampling), CultureInfo.InvariantCulture);
                 RenderDimensions.Validate(newWidth, newHeight, supersample);
-                VideoEncoding.Validate(output.Codec, newWidth, newHeight, output.CineformQuality);
+
             }
             catch (Exception failure) when (failure is ArgumentException or OverflowException)
             { args.Cancel = true; error.Message = failure.Message; error.IsOpen = true; }

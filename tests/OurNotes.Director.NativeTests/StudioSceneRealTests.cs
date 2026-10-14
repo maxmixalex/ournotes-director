@@ -137,6 +137,7 @@ static class StudioSceneRealTests
                 _=renderer.Frame(timing.EndFrame!.Value+30,true,stopAtEnd:true);
                 Check(renderer.Player.Finished&&renderer.Player.CompletionFrame==timing.EndFrame,"normal rendering and timing-only execution reach the identical native end frame");
             }
+            report["isolatedActor"]=IsolatedActorRealTests.Run(archive,core,ffmpeg,project,(JsonObject)report["visibleVoice"]!,outputDirectory,Check);
             report["envelopeFallback"]=CheckEnvelope(archive,core,ffmpeg,manifest,definition,episode,timing,Check);
             report["fullCanvas"]=CheckFullCanvas(archive,core,ffmpeg,definition,episode,outputDirectory,Check);
             report["ok"]=true;Console.WriteLine($"Passed {checks.Count} real scene timing/lip-sync/preview/full-canvas checks.");return 0;

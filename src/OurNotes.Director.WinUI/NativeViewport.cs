@@ -18,11 +18,11 @@ namespace OurNotes.Director.WinUI;
 /// Native XAML presentation of the persistent OpenGL session's raw frames. WriteableBitmap
 /// is updated in place; no CLI invocation, disk frame, decoder or video proxy is involved.
 /// </summary>
-public sealed class NativeViewport : UserControl, IAsyncDisposable
+public sealed partial class NativeViewport : UserControl, IAsyncDisposable
 {
     readonly RealtimePreviewSession session=new();
     readonly Grid surface=new(){Background=Brush(18,21,28)};
-    readonly Image image=new(){Stretch=Stretch.Uniform,IsHitTestVisible=false};
+    readonly Image image=new(){Stretch=Stretch.Fill,IsHitTestVisible=false,HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top};
     readonly Canvas checker=new(){IsHitTestVisible=false};
     readonly Canvas overlay=new(){IsHitTestVisible=false};
     readonly Rectangle outline=new(){Stroke=Brush(91,202,255),StrokeThickness=2,RadiusX=3,RadiusY=3};
@@ -90,7 +90,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         diagnostics.Opened+=(_,_)=>
         {
             if(diagnosticFailure||LastFrame is not {} frame)return;
-            diagnostics.Content=$"实际刷新 {frame.FramesPerSecond:0.0} fps · 渲染 {frame.RenderMilliseconds:0.0} ms · 显示 {PresentationMilliseconds:0.0} ms\n{frame.Pixels.Width} × {frame.Pixels.Height} · 第 {frame.Frame} 帧\n{frame.Device}";
+            diagnostics.Content=$"{frame.PresentationFallback??"OpenGL → D3D11 共享纹理；无 CPU 帧传输"}\n实际刷新 {frame.FramesPerSecond:0.0} fps · 渲染 {frame.RenderMilliseconds:0.0} ms · 显示 {PresentationMilliseconds:0.0} ms\n{frame.Pixels.Width} × {frame.Pixels.Height} · 第 {frame.Frame} 帧\n{frame.Device}";
         };
         surface.SizeChanged+=(_,_)=>LayoutCanvas();
         surface.PointerPressed+=OnPointerPressed;
@@ -99,6 +99,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         surface.PointerCanceled+=OnPointerCanceled;
         surface.PointerCaptureLost+=OnPointerCanceled;
         surface.PointerWheelChanged+=OnPointerWheelChanged;
+        InitializeWorkspaceNavigation();InitializeGpuPresentation();
         Unloaded+=(_,_)=>{if(!disposed)session.Pause();};
         session.FrameReady+=OnFrameReady;session.Failed+=OnFailed;
     }
@@ -110,7 +111,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         long version=BeginLoad("正在载入场景…");
         try
         {
-            await session.LoadSceneAsync(source);await AwaitPresentationAsync();
+            await session.LoadSceneAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
             if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
@@ -120,14 +121,14 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         long version=BeginLoad("正在载入主页…");
         try
         {
-            await session.LoadHomeAsync(source);await AwaitPresentationAsync();
+            await session.LoadHomeAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
             if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
     }
     long BeginLoad(string message)
     {
-        HasCurrentSource=false;loading=true;dragTarget=null;dragMoved=false;
+        showingEmptyCanvas=false;HasCurrentSource=false;loading=true;dragTarget=null;dragMoved=false;
         surface.ReleasePointerCaptures();HideSelection();status.Text=message;diagnostics.Content=null;diagnosticFailure=false;
         return ++sourceVersion;
     }
@@ -157,7 +158,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         await session.SetHomeEditStateAsync(state);
         await AwaitPresentationAsync();
     }
-    public Task CommitSceneProjectAsync(ScenePreviewSource source)=>session.CommitSceneProjectAsync(source);
+    public Task CommitSceneProjectAsync(ScenePreviewSource source)=>session.CommitSceneProjectAsync(source with{GpuPresentation=true});
     public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
     async Task AwaitPresentationAsync()
     {
@@ -184,7 +185,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     {
         lock(frameGate)
         {
-            if(disposed)return;
+            if(disposed||showingEmptyCanvas)return;
             pendingFrame=frame;
             if(presentationQueued)return;
             presentationQueued=true;
@@ -205,17 +206,27 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         {
             long stamp=Stopwatch.GetTimestamp();
             var pixels=frame.Pixels;
+            if(frame.GpuSurface is not null)
+            {
+                if(!PresentGpu(frame))return;
+            }
+            else
+            {
+            DetachGpu();
+            if(pixels.Rgba.Length!=checked(pixels.Width*pixels.Height*4))throw new InvalidDataException("Incomplete CPU preview frame");
             if(bitmap is null||bitmap.PixelWidth!=pixels.Width||bitmap.PixelHeight!=pixels.Height)
             {
                 pixelStream?.Dispose();bitmap=new(pixels.Width,pixels.Height);
-                pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.Rgba.Length];image.Source=bitmap;
+                pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.Rgba.Length];
             }
+            if(!ReferenceEquals(image.Source,bitmap))image.Source=bitmap;
             // Metadata-only progress/pause events retain the same pixel object.
             // Copy only a newly rendered image, using the vectorized display converter.
             if(!ReferenceEquals(LastFrame?.Pixels,pixels))
             {
                 PreviewPixelConverter.CopyBgraPremultiplied(pixels.Rgba,bgra);
                 pixelStream!.Position=0;pixelStream.Write(bgra);bitmap.Invalidate();
+            }
             }
             Volatile.Write(ref lastFrame,frame);
             if(HasCurrentSource)UpdateStatus();
@@ -253,23 +264,30 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         if(!HasCurrentSource||loading||LastFrame is not {} frame)return;
         if(frame.IsPlaying==statusPlaying&&Stopwatch.GetElapsedTime(statusClock).TotalMilliseconds<100)return;
         statusClock=Stopwatch.GetTimestamp();statusPlaying=frame.IsPlaying;diagnosticFailure=false;
-        string text=$"{(frame.IsPlaying?"播放中":"已暂停")}  ·  {TimeSpan.FromSeconds(frame.Time):mm\\:ss\\.ff}";
+        string mode=frame.IsGpuPresented?"GPU 直连":frame.PresentationFallback is not null?"兼容显示":"像素显示";
+        string text=$"{mode}  ·  {(frame.IsPlaying?"播放中":"已暂停")}  ·  {TimeSpan.FromSeconds(frame.Time):mm\\:ss\\.ff}";
         if(status.Text!=text)status.Text=text;
     }
 
     void LayoutCanvas()
     {
-        if(LastFrame is not {} frame||surface.ActualWidth<=0||surface.ActualHeight<=0)return;
-        double scale=Math.Min(surface.ActualWidth/frame.Pixels.Width,surface.ActualHeight/frame.Pixels.Height);
-        var rect=new Rect((surface.ActualWidth-frame.Pixels.Width*scale)/2,(surface.ActualHeight-frame.Pixels.Height*scale)/2,
-            frame.Pixels.Width*scale,frame.Pixels.Height*scale);
+        if(surface.ActualWidth<=0||surface.ActualHeight<=0)return;
+        int width=showingEmptyCanvas?emptyWidth:LastFrame?.Pixels.Width??emptyWidth;
+        int height=showingEmptyCanvas?emptyHeight:LastFrame?.Pixels.Height??emptyHeight;
+        double scale=Math.Min(surface.ActualWidth/width,surface.ActualHeight/height)*viewZoom;
+        var rect=new Rect((surface.ActualWidth-width*scale)/2+viewPan.X,(surface.ActualHeight-height*scale)/2+viewPan.Y,
+            width*scale,height*scale);
+        image.Width=rect.Width;image.Height=rect.Height;
+        image.RenderTransform=new TranslateTransform{X=rect.X,Y=rect.Y};
+        LayoutGpu(rect);
         if(imageRect!=rect)
         {
             imageRect=rect;checker.Children.Clear();
             const int cell=24;
             var light=Brush(57,63,75);var dark=Brush(43,49,60);
-            int cols=(int)Math.Ceiling(rect.Width/cell),rows=(int)Math.Ceiling(rect.Height/cell);
-            for(int y=0;y<rows;y++)for(int x=0;x<cols;x++)
+            int firstX=Math.Max(0,(int)Math.Floor(-rect.X/cell)),firstY=Math.Max(0,(int)Math.Floor(-rect.Y/cell));
+            int cols=(int)Math.Ceiling(Math.Min(rect.Width,surface.ActualWidth-rect.X)/cell),rows=(int)Math.Ceiling(Math.Min(rect.Height,surface.ActualHeight-rect.Y)/cell);
+            for(int y=firstY;y<rows;y++)for(int x=firstX;x<cols;x++)
             {
                 var tile=new Rectangle{Width=Math.Min(cell,rect.Width-x*cell),Height=Math.Min(cell,rect.Height-y*cell),Fill=(x+y)%2==0?light:dark};
                 Canvas.SetLeft(tile,rect.X+x*cell);Canvas.SetTop(tile,rect.Y+y*cell);checker.Children.Add(tile);
@@ -277,6 +295,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
         }
         var clip=new Rect(0,0,surface.ActualWidth,surface.ActualHeight);
         if(selectionClip.Rect!=clip)selectionClip.Rect=clip;
+        surface.Clip=new RectangleGeometry{Rect=clip};
         DrawSelection();
     }
 
@@ -344,9 +363,10 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
     }
     void OnPointerWheelChanged(object sender,PointerRoutedEventArgs args)
     {
-        if(!HasCurrentSource)return;
         var point=args.GetCurrentPoint(surface);
-        if(!InCanvas(point.Position))return;
+        bool control=(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
+        if(!control){ZoomCanvas(point.Position,point.Properties.MouseWheelDelta);args.Handled=true;return;}
+        if(!HasCurrentSource||!InCanvas(point.Position))return;
         var normalized=Normalize(point.Position);
         var target=HitTest(normalized.X,normalized.Y)??LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
         if(target is null||point.Properties.MouseWheelDelta==0)return;
@@ -364,7 +384,7 @@ public sealed class NativeViewport : UserControl, IAsyncDisposable
             waiters.Clear();
         }
         session.FrameReady-=OnFrameReady;session.Failed-=OnFailed;
-        await session.DisposeAsync();
+        DetachGpu();await session.DisposeAsync();
         pixelStream?.Dispose();pixelStream=null;
     }
 }

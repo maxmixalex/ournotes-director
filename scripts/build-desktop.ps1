@@ -58,6 +58,7 @@ try {
         }
     }
 
+    & (Join-Path $PSScriptRoot 'build-gpu-preview.ps1') -OutputDirectory $publishDirectory
     # Carry the exact resolved packages' license/notice files and NuGet metadata.
     $assetsPath = Join-Path (Split-Path $project -Parent) 'obj/project.assets.json'
     $assets = Get-Content -LiteralPath $assetsPath -Raw | ConvertFrom-Json -AsHashtable
@@ -130,6 +131,7 @@ try {
         }
     }
     Copy-Item -LiteralPath (Join-Path $repository 'DESKTOP.md') -Destination (Join-Path $publishDirectory 'DESKTOP.md')
+    Copy-Item -LiteralPath (Join-Path $repository 'STUDIO_DESIGN.md') -Destination (Join-Path $publishDirectory 'STUDIO_DESIGN.md')
 
     $manifestFiles = @()
     foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -File -Recurse | Sort-Object FullName)) {
