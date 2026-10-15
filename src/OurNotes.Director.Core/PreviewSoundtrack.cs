@@ -10,6 +10,8 @@ public interface IPreviewPlaybackClock
     double? PositionSeconds { get; }
     void Start(double seconds);
     void Pause();
+    /// <summary>Resume queued samples without seeking back to the last video frame.</summary>
+    bool Resume() => false;
 }
 
 /// <summary>Seekable PCM from the same interpreter and mixer used for export. A separate

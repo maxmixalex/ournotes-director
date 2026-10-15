@@ -15,6 +15,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     readonly MainWindow window;
     readonly NativeViewport viewport=new();
     readonly ClipTimeline timeline=new();
+    readonly TimelineScrubber scrubber;
     readonly ListView actors=new(){SelectionMode=ListViewSelectionMode.Single};
     readonly ListView assets=new(){SelectionMode=ListViewSelectionMode.Single,CanDragItems=true};
     readonly ComboBox assetKind=new(){HorizontalAlignment=HorizontalAlignment.Stretch};
@@ -44,7 +45,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     static double N(JsonObject value,string key,double fallback=0)=>CreativeScene.Number(value,key,fallback);
     internal CreativeScenePage(MainWindow window)
     {
-        this.window=window;document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();
+        this.window=window;scrubber=new(SeekAsync,error=>ShowError(error.Message));document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();
         HorizontalContentAlignment=HorizontalAlignment.Stretch;VerticalContentAlignment=VerticalAlignment.Stretch;
         var toolbar=new Grid{ColumnSpacing=16};toolbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});toolbar.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});toolbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         toolbar.Children.Add(Ui.Row(4,StudioMenus.Button("文件",FileMenu),StudioMenus.Button("编辑",EditMenu),StudioMenus.Button("视图",ViewMenu)));
@@ -58,21 +59,23 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         var footer=Ui.Stack(8,assetHint,Button("导入声音…",ImportVoiceAsync,"\uE8D6"));library.Children.Add(footer);Grid.SetRow(footer,5);
         var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar);
         actors.SelectionChanged+=(_,_)=>
-        {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
+        {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
         viewport.SelectionChanged+=(_,id)=>
-        {if(refreshing||id==selectedActor)return;selectedActor=id;selectedClip=replaceAssetClip=null;RefreshActors();BuildInspector();_=Safe(LoadAssetsAsync);};
+        {if(refreshing||id==selectedActor)return;selectedActor=id;selectedClip=replaceAssetClip=null;timeline.Select(null);RefreshActors();BuildInspector();_=Safe(LoadAssetsAsync);};
         viewport.ObjectDragged+=(_,drag)=>_=Safe(()=>DragAsync(drag));viewport.ObjectScaled+=(_,scale)=>_=Safe(()=>ScaleAsync(scale));
         viewport.FramePresented+=(_,frame)=>
         {
-            if(disposed||!viewport.HasCurrentSource)return;playhead=frame.Time;timeline.Position=playhead;timeline.IsPlaying=frame.IsPlaying;
+            if(disposed||!viewport.HasCurrentSource)return;if(!scrubber.IsBusy){playhead=frame.Time;timeline.Position=playhead;}timeline.IsPlaying=frame.IsPlaying;
             bool ended=playingLast&&!frame.IsPlaying;playingLast=frame.IsPlaying;
             if(ended&&timeline.Repeat&&playhead>=document.Duration-.04)_=Safe(async()=>{await SeekAsync(0);viewport.Play();});
         };
         viewport.Failed+=(_,error)=>ShowError(error.Message);viewport.ContextMenuFactory=ActorMenu;
-        timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>_=Safe(()=>SeekAsync(seconds));
+        timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>{viewport.Pause();timeline.Position=seconds;scrubber.Request(seconds);};
         timeline.ClipSelected+=id=>{selectedClip=id;selectedActor=S(document.Clip(id),"actor");replaceAssetClip=null;viewport.Pause();RefreshActors();BuildInspector();};
         timeline.ClipEdited+=(id,seconds,resize)=>_=Safe(()=>EditAsync(()=>{if(resize)document.ResizeClip(id,seconds);else document.MoveClip(id,seconds);}));
-        timeline.AddRequested+=(actor,kind,at)=>_=Safe(()=>AddToTrackAsync(actor,kind,at));timeline.ContextMenuFactory=ClipMenu;timeline.AssetDropped+=(data,at)=>_=Safe(()=>DropAssetAsync(data,at));
+        timeline.AddRequested+=(actor,kind,at)=>_=Safe(()=>AddToTrackAsync(actor,kind,at));timeline.ContextMenuFactory=id=>ClipMenu(document.Clip(id));timeline.AssetDropped+=(data,at,target)=>_=Safe(()=>DropAssetAsync(data,at,target));
+        timeline.TrackMenuFactory=TrackMenu;
+        timeline.ClipTrimmed+=(id,time)=>_=Safe(()=>EditAsync(()=>{var edit=CreativeClipEditing.TrimStart(document,id,time);document=edit.Scene;selectedClip=edit.Selection;}));
         assetKind.SelectionChanged+=(_,_)=>{search.PlaceholderText=AssetKind=="voice"?"输入台词后按 Enter 搜索…":"筛选名称…";_=Safe(LoadAssetsAsync);};
         search.TextChanged+=(_,_)=>{if(AssetKind!="voice")FilterAssets();};search.KeyDown+=(_,args)=>{if(args.Key==VirtualKey.Enter){_=Safe(LoadAssetsAsync);args.Handled=true;}};
         assets.DoubleTapped+=(_,_)=>{if((assets.SelectedItem as ListViewItem)?.Tag is ResultRow row)_=Safe(()=>InsertAssetAsync(row,AssetKind,playhead));};
@@ -113,7 +116,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             foreach(var old in existing.Where(pair=>!ids.Contains(pair.Key)).ToArray())actors.Items.Remove(old.Value);
             foreach(var actor in document.Actors.OfType<JsonObject>())
             {
-                string id=S(actor,"id"),name=CreativeScene.Text(actor,"name",id);
+                string id=S(actor,"id"),name=DisplayNames.Character(CreativeScene.Text(actor,"name",id));
                 if(!existing.TryGetValue(id,out var item))
                 {
                     item=new ListViewItem{Tag=id,HorizontalContentAlignment=HorizontalAlignment.Stretch};
@@ -154,7 +157,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         foreach(var row in assetRows.Where(row=>row.SearchText.Contains(query,StringComparison.OrdinalIgnoreCase)))
         {var item=new ListViewItem{Tag=row,Content=new TextBlock{Text=row.Title,TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=false},HorizontalContentAlignment=HorizontalAlignment.Stretch};ToolTipService.SetToolTip(item,row.Subtitle);assets.Items.Add(item);}
     }
-    public void Deactivate(){viewport.Pause();SaveDraft();}
+    public void Deactivate(){scrubber.Cancel();viewport.Pause();SaveDraft();}
     public void SaveDraft()
     {
         if(disposed||!HasUnsavedChanges)return;
@@ -162,5 +165,5 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         catch(Exception error)when(error is IOException or UnauthorizedAccessException){ShowError("草稿未保存："+error.Message);}
     }
     public async ValueTask DisposeAsync()
-    {if(disposed)return;SaveDraft();disposed=true;assetRequest?.Cancel();loadVersion++;await loadGate.WaitAsync();try{await viewport.DisposeAsync();previewInput?.Dispose();}finally{loadGate.Release();assetRequest?.Dispose();}}
+    {if(disposed)return;scrubber.Cancel();SaveDraft();disposed=true;assetRequest?.Cancel();loadVersion++;await loadGate.WaitAsync();try{await viewport.DisposeAsync();previewInput?.Dispose();}finally{loadGate.Release();assetRequest?.Dispose();}}
 }

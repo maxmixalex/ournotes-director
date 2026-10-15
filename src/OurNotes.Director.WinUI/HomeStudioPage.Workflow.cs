@@ -10,8 +10,8 @@ internal sealed partial class HomeStudioPage
         var menu = new MenuFlyout();
         menu.Items.Add(StudioMenus.Item("画布适应窗口", viewport.FitCanvas, "\uE9A6", true, "F"));
         menu.Items.Add(StudioMenus.Item("画布与房间设置", () => Select(SceneId), "\uE740", document is not null));
-        var loop = new ToggleMenuFlyoutItem { Text = "循环播放", IsChecked = repeat.IsChecked == true };
-        loop.Click += (_, _) => repeat.IsChecked = loop.IsChecked; menu.Items.Add(loop);
+        var loop = new ToggleMenuFlyoutItem { Text = "循环播放", IsChecked = timeline.Repeat };
+        loop.Click += (_, _) => timeline.Repeat = loop.IsChecked; menu.Items.Add(loop);
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(StudioMenus.Async("主页 JSON…", ShowJsonAsync, "\uE943"));
         return menu;

@@ -18,7 +18,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     Update? pendingUpdate;
     RendererState? renderer;
     PreviewFrame? lastFrame;
-    bool closing,playing;
+    bool closing,playing,resumeAudio;
     int playRequested;
     long sequence,sessionId;
     int frame;
@@ -127,7 +127,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             RequireRenderer();
             if(Volatile.Read(ref playRequested)==0)return;
             if(renderer is SceneState {NeedsReplay:true})Render(frame,[],replay:true);
-            playing=true;playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);ResetRate();
+            playing=true;playFrom=frame;playClock=Stopwatch.GetTimestamp();
+            if(!resumeAudio||PlaybackClock?.Resume()!=true)PlaybackClock?.Start(frame/(double)renderer!.Fps);
+            resumeAudio=false;ResetRate();
         }));
     }
 
@@ -137,7 +139,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         if(Interlocked.Exchange(ref playRequested,0)==0)return;
         Observe(Enqueue(()=>
         {
-            playing=false;
+            resumeAudio=true;playing=false;
             if(renderer is not null&&LastFrame is {} previous)Publish(previous.Pixels,0);
         }));
     }
@@ -184,7 +186,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         renderer?.Dispose();renderer=null;
         // A context must be created after the old context is disposed on this thread.
         // Creating both and disposing the old one could silently unbind the new WGL one.
-        renderer=factory();renderer.Duration=duration;
+        resumeAudio=false;renderer=factory();renderer.Duration=duration;
         sessionId++;frame=0;ResetRate();
         if(renderer is SceneState scene)StartTiming(scene);
         Render(0,[]);
@@ -202,6 +204,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 state.SetEdits(home);
             }
             if(update.SceneEdits.Count>0&&renderer is not SceneState)throw new InvalidOperationException("Load a scene project before applying scene edits.");
+            if(update.Time.HasValue)resumeAudio=false;
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
             Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue);
             if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
@@ -295,8 +298,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                     if(target>frame)Render(target,[]);
                     if(frame>=renderer.EndFrame&&(audioPosition is null||audioPosition.Value>=(renderer.EndFrame+1)/(double)renderer.Fps-0.00001))
                     {
-                        PlaybackClock?.Pause();
-                        PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
+                        resumeAudio=false;PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
                         Publish(LastFrame!.Pixels,0);
                         continue;
                     }

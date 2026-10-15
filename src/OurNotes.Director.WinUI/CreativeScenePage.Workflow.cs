@@ -26,6 +26,7 @@ internal sealed partial class CreativeScenePage
         var menu=new MenuFlyout();menu.Items.Add(StudioMenus.Async("撤销",()=>Safe(()=>UndoAsync(false)),"\uE7A7",undo.Count>0,"Ctrl+Z"));
         menu.Items.Add(StudioMenus.Async("重做",()=>Safe(()=>UndoAsync(true)),"\uE7A6",redo.Count>0,"Ctrl+Y"));menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(StudioMenus.Async("添加停留片段",()=>Safe(()=>EditAsync(()=>{selectedClip=document.AddClip("","hold",playhead,1,new JsonObject{["cmd"]="Delay",["Frames"]=0},"停留");})),"\uE916"));
+        menu.Items.Add(StudioMenus.Async("插入演出指令…",()=>Safe(()=>InsertNativeClipAsync(selectedActor,playhead)),"\uE943"));
         menu.Items.Add(StudioMenus.Async("粘贴场景 JSON…",()=>Safe(PasteAsync),"\uE943"));return menu;
     }
     MenuFlyout ViewMenu()
@@ -60,6 +61,7 @@ internal sealed partial class CreativeScenePage
     {
         string id=S(clip,"id");var menu=new MenuFlyout();
         menu.Items.Add(StudioMenus.Async("播放此处",()=>Safe(async()=>{await SeekAsync(N(document.Clip(id),"start"));viewport.Play();}),"\uE768"));
+        menu.Items.Add(StudioMenus.Async("在播放头分割",()=>Safe(()=>EditAsync(()=>{var result=CreativeClipEditing.Split(document,id,playhead);document=result.Scene;selectedClip=result.Selection;})),"\uE8C6",CreativeClipEditing.CanSplit(clip,playhead)));
         menu.Items.Add(StudioMenus.Async("复制片段",()=>Safe(()=>EditAsync(()=>selectedClip=document.DuplicateClip(id))),"\uE8C8"));
         if(S(clip,"kind") is "motion" or "expression")menu.Items.Add(StudioMenus.Async("替换素材…",()=>Safe(()=>ChooseReplacementAsync(id)),"\uE8D2"));
         menu.Items.Add(StudioMenus.Async(clip["enabled"]?.GetValue<bool>()==false?"启用":"停用",()=>Safe(()=>EditAsync(()=>document.Clip(id)["enabled"]=document.Clip(id)["enabled"]?.GetValue<bool>()==false))));
@@ -68,7 +70,7 @@ internal sealed partial class CreativeScenePage
     }
     internal async Task NewAsync(bool original=false)
     {
-        if(original){await OpenStoryAsync();return;}SaveDraft();viewport.InvalidateSource();previewDirty=true;loadedSourceKey=null;
+        if(original){await OpenStoryAsync();return;}if(!await ConfirmReplaceAsync())return;scrubber.Cancel();SaveDraft();viewport.InvalidateSource();previewDirty=true;loadedSourceKey=null;
         document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
         directory=Environment.CurrentDirectory;playhead=0;undo.Clear();redo.Clear();Refresh();viewport.SetEmptyCanvas(1920,1080);notice.IsOpen=false;
     }
@@ -77,7 +79,7 @@ internal sealed partial class CreativeScenePage
         filename??=await window.PickFileAsync(extensions:[".json"]);if(filename is null)return;
         string text=await File.ReadAllTextAsync(filename);var node=JsonNode.Parse(text) as JsonObject??throw new ArgumentException("文件不是场景 JSON。");SaveDraft();
         if(S(node,"format")!=CreativeScene.Format){await ImportNativeAsync(text,Path.GetDirectoryName(Path.GetFullPath(filename))!);return;}
-        var next=new CreativeScene(node);document=next;path=filename;directory=Path.GetDirectoryName(Path.GetFullPath(filename))!;savedText=next.ToJson();
+        var next=new CreativeScene(node);if(!await ConfirmReplaceAsync())return;scrubber.Cancel();document=next;path=filename;directory=Path.GetDirectoryName(Path.GetFullPath(filename))!;savedText=next.ToJson();
         selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;Refresh();await ReloadAsync();
     }
     async Task OpenStoryAsync()
@@ -89,7 +91,7 @@ internal sealed partial class CreativeScenePage
     async Task ImportNativeAsync(string json,string baseDirectory)
     {
         if(!Directory.Exists(window.Settings.ArchivePath))throw new DirectoryNotFoundException("请先选择已下载的素材库。");
-        SaveDraft();viewport.Pause();notice.Severity=InfoBarSeverity.Informational;notice.Message="正在解析原剧情的演出和语音时间…";notice.IsOpen=true;
+        if(!await ConfirmReplaceAsync())return;scrubber.Cancel();SaveDraft();viewport.Pause();notice.Severity=InfoBarSeverity.Informational;notice.Message="正在解析原剧情的演出和语音时间…";notice.IsOpen=true;
         var expanded=StudioSceneDocument.FromSceneDocument(SceneDocument.Parse(json,baseDirectory:baseDirectory));
         await Task.Run(()=>{var archive=new Archive(window.Settings.ArchivePath);expanded.ExpandInheritedSections(archive);expanded.ResolveSourceModels(archive);});
         var native=expanded.ToSceneDocument();var input=native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview"));
@@ -156,9 +158,9 @@ internal sealed partial class CreativeScenePage
             else selectedClip=document.AddClip(actor,kind,at,Math.Max(1d/30,duration),data,row.Title);
         });
     }
-    async Task DropAssetAsync(string json,double at)
+    async Task DropAssetAsync(string json,double at,string? target=null)
     {
-        var data=JsonNode.Parse(json)!.AsObject();selectedActor=data["actor"]?.ToString();replaceAssetClip=null;
+        var data=JsonNode.Parse(json)!.AsObject();selectedActor=string.IsNullOrWhiteSpace(target)?data["actor"]?.ToString():target;replaceAssetClip=null;
         var row=new ResultRow(S(data,"resource"),S(data,"label"),"",data["data"]!.DeepClone()){Context=new Dictionary<string,string?>{["adv"]=data["adv"]?.ToString(),["site"]=document.Site}};
         await InsertAssetAsync(row,S(data,"kind"),at);
     }
@@ -215,6 +217,7 @@ internal sealed partial class CreativeScenePage
     }
     async Task TogglePlayAsync()
     {
+        await scrubber.FlushAsync();
         if(viewport.IsPlaying){viewport.Pause();timeline.IsPlaying=false;return;}if(previewDirty||!viewport.HasCurrentSource)await ReloadAsync();if(!viewport.HasCurrentSource)return;
         if(playhead>=document.Duration-1d/30)await SeekAsync(0);viewport.Play();timeline.IsPlaying=true;
     }

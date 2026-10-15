@@ -35,6 +35,35 @@ static class CreativeExportTests
         check(JsonNode.DeepEquals(compiled, export.ToSceneDocument().Root),
             "Later creative edits cannot change an existing export snapshot");
 
+        var voices = CreativeScene.Blank("intl", "zh-Hans");
+        string voice = voices.AddClip("", "voice", 2, 4,
+            new JsonObject { ["cmd"] = "Voice", ["AudioPath"] = "fixture.wav", ["AudioIn"] = 1, ["AudioDuration"] = 4 }, "Voice");
+        voices.Clip(voice)["sourceDuration"] = 10;
+        string voiceSource = voices.ToJson();
+        var trimmed = CreativeClipEditing.TrimStart(voices, voice, 3).Scene;
+        check(CreativeScene.Number(trimmed.Clip(voice), "start") == 3 && CreativeScene.Number(trimmed.Clip(voice), "duration") == 3
+            && CreativeScene.Number(trimmed.Clip(voice)["data"]!.AsObject(), "AudioIn") == 2,
+            "Trimming a voice start changes the actual PCM in point while preserving the output end");
+        check(voices.ToJson() == voiceSource, "Trimming returns a separate document for atomic undo");
+        var split = CreativeClipEditing.Split(voices, voice, 4);
+        var right = split.Scene.Clip(split.Selection); var left = split.Scene.Clip(voice);
+        check(CreativeScene.Number(left, "duration") == 2 && CreativeScene.Number(right, "start") == 4
+            && CreativeScene.Number(right["data"]!.AsObject(), "AudioIn") == 3
+            && CreativeScene.Number(left["data"]!.AsObject(), "AudioDuration") == 2
+            && CreativeScene.Number(right["data"]!.AsObject(), "AudioDuration") == 2,
+            "Splitting voices produces contiguous, non-repeated source audio ranges");
+        check(split.Scene.Duration == voices.Duration && voices.ToJson() == voiceSource,
+            "Voice splitting changes neither the source scene nor total performance length");
+        bool rejected = false;
+        try { CreativeClipEditing.TrimStart(voices, voice, 0); } catch (ArgumentException) { rejected = true; }
+        check(rejected && voices.ToJson() == voiceSource, "Trimming beyond the source audio start is rejected without modifying the scene");
+        check(!CreativeClipEditing.CanSplit(voices.Clip(voice), 2) && !CreativeClipEditing.CanSplit(voices.Clip(voice), 6),
+            "Splitting at either clip boundary cannot create zero-length audio");
+        string hold = voices.AddClip("", "hold", 6, 2, new JsonObject { ["cmd"] = "Delay", ["Frames"] = 0 }, "Hold");
+        var splitHold = CreativeClipEditing.Split(voices, hold, 7);
+        check(splitHold.Scene.Duration == 8 && splitHold.Scene.Clips.Count == voices.Clips.Count + 1,
+            "Visible holds can be split like audio without an invisible duration constraint");
+
         string folder = Path.Combine(Path.GetTempPath(), "creative-audio-identity-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         try

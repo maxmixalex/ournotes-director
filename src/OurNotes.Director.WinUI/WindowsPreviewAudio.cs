@@ -14,7 +14,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
     readonly Task pump;
     readonly List<Task> retired = [];
     PreviewSoundtrack? source;
-    bool wanted, closing, deviceFailed;
+    bool wanted, closing, deviceFailed, started;
     long revision;
     double requestedTime, position, volume = 1;
     string status = "语音就绪";
@@ -34,7 +34,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
         {
             if (closing) { Retire(created); return; }
             Retire(source); source = created; wanted = false; deviceFailed = false;
-            revision++; position = requestedTime = 0; SetStatus("语音准备中"); wake.Set();
+            revision++; started = false; position = requestedTime = 0; SetStatus("语音准备中"); wake.Set();
         }
     }
     public void Clear()
@@ -42,7 +42,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
         lock (gate)
         {
             if (closing) return;
-            wanted = false; Retire(source); source = null; revision++;
+            wanted = false; started = false; Retire(source); source = null; revision++;
             SetStatus("无场景语音"); wake.Set();
         }
     }
@@ -58,11 +58,19 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
         lock (gate)
         {
             if (closing || source is null) return;
-            requestedTime = position = seconds; wanted = true; deviceFailed = false; revision++;
+            requestedTime = position = seconds; wanted = true; started = true; deviceFailed = false; revision++;
             source.RequestThrough((long)(seconds * AdvAudio.SampleRate) + 2 * AdvAudio.SampleRate); wake.Set();
         }
     }
     public void Pause() { lock (gate) { if (closing) return; wanted = false; wake.Set(); } }
+    public bool Resume()
+    {
+        lock (gate)
+        {
+            if (closing || source is null || deviceFailed || !started) return false;
+            wanted = true; wake.Set(); return true;
+        }
+    }
     void SetStatus(string value)
     {
         if (status == value) return; status = value;
@@ -96,7 +104,12 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
                         }
                         if (!wanted || source is null || deviceFailed)
                         {
-                            if (device != 0 && !paused) { Check(waveOutPause(device), "暂停语音"); paused = true; }
+                            if (device != 0 && !paused)
+                            {
+                                Check(waveOutPause(device), "暂停语音"); paused = true;
+                                position = (startSample + Math.Min(DeviceSamples(device), nextSample - startSample)) / (double)AdvAudio.SampleRate;
+                            }
+                            if (source is not null && !deviceFailed) SetStatus("已暂停");
                         }
                         else
                         {
@@ -130,15 +143,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
                                 nextSample += samples; queued = true;
                             }
                             if (queued && paused) { Check(waveOutRestart(device), "继续场景语音"); paused = false; }
-                            var time = new MultimediaTime { Type = TimeSamples };
-                            Check(waveOutGetPosition(device, ref time, (uint)sizeof(MultimediaTime)), "读取音频时钟");
-                            long consumed = time.Type switch
-                            {
-                                TimeSamples => time.Value,
-                                TimeBytes => time.Value / 4,
-                                1 => (long)time.Value * 48, // driver returned TIME_MS
-                                _ => throw new IOException("音频驱动没有提供受支持的播放时钟。")
-                            };
+                            long consumed = DeviceSamples(device);
                             position = (startSample + Math.Min(consumed, nextSample - startSample)) / (double)AdvAudio.SampleRate;
                             SetStatus(buffering && !queued ? "正在缓冲语音…" : volume == 0 ? "静音" : "语音播放");
                         }
@@ -155,6 +160,19 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
             }
         }
         finally { CloseDevice(ref device, headers); }
+    }
+
+    static unsafe long DeviceSamples(nint device)
+    {
+        var time = new MultimediaTime { Type = TimeSamples };
+        Check(waveOutGetPosition(device, ref time, (uint)sizeof(MultimediaTime)), "读取音频时钟");
+        return time.Type switch
+        {
+            TimeSamples => time.Value,
+            TimeBytes => time.Value / 4,
+            1 => (long)time.Value * 48,
+            _ => throw new IOException("音频驱动没有提供受支持的播放时钟。")
+        };
     }
 
     static void ApplyVolume(Span<byte> bytes, double volume)
