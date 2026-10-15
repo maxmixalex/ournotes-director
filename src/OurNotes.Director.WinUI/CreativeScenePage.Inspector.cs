@@ -33,13 +33,21 @@ internal sealed partial class CreativeScenePage
         {
             string id=S(clip,"id"),kind=S(clip,"kind");var data=clip["data"]!.AsObject();Heading(ClipTimeline.KindName(kind));
             var label=new TextBox{Header="名称",Text=CreativeScene.Text(clip,"label",ClipTimeline.KindName(kind))};
-            label.LostFocus+=(_,_)=>{if(Current()&&label.Text!=S(clip,"label"))_=Safe(()=>EditAsync(()=>document.Clip(id)["label"]=label.Text,false));};inspector.Children.Add(label);
+            label.LostFocus+=(_,_)=>{if(Current()&&label.Text!=S(clip,"label"))_=Safe(()=>EditAsync(()=>document.Clip(id)["label"]=label.Text,false));};if(S(data,"cmd")!="Talk")inspector.Children.Add(label);
             var start=Field("开始（秒）",N(clip,"start"),0,36000,v=>EditAsync(()=>document.MoveClip(id,v)));
             if(document.CanResize(clip))
             {var duration=Field("持续（秒）",N(clip,"duration"),1d/30,36000,v=>EditAsync(()=>document.ResizeClip(id,v)));StudioLayout.PairFields(inspector,start,duration);}
             else Help($"持续区间 {N(clip,"duration"):0.###} 秒。表情保持到下一次切换，原有动作保留原剧情演出。");
             if(kind=="voice")
             {
+                if(S(data,"cmd")=="Talk")
+                {
+                    string originalText=CreativeDialogue.Read(document,id);
+                    var dialogue=new TextBox{Header="台词",Text=originalText,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,MinHeight=80,MaxHeight=180};
+                    dialogue.LostFocus+=(_,_)=>{if(Current()&&dialogue.Text!=originalText)_=Safe(()=>EditAsync(()=>CreativeDialogue.Write(document,id,dialogue.Text)));};
+                    inspector.Children.Add(dialogue);
+                    Help("这里修改画面中的台词；原语音不变，不会自动生成配音。");
+                }
                 var binding=new ComboBox{Header="说话角色",HorizontalAlignment=HorizontalAlignment.Stretch};binding.Items.Add(new ComboBoxItem{Content="旁白",Tag=""});
                 foreach(var a in document.Actors.OfType<JsonObject>())binding.Items.Add(new ComboBoxItem{Content=CreativeScene.Text(a,"name",S(a,"id")),Tag=S(a,"id")});
                 binding.SelectedItem=binding.Items.OfType<ComboBoxItem>().FirstOrDefault(item=>item.Tag?.ToString()==S(clip,"actor"))??binding.Items[0];
@@ -109,8 +117,18 @@ internal sealed partial class CreativeScenePage
         var presets=new ComboBox{PlaceholderText="常用画布",HorizontalAlignment=HorizontalAlignment.Stretch};
         foreach(var(name,w,h)in new[]{("横屏 1920 × 1080",1920,1080),("竖屏 1080 × 1920",1080,1920),("正方形 1080 × 1080",1080,1080)})presets.Items.Add(new ComboBoxItem{Content=name,Tag=(w,h)});
         presets.SelectionChanged+=(_,_)=>{if(Current()&&(presets.SelectedItem as ComboBoxItem)?.Tag is ValueTuple<int,int> size)_=Safe(()=>EditAsync(()=>{document.Canvas["width"]=size.Item1;document.Canvas["height"]=size.Item2;}));};inspector.Children.Add(presets);
-        var transparent=new CheckBox{Content="透明背景",IsChecked=document.Canvas["transparent"]?.GetValue<bool>()!=false};
-        transparent.Click+=(_,_)=>{if(Current())_=Safe(()=>EditAsync(()=>document.Canvas["transparent"]=transparent.IsChecked==true));};inspector.Children.Add(transparent);
+        var content=new ComboBox{Header="画面内容",HorizontalAlignment=HorizontalAlignment.Stretch};
+        content.Items.Add(new ComboBoxItem{Content="完整场景",Tag="scene"});
+        content.Items.Add(new ComboBoxItem{Content="仅人物 · 透明背景",Tag="characters"});
+        content.SelectedIndex=SceneContent.Read(document.Canvas["content"])=="characters"?1:0;
+        content.SelectionChanged+=(_,_)=>{if(Current())_=Safe(()=>EditAsync(()=>document.Canvas["content"]=(content.SelectedItem as ComboBoxItem)!.Tag!.ToString()));};
+        inspector.Children.Add(content);
+        if(document.Root["imported"]?.GetValue<bool>()!=true&&content.SelectedIndex==0)
+        {
+            var transparent=new CheckBox{Content="画布底色透明",IsChecked=document.Canvas["transparent"]?.GetValue<bool>()!=false};
+            transparent.Click+=(_,_)=>{if(Current())_=Safe(()=>EditAsync(()=>document.Canvas["transparent"]=transparent.IsChecked==true));};inspector.Children.Add(transparent);
+        }
+        else Help(content.SelectedIndex==1?"保留人物原站位、相机、动作和语音；背景、台词和装饰不进入预览或导出。":"背景和台词沿用原剧情；选择“仅人物”可生成同构图的透明画面。");
         inspector.Children.Add(Button("添加镜头变化",()=>AddToTrackAsync("","camera",playhead),"\uE722"));inspector.Children.Add(Button("添加画面调整",()=>AddToTrackAsync("","grade",playhead),"\uE790"));
         inspector.Children.Add(Button("导出当前画面",()=>ExportAsync("frame"),"\uEB9F"));
     }
@@ -204,5 +222,17 @@ internal sealed partial class CreativeScenePage
         string? fixture=Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE");if(string.IsNullOrEmpty(fixture))return;
         window.Settings.ArchivePath=fixture;await ImportNativeAsync(SceneTemplates.Create("story-patch",new SceneSource("10462","intl","zh-Hans")).Text,fixture);await SeekAsync(3.1);
         check(document.Clips.OfType<JsonObject>().Any(c=>S(c,"kind")=="voice"),"原剧情对白成为可见语音片段");check(viewport.LastFrame is {Frame:93},"新工作台可定位真实剧情第93帧");
+        var full=viewport.LastFrame!;var targets=full.Targets.ToArray();var lips=full.LipSync?.ToArray()??[];
+        var dialogue=document.Clips.OfType<JsonObject>().First(c=>S(c,"kind")=="voice"&&N(c,"start")<=3.1&&N(c,"start")+N(c,"duration")>=3.1);
+        timeline.Select(S(dialogue,"id"),true);timeline.FilterActor(S(dialogue,"actor"));timeline.FitSelection();
+        await App.CaptureCheckpointAsync("dialogue-editor");
+        await EditAsync(()=>document.Canvas["content"]="characters");
+        var cutout=viewport.LastFrame!;
+        check(cutout.Frame==93&&cutout.Targets.SequenceEqual(targets),"仅人物画面保留同帧的原相机和角色站位");
+        check(cutout.Pixels.Rgba.Length>0&&cutout.Pixels.Rgba.Where((_,i)=>i%4==3).Any(alpha=>alpha==0)
+            &&cutout.Pixels.Rgba.Where((_,i)=>i%4==3).Any(alpha=>alpha>0),"仅人物输出有真实透明区域且角色仍存在");
+        check((cutout.LipSync??[]).Select(v=>(v.TargetId,v.MouthOpen)).SequenceEqual(lips.Select(v=>(v.TargetId,v.MouthOpen))),"移除背景不改变角色口型采样时间");
+        selectedClip=null;selectedActor=null;Refresh();
+        await App.CaptureCheckpointAsync("transparent-scene");
     }
 }

@@ -4,6 +4,31 @@ namespace OurNotes.Director.Core;
 
 public sealed partial class AdvScene
 {
+    /// <summary>Draw all currently visible actors with their original camera, slots,
+    /// fades and lighting. No room, foreground UI, captured background or scene effects.</summary>
+    public void DrawCharacters()
+    {
+        gl.Begin([0,0,0,0]);
+        var globals=LightingGlobals(Camera.ViewProjection(gl.Width/(float)gl.Height));
+        var ordered=shown.OrderByDescending(pair=>pair.Value.Prefab.Root.WorldPosition.Z).ThenBy(pair=>priority[(pair.Key-1)/2]).ToArray();
+        static bool Approx(float a,float b)=>Math.Abs(a-b)<Math.Max(1e-6f*Math.Max(Math.Abs(a),Math.Abs(b)),float.Epsilon*8);
+        bool Same(int a,int b)=>Approx(slotAlpha[a],slotAlpha[b])&&Approx(slotBrightness[a],slotBrightness[b])&&Approx(slotBlur[a],slotBlur[b]);
+        // Keep the source compositor's grouping: fading overlapping actors separately
+        // would change their shared edge/alpha compared with the original performance.
+        for(int first=0;first<ordered.Length;)
+        {
+            int slot=(ordered[first].Key-1)/2,last=first+1;
+            while(last<ordered.Length&&Same(slot,(ordered[last].Key-1)/2))last++;
+            float alpha=slotAlpha[slot],brightness=slotBrightness[slot],blur=slotBlur[slot];
+            bool separate=alpha<1||brightness<1||blur>0;
+            if(separate)gl.BeginLayer();
+            AdvRenderItem.DrawAll(ordered[first..last].SelectMany((pair,index)=>pair.Value.GameDrawItems(globals,(first+index)*1000)));
+            if(separate){gl.Blur(shaders,blur,blurRadius);gl.EndLayer(alpha,brightness);}
+            first=last;
+        }
+        DrawDirectorActors(globals);
+    }
+
     /// <summary>Extract the evaluated model using its native canvas, without source framing
     /// or editor offsets. Audio, animation, physics, fades and costume changes still run.</summary>
     public void DrawIsolatedActor(string target)

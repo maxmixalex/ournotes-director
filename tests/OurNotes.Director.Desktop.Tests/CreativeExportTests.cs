@@ -64,6 +64,26 @@ static class CreativeExportTests
         check(splitHold.Scene.Duration == 8 && splitHold.Scene.Clips.Count == voices.Clips.Count + 1,
             "Visible holds can be split like audio without an invisible duration constraint");
 
+        var dialogue=CreativeScene.Blank("intl","zh-Hans");
+        string line=dialogue.AddClip("speaker","voice",0,1,new JsonObject{["cmd"]="Talk",["AdvTextID"]="shared"},"Original");
+        string copy=dialogue.DuplicateClip(line);
+        dialogue.Root["text"]=new JsonObject{["shared"]=new JsonObject{["simplifiedChinese"]="原台词",["japanese"]="元の台詞"}};
+        CreativeDialogue.Write(dialogue,line,"新台词");
+        check(CreativeDialogue.Read(dialogue,line)=="新台词"&&CreativeDialogue.Read(dialogue,copy)=="原台词",
+            "Editing an imported or copied dialogue line forks only that clip's text");
+        string owned=dialogue.Clip(line)["data"]!["AdvTextID"]!.ToString();
+        CreativeDialogue.Write(dialogue,line,"再次修改");
+        check(dialogue.Clip(line)["data"]!["AdvTextID"]!.ToString()==owned&&dialogue.Root["text"]![owned]!["japanese"]!.ToString()=="元の台詞",
+            "Repeated dialogue edits reuse the private text row and preserve other languages");
+        string repeated=dialogue.DuplicateClip(line);CreativeDialogue.Write(dialogue,repeated,"另一份");
+        check(CreativeDialogue.Read(dialogue,line)=="再次修改"&&CreativeDialogue.Read(dialogue,repeated)=="另一份",
+            "Duplicating an already edited line does not create shared mutable dialogue");
+        var all=scene.Compile();scene.Canvas["content"]="characters";var characterOutput=scene.Compile();
+        check(JsonNode.DeepEquals(all["commands"],characterOutput["commands"])&&characterOutput["output"]!["content"]!.ToString()=="characters",
+            "Only-character transparent output never rewrites source timing or actor placement instructions");
+        check(!SceneDocument.Parse(characterOutput.ToJsonString()).Validate().HasErrors,
+            "Character-only presentation survives the same JSON validation used by export");
+
         string folder = Path.Combine(Path.GetTempPath(), "creative-audio-identity-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         try

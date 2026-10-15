@@ -34,7 +34,9 @@ internal sealed class ClipTimeline : UserControl
     readonly Slider zoom = new() { Minimum = .025, Maximum = 300, Value = 80, Width = 80 };
     readonly CheckBox repeat = new() { Content = "循环", MinWidth = 58 };
     readonly CheckBox snapping = new() { Content = "吸附", IsChecked = true, MinWidth = 58 };
-    IReadOnlyList<TimelineLane> lanes = [];
+    IReadOnlyList<TimelineLane> lanes = [], allLanes = [];
+    readonly DropDownButton trackFilter = new(){Content="全部轨道",Padding=new(8,2,8,2),HorizontalAlignment=HorizontalAlignment.Stretch};
+    string? filteredActor;
     TimelineItem[] items = [];
     string? selected, sourceKey;
     TimelineItem? dragging;
@@ -82,11 +84,27 @@ internal sealed class ClipTimeline : UserControl
         transport.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); transport.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var beginning = StudioLayout.Tool("", () => SeekRequested?.Invoke(0), "\uE892"); ToolTipService.SetToolTip(beginning, "回到开头 · Home");
         var controls = Ui.Row(7, beginning, play, time, repeat, snapping); play.Click += (_, _) => PlayRequested?.Invoke();
-        var navigation = Ui.Row(6, StudioLayout.Tool("整段", Fit, "\uE9A6"), zoom); ToolTipService.SetToolTip(zoom, "时间轴缩放 · Ctrl+滚轮");
+        var navigation = Ui.Row(6, StudioLayout.Tool("整段", Fit, "\uE9A6"), StudioLayout.Tool("所选", FitSelection, "\uE8A3"), zoom); ToolTipService.SetToolTip(zoom, "时间轴缩放 · Ctrl+滚轮");
         transport.Children.Add(controls); transport.Children.Add(navigation); Grid.SetColumn(navigation, 1);
         root.Children.Add(transport); Grid.SetColumnSpan(transport, 2);
-        var heading = new TextBlock { Text = "演出轨道", FontSize = 11, Margin = new(12, 4, 0, 0) };
-        root.Children.Add(heading); Grid.SetRow(heading, 1);
+        root.Children.Add(trackFilter);Grid.SetRow(trackFilter,1);
+        ToolTipService.SetToolTip(trackFilter,"只看某个角色的轨道，不改变场景内容");
+        trackFilter.Click+=(_,_)=>
+        {
+            var menu=new MenuFlyout();
+            void Option(string text,string? actor)
+            {
+                var item=new ToggleMenuFlyoutItem{Text=text,IsChecked=filteredActor==actor};
+                item.Click+=(_,_)=>FilterActor(actor);menu.Items.Add(item);
+            }
+            Option("全部轨道",null);
+            foreach(var group in allLanes.GroupBy(l=>l.Actor))
+            {
+                string label=group.First().Label.Split(" · ")[0];
+                Option(group.Key.Length==0?"场景 / 镜头":label,group.Key);
+            }
+            menu.ShowAt(trackFilter);
+        };
         root.Children.Add(ruler); Grid.SetRow(ruler, 1); Grid.SetColumn(ruler, 1);
         root.Children.Add(labels); Grid.SetRow(labels, 2); scroll.Content = canvas;
         root.Children.Add(scroll); Grid.SetRow(scroll, 2); Grid.SetColumn(scroll, 1); Content = root; IsTabStop = true;
@@ -183,9 +201,35 @@ internal sealed class ClipTimeline : UserControl
     public void SetTracks(string identity, double duration, int fps, IReadOnlyList<TimelineLane> tracks, string? selection)
     {
         if (!double.IsFinite(duration) || duration <= 0 || fps <= 0) throw new ArgumentException("时间轴范围无效。");
-        if (sourceKey != identity) { sourceKey = identity; fitPending = true; }
-        length = duration; framesPerSecond = fps; lanes = tracks; items = tracks.SelectMany(t => t.Items).ToArray(); selected = selection;
+        if (sourceKey != identity) { sourceKey = identity; fitPending = true; filteredActor=null; }
+        length = duration; framesPerSecond = fps; allLanes = tracks; items = tracks.SelectMany(t => t.Items).ToArray(); selected = selection;
+        if(filteredActor is not null&&!allLanes.Any(l=>l.Actor==filteredActor))filteredActor=null;
+        UpdateLanes();
         if (fitPending && IsLoaded) Fit(); else Draw();
+    }
+    void UpdateLanes()
+    {
+        lanes=filteredActor is null?allLanes:allLanes.Where(l=>l.Actor==filteredActor).ToArray();
+        trackFilter.Content=filteredActor is null?"全部轨道":filteredActor.Length==0?"场景 / 镜头":allLanes.First(l=>l.Actor==filteredActor).Label.Split(" · ")[0];
+    }
+    internal void FilterActor(string? actor)
+    {
+        filteredActor=actor is not null&&allLanes.Any(l=>l.Actor==actor)?actor:null;UpdateLanes();scroll.ChangeView(null,0,null);Draw();
+    }
+    public void RevealActor(string? actor)
+    {
+        if(actor is null)return;
+        if(filteredActor is not null){FilterActor(actor);return;}
+        int index=lanes.ToList().FindIndex(l=>l.Actor==actor);
+        if(index>=0)scroll.ChangeView(null,index*RowHeight,null);
+    }
+    public void FitSelection()
+    {
+        var clip=items.FirstOrDefault(c=>c.Id==selected);
+        double start=clip?.Start??Math.Max(0,position-3),end=clip?.End??Math.Min(length,position+3);
+        double span=Math.Max(1,end-start),padding=span*.12;
+        scale=Math.Clamp((Math.Max(100,scroll.ActualWidth)-24)/(span+padding*2),zoom.Minimum,zoom.Maximum);
+        zoom.Value=scale;Draw();scroll.ChangeView(Math.Max(0,(start-padding)*scale),null,null);
     }
     public static string KindName(string kind) => kind switch
     { "motion" => "动作", "expression" => "表情", "voice" => "对白与语音", "transform" => "位置", "camera" => "镜头", "grade" => "画面", "setup" => "加载", "hold" => "停留", _ => "原有演出" };

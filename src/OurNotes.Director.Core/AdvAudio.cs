@@ -49,7 +49,7 @@ public sealed class AdvAudio
         }
         loop.On(AdvPhase.Update,Update);
     }
-    public AdvSound Play(long soundId,bool repeat=false,float crossFade=0,bool automaticCrossFade=false,double startSeconds=0,bool fadeIn=false,float volume=1)
+    public AdvCue GetCue(long soundId)
     {
         if(!cues.TryGetValue(soundId,out var cue)){
             cue=ResolveCue?.Invoke(soundId)??throw new InvalidDataException($"Sound {soundId} not preloaded");
@@ -58,6 +58,11 @@ public sealed class AdvAudio
             decodedNodes.Add(soundId,decodedOrder.AddLast(soundId));DecodedCacheBytes+=(long)cue.Pcm.Length*sizeof(float);
         }
         else if(decodedNodes.TryGetValue(soundId,out var cached)){decodedOrder.Remove(cached);decodedOrder.AddLast(cached);}
+        return cue;
+    }
+    public AdvSound Play(long soundId,bool repeat=false,float crossFade=0,bool automaticCrossFade=false,double startSeconds=0,bool fadeIn=false,float volume=1)
+    {
+        var cue=GetCue(soundId);
         if(!double.IsFinite(startSeconds)||startSeconds<0||!float.IsFinite(crossFade)||crossFade<0||!float.IsFinite(volume))throw new ArgumentException("Invalid audio playback options");
         if(automaticCrossFade&&cue.Category==0){foreach(var old in playing.Values.Where(i=>i.Cue.Category==0).ToArray())Stop(old.Id,crossFade);fadeIn=true;}
         int offset=checked((int)Math.Round(Math.Truncate(startSeconds*1000)/1000*SampleRate,MidpointRounding.AwayFromZero));

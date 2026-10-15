@@ -107,6 +107,7 @@ public sealed class CreativeScene
             throw new ArgumentException("场景需要 source、canvas、actors 和 clips。");
         foreach(string key in new[]{"width","height"})if(Number(Canvas,key)%1!=0)throw new ArgumentException("画布宽高必须是整数。");
         RenderDimensions.Validate(checked((int)Number(Canvas,"width",1920)),checked((int)Number(Canvas,"height",1080)),1);
+        _=SceneContent.Read(Canvas["content"]);
         var ids=new HashSet<string>(StringComparer.Ordinal);
         foreach(var item in Actors)
         {
@@ -135,6 +136,7 @@ public sealed class CreativeScene
         Validate();
         var output=Root["nativeOutput"]?.DeepClone() as JsonObject ?? new JsonObject { ["clean"]=true,["letterbox"]="none",["codec"]="cineform",["cineformQuality"]="film1",["supersample"]=1 };
         output["width"]=(int)Number(Canvas,"width",1920);output["height"]=(int)Number(Canvas,"height",1080);
+        if(Canvas["content"] is not null)output["content"]=SceneContent.Read(Canvas["content"]);
         var rows=new List<(int At,int Priority,int Order,JsonObject Row)>();int order=0;
         void Add(JsonObject row,int at,int priority=0){row["AtFrame"]=at;rows.Add((at,priority,order++,row));}
         if(Root["imported"]?.GetValue<bool>()!=true)
@@ -184,7 +186,7 @@ public sealed class CreativeScene
     {
         if(!timing.IsComplete||timing.EndFrame is null)throw new InvalidOperationException("原剧情尚未解析完成，不能猜测语音时间。");
         var scene=Blank(native["source"]?["site"]?.ToString()??"intl",native["source"]?["language"]?.ToString()??"zh-Hans");
-        scene.Root["source"]=native["source"]!.DeepClone();scene.Root["nativeOutput"]=native["output"]?.DeepClone();scene.Root["imported"]=true;
+        scene.Root["source"]=native["source"]!.DeepClone();scene.Root["nativeOutput"]=native["output"]?.DeepClone();scene.Root["imported"]=true;scene.Canvas["content"]=SceneContent.Read(native["output"]?["content"]);
         scene.Root["originalProject"]=native.DeepClone();scene.Root["text"]=native["text"]?.DeepClone();
         scene.Canvas["width"]=native["output"]?["width"]?.DeepClone()??JsonValue.Create(1920);scene.Canvas["height"]=native["output"]?["height"]?.DeepClone()??JsonValue.Create(1080);
         var entries=timing.Commands.OrderBy(t=>t.Ordinal).ToArray();

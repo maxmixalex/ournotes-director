@@ -87,6 +87,10 @@ public sealed class PreviewSoundtrack : IAsyncDisposable
         try
         {
             Thread.CurrentThread.Name ??= "OurNotes audio preparation";
+            if(ExternalVoiceTimeline.Supports(document))
+            {
+                ProduceTimedVoices(source,document); return;
+            }
             using var native = new AdvStoryRenderer(new Archive(source.ArchivePath), project.Site,
                 source.CubismPath, project.Adv, project.Language, source.Width, source.Height,
                 source.ProjectPath, source.FfmpegPath, 1, document, timingOnly: true);
@@ -116,6 +120,22 @@ public sealed class PreviewSoundtrack : IAsyncDisposable
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception error) { Volatile.Write(ref failure, error); }
         finally { Volatile.Write(ref completed, 1); }
+    }
+
+    void ProduceTimedVoices(ScenePreviewSource source,JsonNode document)
+    {
+        var timeline=new ExternalVoiceTimeline(document,Path.GetDirectoryName(Path.GetFullPath(source.ProjectPath))!,source.FfmpegPath);
+        var mix=new float[AdvAudio.SamplesPerFrame*2];var pcm=new byte[mix.Length*sizeof(short)];
+        int limit=source.DurationMode==PreviewDurationMode.Automatic?30*36000:checked((int)Math.Ceiling(source.Duration*30));
+        for(int frame=0;frame<limit;frame++)
+        {
+            cancellation.Token.ThrowIfCancellationRequested();
+            while(AvailableSamples>=Interlocked.Read(ref requested)){demand.WaitOne(100);cancellation.Token.ThrowIfCancellationRequested();}
+            timeline.MixFrame(mix);ToPcm16(mix,pcm);RandomAccess.Write(file,pcm,(long)frame*pcm.Length);
+            Interlocked.Add(ref available,AdvAudio.SamplesPerFrame);
+            if(source.DurationMode==PreviewDurationMode.Automatic&&timeline.Player.Finished)break;
+            timeline.Step();
+        }
     }
 
     public static void ToPcm16(ReadOnlySpan<float> source, Span<byte> destination)

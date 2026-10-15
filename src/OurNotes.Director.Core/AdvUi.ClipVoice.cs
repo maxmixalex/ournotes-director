@@ -1,28 +1,23 @@
-using System.Text.Json.Nodes;
+using System.Globalization;
 
 namespace OurNotes.Director.Core;
 
 public sealed partial class AdvUi
 {
-    readonly Dictionary<string, int[]> clipVoices = new(StringComparer.Ordinal);
+    VoiceTrackPlayback? scheduledVoices;
 
-    // Authored clips own their audio independently. Starting one actor's line must not
-    // stop a second actor or narration. A new line for the SAME actor replaces that actor.
     IEnumerable<AdvWait> ClipVoice(AdvRow input, AdvPlayback playback)
     {
         var row = ResolveExternalVoice(input);
-        string actorKey = row.Text("TargetName");
-        string key = actorKey.Length > 0 ? actorKey : "narration:" + row.Index;
-        if (clipVoices.Remove(key, out var previous)) foreach (int id in previous) audio.Stop(id);
-        var ids = new List<int>();
-        foreach (var id in row.Data["VoiceIDs"]?.AsArray() ?? new JsonArray())
+        string separator = Archive.S(settings, "_targetNameSplitKey", ",");
+        var speakers = row.Text("TargetName").Split(separator.Length == 0 ? "," : separator,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var ids = row.Data["VoiceIDs"]?.AsArray().Select(id => long.Parse(id!.ToString(), CultureInfo.InvariantCulture)).ToArray() ?? [];
+        scheduledVoices ??= new(audio);
+        var started = scheduledVoices.Start(speakers, ids, row.Index, row.Flag("IgnoreLipSync") ? null : (name, sound) =>
         {
-            var sound = audio.Play(id!.GetValue<long>(), crossFade: 0);
-            ids.Add(sound.Id);
-            if (!row.Flag("IgnoreLipSync") && ResolveCharacter?.Invoke(actorKey) is Actor actor) AttachVoiceLipSync(actor, sound);
-        }
-        var owned = ids.ToArray(); clipVoices[key] = owned;
-        while (!playback.Cancelled && ids.Any(audio.IsPlaying)) yield return loop.YieldUpdate();
-        if (clipVoices.TryGetValue(key, out var current) && ReferenceEquals(current, owned)) clipVoices.Remove(key);
+            if (ResolveCharacter?.Invoke(name) is Actor actor) AttachVoiceLipSync(actor, sound);
+        });
+        while (!playback.Cancelled && started.Any(sound => audio.IsPlaying(sound.Id))) yield return loop.YieldUpdate();
     }
 }

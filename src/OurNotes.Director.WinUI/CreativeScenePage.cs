@@ -59,9 +59,9 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         var footer=Ui.Stack(8,assetHint,Button("导入声音…",ImportVoiceAsync,"\uE8D6"));library.Children.Add(footer);Grid.SetRow(footer,5);
         var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar);
         actors.SelectionChanged+=(_,_)=>
-        {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
+        {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);timeline.RevealActor(selectedActor);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
         viewport.SelectionChanged+=(_,id)=>
-        {if(refreshing||id==selectedActor)return;selectedActor=id;selectedClip=replaceAssetClip=null;timeline.Select(null);RefreshActors();BuildInspector();_=Safe(LoadAssetsAsync);};
+        {if(refreshing||id==selectedActor)return;selectedActor=id;selectedClip=replaceAssetClip=null;timeline.Select(null);timeline.RevealActor(selectedActor);RefreshActors();BuildInspector();_=Safe(LoadAssetsAsync);};
         viewport.ObjectDragged+=(_,drag)=>_=Safe(()=>DragAsync(drag));viewport.ObjectScaled+=(_,scale)=>_=Safe(()=>ScaleAsync(scale));
         viewport.FramePresented+=(_,frame)=>
         {
@@ -71,7 +71,12 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         };
         viewport.Failed+=(_,error)=>ShowError(error.Message);viewport.ContextMenuFactory=ActorMenu;
         timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>{viewport.Pause();timeline.Position=seconds;scrubber.Request(seconds);};
-        timeline.ClipSelected+=id=>{selectedClip=id;selectedActor=S(document.Clip(id),"actor");replaceAssetClip=null;viewport.Pause();RefreshActors();BuildInspector();};
+        timeline.ClipSelected+=id=>
+        {
+            string? previousActor=selectedActor;selectedClip=id;selectedActor=S(document.Clip(id),"actor");replaceAssetClip=null;viewport.Pause();
+            refreshing=true;try{viewport.SelectedTargetId=selectedActor;}finally{refreshing=false;}
+            RefreshActors();BuildInspector();if(previousActor!=selectedActor)_=Safe(LoadAssetsAsync);
+        };
         timeline.ClipEdited+=(id,seconds,resize)=>_=Safe(()=>EditAsync(()=>{if(resize)document.ResizeClip(id,seconds);else document.MoveClip(id,seconds);}));
         timeline.AddRequested+=(actor,kind,at)=>_=Safe(()=>AddToTrackAsync(actor,kind,at));timeline.ContextMenuFactory=id=>ClipMenu(document.Clip(id));timeline.AssetDropped+=(data,at,target)=>_=Safe(()=>DropAssetAsync(data,at,target));
         timeline.TrackMenuFactory=TrackMenu;

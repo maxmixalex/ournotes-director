@@ -101,7 +101,11 @@ public sealed partial class AdvUi : IDisposable
         float remaining=p.CalcDuration(Actor.N(settings["_minTalkDisplayTime"]))-(loop.Time-start);foreach(var w in p.DelayAdjusted(remaining))yield return w;
         yield return loop.YieldUpdate();yield return loop.YieldUpdate();
     }
-    IEnumerable<AdvWait> Voice(AdvRow r,AdvPlayback p){yield return p.NoWait(r,VoiceInner(r,p));}
+    IEnumerable<AdvWait> Voice(AdvRow r,AdvPlayback p)
+    {
+        if(r.Data["AtFrame"] is not null){foreach(var wait in ClipVoice(r,p))yield return wait;}
+        else yield return p.NoWait(r,VoiceInner(r,p));
+    }
     IEnumerable<AdvWait> VoiceInner(AdvRow r,AdvPlayback p)
     {
         int scope=++voiceScope;if(audio.LastBgmOrSeFrame==loop.Frame)yield return loop.DelayFrames(2);if(scope!=voiceScope)yield break;

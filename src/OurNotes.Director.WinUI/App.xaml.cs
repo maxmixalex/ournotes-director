@@ -163,6 +163,12 @@ public partial class App : Application
         TraceStartup("Test graphics driver loaded");
     }
 
+    internal static async Task CaptureCheckpointAsync(string name)
+    {
+        if(instance is not {smokeReportPath:not null,window:not null} app||app.window.Content is not FrameworkElement root)return;
+        app.captures.Add(await CaptureAsync(root,Path.Combine(Path.GetDirectoryName(app.smokeReportPath)!,name+".png")));
+    }
+
     private static async Task<JsonObject> CaptureAsync(FrameworkElement root, string path)
     {
         root.UpdateLayout();

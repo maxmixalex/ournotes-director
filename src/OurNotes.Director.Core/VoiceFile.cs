@@ -42,22 +42,20 @@ public static class VoiceFile
     }
 }
 
-public sealed partial class AdvUi
+public sealed class ExternalVoiceBank(AdvAudio audio, string baseDirectory, string ffmpeg)
 {
-    public string AudioProjectDirectory { get; set; } = Environment.CurrentDirectory;
-    public string AudioFfmpegPath { get; set; } = "ffmpeg";
     readonly Dictionary<string, AdvCue> externalVoices = new(StringComparer.OrdinalIgnoreCase);
     long externalVoiceId = -1;
-    AdvRow ResolveExternalVoice(AdvRow row)
+    public AdvRow Resolve(AdvRow row)
     {
         string requested = row.Text("AudioPath");
         if (requested.Length == 0) return row;
-        string path = Path.GetFullPath(requested, AudioProjectDirectory);
+        string path = Path.GetFullPath(requested, baseDirectory);
         var file = new FileInfo(path);
         string key = path + "\0" + file.Length + "\0" + file.LastWriteTimeUtc.Ticks + "\0" + row.Text("AudioIn") + "\0" + row.Text("AudioDuration");
         if (!externalVoices.TryGetValue(key, out var cue))
         {
-            cue = VoiceFile.Decode(path, externalVoiceId--, AudioFfmpegPath);
+            cue = VoiceFile.Decode(path, externalVoiceId--, ffmpeg);
             double start = row.Number("AudioIn"), duration = row.Number("AudioDuration");
             if (start < 0 || duration < 0 || !double.IsFinite(start + duration)) throw new ArgumentException("语音裁剪范围无效。");
             int offset = checked((int)Math.Round(start * AdvAudio.SampleRate));
@@ -69,4 +67,12 @@ public sealed partial class AdvUi
         var data = row.Data.DeepClone(); data["VoiceIDs"] = new JsonArray(cue.SoundId);
         return row with { Data = data };
     }
+}
+
+public sealed partial class AdvUi
+{
+    public string AudioProjectDirectory { get; set; } = Environment.CurrentDirectory;
+    public string AudioFfmpegPath { get; set; } = "ffmpeg";
+    ExternalVoiceBank? externalVoiceBank;
+    AdvRow ResolveExternalVoice(AdvRow row) => (externalVoiceBank ??= new(audio, AudioProjectDirectory, AudioFfmpegPath)).Resolve(row);
 }

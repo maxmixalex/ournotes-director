@@ -25,7 +25,8 @@ public sealed class AdvStoryRenderer : IDisposable
     readonly OffscreenGl gl;
     readonly int outputWidth,outputHeight,supersample,viewportY;
     readonly string? isolateActor;
-    bool TransparentOutput => isolateActor is not null || Scene.DirectorTransparent;
+    readonly bool charactersOnly;
+    bool TransparentOutput => charactersOnly || isolateActor is not null || Scene.DirectorTransparent;
     readonly Dictionary<string,double> milliseconds=[];
     T Measure<T>(string name,Func<T> action){long start=Stopwatch.GetTimestamp();try{return action();}finally{milliseconds[name]=milliseconds.GetValueOrDefault(name)+Stopwatch.GetElapsedTime(start).TotalMilliseconds;}}
     void Measure(string name,Action action)=>Measure(name,()=>{action();return 0;});
@@ -39,6 +40,7 @@ public sealed class AdvStoryRenderer : IDisposable
         var supplied=projectDocument??(script is null?null:DirectorProject.Document(script));
         var sourceOutput = (supplied as JsonObject)?["output"] as JsonObject;
         isolateActor = sourceOutput?["isolateActor"]?.ToString();
+        charactersOnly = SceneContent.Read(sourceOutput?["content"]) == "characters";
         var playbackViewport = sourceOutput?["playbackViewport"];
         ActorIsolation.ValidateViewport(playbackViewport);
         bool noLetterbox=isolateActor is not null || supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
@@ -88,7 +90,7 @@ public sealed class AdvStoryRenderer : IDisposable
     public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
     {
         RenderFrame(frame,clean,previewEdits,stopAtEnd);
-        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();return pixels;
+        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();return pixels;
     }
     public IReadOnlyList<PreviewTarget> PreviewTargets()
     {
@@ -127,9 +129,10 @@ public sealed class AdvStoryRenderer : IDisposable
             end.HasValue?null:"剧情未在十小时分析上限内结束，请检查循环指令或使用自由时长。");
     }
     public int PendingFrames=>gl.PendingPixels;
-    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,Ui.DrawLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();}
+    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();}
     public Pixels ReadQueuedFrame()=>Measure("readbackAndResolve",gl.ReadQueued);
-    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor));return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
+    void DrawOutputLetterbox(int width,int height,int viewportHeight){if(!charactersOnly)Ui.DrawLetterbox(width,height,viewportHeight);}
+    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor));return;}if(charactersOnly){Measure("characters",Scene.DrawCharacters);Scene.ApplyDirectorGrade();return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
     public void Dispose(){Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();gl.Dispose();}
     public static object Contact(Archive archive,string site,string dll,string id,string language,string? script,string output,int width,int height,double[] times,int columns,bool clean,bool overwrite,string ffmpeg,int supersample=2)
     {
