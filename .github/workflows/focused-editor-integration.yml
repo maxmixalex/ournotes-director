@@ -1,0 +1,47 @@
+name: Integrate focused editor improvements
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.dev/focused-editor/**, .github/workflows/focused-editor-integration.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Apply exact source updates
+        run: |
+          python .dev/focused-editor/apply.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build core and actual WinUI
+        run: |
+          dotnet build OurNotes.Director.sln -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build src/OurNotes.Director.WinUI -c Release -p:Platform=x64 -p:PublishReadyToRun=false --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check core and editing regressions
+        run: |
+          dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release --no-build --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit compiled source updates
+        run: |
+          git rm -r .dev/focused-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git add src tests DESKTOP.md CREATIVE_EDITOR_PROGRESS.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Improve scene composition controls, editable dialogue and parallel voice preparation'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
