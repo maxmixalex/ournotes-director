@@ -165,7 +165,7 @@ public sealed class CreativeScene
                 if(!replaced)Add(new(){["cmd"]="Director.Actor",["TargetName"]=actor,["Values"]=new JsonObject{["speed"]=0}},end,-1);
             }
         }
-        Add(new(){["cmd"]="Delay",["Frames"]=0},Math.Max(1,(int)Math.Ceiling(Duration*30)),1);
+        Add(new(){["cmd"]="Delay",["Frames"]=0},Math.Max(1,Story.Frames(Duration)),1);
         return new JsonObject { ["format"]=DirectorProject.Format,["version"]=1,["source"]=Source.DeepClone(),["output"]=output,
             ["initialize"]=new JsonArray(),["finalize"]=new JsonArray(),["commands"]=new JsonArray(rows.OrderBy(r=>r.At).ThenBy(r=>r.Priority).ThenBy(r=>r.Order).Select(r=>(JsonNode)r.Row).ToArray()),
             ["text"]=Root["text"]?.DeepClone()??new JsonObject() };

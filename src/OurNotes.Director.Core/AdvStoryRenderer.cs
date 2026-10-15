@@ -161,7 +161,7 @@ public sealed class AdvStoryRenderer : IDisposable
         if(mode=="clip"){VideoEncoding.Validate(codec,width,height,cineformQuality);VideoEncoding.ValidateOutputPath(codec,output);}
         output=Path.GetFullPath(output);if(File.Exists(output)&&!overwrite)throw new IOException("Output exists; use --overwrite");Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         string prefix=Path.Combine(Path.GetDirectoryName(output)!,".adv-"+Guid.NewGuid().ToString("N")),video=prefix+".video",audio=prefix+".f32",mux=prefix+".mux";
-        Process? encoder=null;Task<string>? errors=null;int start=(int)Math.Floor(time*30+1e-8),count=(int)Math.Ceiling(duration*30),written=0;bool finished=false;var wall=Stopwatch.StartNew();double encodeMs=0,audioMs=0;
+        Process? encoder=null;Task<string>? errors=null;int start=(int)Math.Floor(time*30+1e-8),count=Math.Max(1,Story.Frames(duration)),written=0;bool finished=false;var wall=Stopwatch.StartNew();double encodeMs=0,audioMs=0;
         try{
             using var renderer=new AdvStoryRenderer(archive,site,dll,id,language,width,height,script,ffmpeg,supersample);
             double initializationMs=wall.Elapsed.TotalMilliseconds;

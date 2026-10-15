@@ -97,7 +97,7 @@ public sealed class PreviewSoundtrack : IAsyncDisposable
             var mix = new float[AdvAudio.SamplesPerFrame * 2];
             var pcm = new byte[mix.Length * sizeof(short)];
             int limit = source.DurationMode == PreviewDurationMode.Automatic ? 30 * 36000
-                : checked((int)Math.Ceiling(source.Duration * 30));
+                : Math.Max(1,Story.Frames(source.Duration));
             for (int frame = 0; frame < limit; frame++)
             {
                 cancellation.Token.ThrowIfCancellationRequested();
@@ -126,7 +126,7 @@ public sealed class PreviewSoundtrack : IAsyncDisposable
     {
         var timeline=new ExternalVoiceTimeline(document,Path.GetDirectoryName(Path.GetFullPath(source.ProjectPath))!,source.FfmpegPath);
         var mix=new float[AdvAudio.SamplesPerFrame*2];var pcm=new byte[mix.Length*sizeof(short)];
-        int limit=source.DurationMode==PreviewDurationMode.Automatic?30*36000:checked((int)Math.Ceiling(source.Duration*30));
+        int limit=source.DurationMode==PreviewDurationMode.Automatic?30*36000:Math.Max(1,Story.Frames(source.Duration));
         for(int frame=0;frame<limit;frame++)
         {
             cancellation.Token.ThrowIfCancellationRequested();

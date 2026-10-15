@@ -70,6 +70,18 @@ static class CreativeAudioTests
             Check(decodedFiles==2,"Four trimmed voice clips, graphical playback and soundtrack preparation share exactly two file decodes");
             report["voiceFileDecodes"]=decodedFiles;
             report["voiceDecodeCacheHits"]=VoiceDecodeCache.Shared.HitCount;
+            Stage("verify fractional-frame export range");
+            string rangeVideo=Path.Combine(outputDirectory,"range-31.mkv");
+            var encoded=AdvStoryRenderer.Run(new Archive(fixture),"intl","","43","zh-Hans",project,"clip",rangeVideo,128,96,0,31d/30,"ffv1",true,true,ffmpeg,1);
+            var result=JsonNode.Parse(JsonOutput.SerializeToUtf8Bytes(encoded))!;
+            Check(result["frames"]!.GetValue<int>()==31,"A 31-frame work area encodes exactly 31 frames, not 32 after floating-point rounding");
+            string rangeSequence=Path.Combine(outputDirectory,"range-31-frames");
+            if(Directory.Exists(rangeSequence))Directory.Delete(rangeSequence,true);
+            var sequence=DirectorSequence.Run(new Archive(fixture),"intl",NativeDependencies.CoreLibrary(baseDirectory:NativeTestGraphics.PackageDirectory),"43","zh-Hans",project,rangeSequence,128,96,1,0,31d/30,true,false,false,ffmpeg);
+            Check(Directory.EnumerateFiles(rangeSequence,"*.png").Count()==31,"The same work area writes exactly 31 actual PNG files");
+            string probe=Path.Combine(Path.GetDirectoryName(ffmpeg)!,OperatingSystem.IsWindows()?"ffprobe.exe":"ffprobe");
+            string counted=Media.Run(probe,["-v","error","-count_frames","-select_streams","v:0","-show_entries","stream=nb_read_frames","-of","default=noprint_wrappers=1:nokey=1",rangeVideo]);
+            Check(counted.Trim()=="31","FFprobe decodes exactly 31 actual video frames from the muxed range output");
             Stage("check transparent drawing content");
             var drawing=RealtimeSceneFixture.Document();string drawingPath=Path.Combine(outputDirectory,"drawing.project.json");
             File.WriteAllText(drawingPath,drawing.ToJsonString());

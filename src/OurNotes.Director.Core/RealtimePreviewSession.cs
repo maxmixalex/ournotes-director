@@ -475,7 +475,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public override void DisableGpu(string reason)=>native.DisableGpuPresentation(reason);
         public int NativeFrame=>native.Loop.Frame;
         public bool Finished=>native.Player.Finished&&!native.Player.Cancelled;
-        public override int EndFrame=>Source.DurationMode==PreviewDurationMode.Automatic?Timing?.EndFrame??30*36000:Math.Max(0,checked((int)Math.Ceiling(Duration*Fps))-1);
+        public override int EndFrame=>Source.DurationMode==PreviewDurationMode.Automatic?Timing?.EndFrame??30*36000:Math.Max(0,Story.Frames(Duration)-1);
         PreviewPerformance measured=new(0,0,0,0,0,0);
         public override PreviewPerformance Performance=>measured;
         public SceneState(ScenePreviewSource source,JsonNode? document=null,DirectorProject? metadata=null,AdvCueCache? cueCache=null)
