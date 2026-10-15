@@ -1,0 +1,33 @@
+name: Correct selected-shot visibility
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.dev/viewport-visibility.patch, .github/workflows/viewport-visibility-integration.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: windows-2022
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply reviewed UI changes
+        run: |
+          python -c "from pathlib import Path; import hashlib; p=Path('.dev/viewport-visibility.patch'); b=p.read_text(encoding='utf-8-sig').encode(); assert hashlib.sha256(b).hexdigest()=='fff5f49b4494a40d47bc7f77d485c5092437901a9b4a6f4b1e82bb324bbbd00f'; p.write_bytes(b)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply --check .dev/viewport-visibility.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply .dev/viewport-visibility.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rm -f .dev/viewport-visibility.patch
+          git add src/OurNotes.Director.WinUI
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Keep the selected shot visible after zoom and simplify timing fields'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
