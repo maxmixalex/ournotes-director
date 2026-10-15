@@ -50,7 +50,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
 
     internal HomeStudioPage(MainWindow window)
     {
-        this.window = window; scrubber = new(SeekAsync, error => Notice(error.Message));
+        this.window = window; scrubber = new((time, token) => SeekAsync(time, token), error => Notice(error.Message));
         ToolTipService.SetToolTip(autoKey, "开启时只编辑当前时刻；关闭时整体调整已有轨道，保留原有运动和关键帧。");
         HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch;
         var file = StudioLayout.Tool("文件", () => { }, "\uE8B7");
@@ -483,11 +483,11 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         tracks[key] = track.WithTransformAt(time, value, keyframe);
         return state with { Characters = tracks };
     }
-    async Task SeekAsync(double time)
+    async Task SeekAsync(double time,CancellationToken cancellationToken=default)
     {
         if (document is null) return; Pause(); document.Playhead = document.Snap(time); timeline.Position = document.Playhead;
         RefreshValues();
-        if (previewLoaded && !suppressPreview) { await ApplyPreviewAsync(); await viewport.SeekAsync(document.Playhead); }
+        if (previewLoaded && !suppressPreview) { await ApplyPreviewAsync(); cancellationToken.ThrowIfCancellationRequested(); await viewport.SeekAsync(document.Playhead,cancellationToken); }
     }
     async Task TogglePlaybackAsync()
     {
@@ -497,24 +497,24 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         if (!previewLoaded) await ReloadPreviewAsync();
         if (!previewLoaded) return;
         await ApplyPreviewAsync();
-        if (document.Playhead >= document.Project.Duration - 1d / document.Project.Output.Fps) await viewport.SeekAsync(0);
-        playbackRequested = true; viewport.Play(); timeline.IsPlaying = true;
+        if (document.Playhead < timeline.PlaybackStart || document.Playhead >= timeline.PlaybackLastTime - .5 / document.Project.Output.Fps) await viewport.SeekAsync(timeline.PlaybackStart);
+        playbackRequested = true; viewport.Play(timeline.WorkRange?.End); timeline.IsPlaying = true;
     }
     void OnFrame(PreviewFrame frame)
     {
         if (disposed || document is null || !previewLoaded || !viewport.HasCurrentSource) return;
         if (!scrubber.IsBusy) { document.Playhead = Math.Min(frame.Time, document.Project.Duration); timeline.Position = document.Playhead; } timeline.IsPlaying = frame.IsPlaying;
         if (!frame.IsPlaying) RefreshValues();
-        if (playbackRequested && !frame.IsPlaying && frame.Frame >= Math.Floor(document.Project.Duration * document.Project.Output.Fps + 1e-8))
+        if (playbackRequested && !frame.IsPlaying && frame.Frame >= Math.Floor(timeline.PlaybackLastTime * document.Project.Output.Fps + 1e-8))
         {
             playbackRequested = false;
             if (active && timeline.Repeat)
-                _ = SafeAsync(async () => { await viewport.SeekAsync(0); if (active) { playbackRequested = true; viewport.Play(); } });
+                _ = SafeAsync(async () => { await viewport.SeekAsync(timeline.PlaybackStart); if (active) { playbackRequested = true; viewport.Play(timeline.WorkRange?.End); } });
         }
     }
 
     async Task ExportAsync()
-    { CommitDrag(); if (document is not null) { Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead); } }
+    { CommitDrag(); if (document is not null) { Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead, initialRange:timeline.WorkRange); } }
     async Task ShowJsonAsync()
     {
         CommitDrag(); Pause();

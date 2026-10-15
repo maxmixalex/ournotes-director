@@ -21,7 +21,7 @@ internal sealed record TimelineLane(string Actor, string Kind, string Label, IRe
 
 /// <summary>Shared, viewport-virtualized timeline. The owner edits the actual project;
 /// this control holds only read-only display data, never a second editable scene.</summary>
-internal sealed class ClipTimeline : UserControl
+internal sealed partial class ClipTimeline : UserControl
 {
     const double RowHeight = 42;
     readonly Canvas canvas = new() { Background = Brush(0, 0, 0, 0) };
@@ -84,7 +84,8 @@ internal sealed class ClipTimeline : UserControl
         transport.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); transport.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var beginning = StudioLayout.Tool("", () => SeekRequested?.Invoke(0), "\uE892"); ToolTipService.SetToolTip(beginning, "回到开头 · Home");
         var controls = Ui.Row(7, beginning, play, time, repeat, snapping); play.Click += (_, _) => PlayRequested?.Invoke();
-        var navigation = Ui.Row(6, StudioLayout.Tool("整段", Fit, "\uE9A6"), StudioLayout.Tool("所选", FitSelection, "\uE8A3"), zoom); ToolTipService.SetToolTip(zoom, "时间轴缩放 · Ctrl+滚轮");
+        InitializeRange();
+        var navigation = Ui.Row(6, rangeButton, StudioLayout.Tool("整段", Fit, "\uE9A6"), StudioLayout.Tool("所选", FitSelection, "\uE8A3"), zoom); ToolTipService.SetToolTip(zoom, "时间轴缩放 · Ctrl+滚轮");
         transport.Children.Add(controls); transport.Children.Add(navigation); Grid.SetColumn(navigation, 1);
         root.Children.Add(transport); Grid.SetColumnSpan(transport, 2);
         root.Children.Add(trackFilter);Grid.SetRow(trackFilter,1);
@@ -146,6 +147,7 @@ internal sealed class ClipTimeline : UserControl
         KeyDown += (_, args) =>
         {
             if (args.Handled || TextInput(args.OriginalSource as DependencyObject)) return;
+            if (HandleRangeKey(args.Key)) { args.Handled = true; return; }
             if (args.Key == Windows.System.VirtualKey.Space) PlayRequested?.Invoke();
             else if (args.Key == Windows.System.VirtualKey.Home) SeekRequested?.Invoke(0);
             else if (args.Key == Windows.System.VirtualKey.End) SeekRequested?.Invoke(length);
@@ -201,9 +203,11 @@ internal sealed class ClipTimeline : UserControl
     public void SetTracks(string identity, double duration, int fps, IReadOnlyList<TimelineLane> tracks, string? selection)
     {
         if (!double.IsFinite(duration) || duration <= 0 || fps <= 0) throw new ArgumentException("时间轴范围无效。");
-        if (sourceKey != identity) { sourceKey = identity; fitPending = true; filteredActor=null; }
+        bool changedProject=sourceKey!=identity;
+        if (changedProject) { sourceKey = identity; fitPending = true; filteredActor=null; }
         length = duration; framesPerSecond = fps; allLanes = tracks; items = tracks.SelectMany(t => t.Items).ToArray(); selected = selection;
         if(filteredActor is not null&&!allLanes.Any(l=>l.Actor==filteredActor))filteredActor=null;
+        ValidateRange(changedProject);
         UpdateLanes();
         if (fitPending && IsLoaded) Fit(); else Draw();
     }
@@ -329,6 +333,7 @@ internal sealed class ClipTimeline : UserControl
             Draw();
         };
         bar.PointerCaptureLost += (_, _) => { if (dragging?.Id == clip.Id) { dragging = null; dragBar = null; Draw(); } };
+        bar.Tapped += (_, args) => { if (FollowSelection) SeekRequested?.Invoke(clip.Start); args.Handled = true; };
         bar.DoubleTapped += (_, args) => { SeekRequested?.Invoke(clip.Start); args.Handled = true; };
         bar.ContextRequested += (_, args) => { Select(clip.Id, true); ContextMenuFactory?.Invoke(clip.Id).ShowAt(bar); args.Handled = true; };
     }
@@ -346,6 +351,7 @@ internal sealed class ClipTimeline : UserControl
     void DrawRuler()
     {
         ruler.Children.Clear(); double width = Math.Max(0, scroll.ActualWidth); ruler.Clip = new RectangleGeometry { Rect = new(0, 0, width, 26) };
+        DrawRangeOnRuler();
         double tick = .5; while (tick * scale < 55) tick *= 2;
         for (double t = Math.Floor(scroll.HorizontalOffset / scale / tick) * tick; t < (scroll.HorizontalOffset + width) / scale + tick; t += tick)
         {

@@ -24,6 +24,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     int frame;
     long playClock,rateClock;
     int playFrom,rateFrames;
+    int? playbackEndFrame;
     double measuredRate;
     TimingJob? timingJob;
     readonly Dictionary<string,NativePlaybackTiming> timingCache=new(StringComparer.Ordinal);
@@ -88,10 +89,11 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         renderer.DisableGpu(reason);Render(frame,[]);
     });
 
-    public Task SeekAsync(double seconds)
+    public Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
         if(!double.IsFinite(seconds)||seconds<0||seconds>36000)throw new ArgumentOutOfRangeException(nameof(seconds));
-        return UpdateState(update=>update.Time=seconds);
+        cancellationToken.ThrowIfCancellationRequested();
+        return UpdateState(update=>{update.Time=seconds;update.SeekCancellation=cancellationToken;});
     }
 
     public Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
@@ -119,14 +121,16 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         return UpdateState(update=>update.HomeEdits=frozen);
     }
 
-    public void Play()
+    public void Play(double? exclusiveEndSeconds=null)
     {
+        if(exclusiveEndSeconds is {} end&&(!double.IsFinite(end)||end<=0||end>36000))throw new ArgumentOutOfRangeException(nameof(exclusiveEndSeconds));
         if(Interlocked.Exchange(ref playRequested,1)!=0)return;
         Observe(Enqueue(()=>
         {
             RequireRenderer();
             if(Volatile.Read(ref playRequested)==0)return;
-            if(renderer is SceneState {NeedsReplay:true})Render(frame,[],replay:true);
+            if(renderer is SceneState state&&(state.NeedsReplay||state.NativeFrame!=frame))Render(frame,[],replay:true);
+            playbackEndFrame=exclusiveEndSeconds is {} stop?Math.Min(renderer!.EndFrame,Math.Max(frame,checked((int)Math.Ceiling(stop*renderer.Fps-1e-8))-1)):null;
             playing=true;playFrom=frame;playClock=Stopwatch.GetTimestamp();
             if(!resumeAudio||PlaybackClock?.Resume()!=true)PlaybackClock?.Start(frame/(double)renderer!.Fps);
             resumeAudio=false;ResetRate();
@@ -140,7 +144,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         Observe(Enqueue(()=>
         {
             resumeAudio=true;playing=false;
-            if(renderer is not null&&LastFrame is {} previous)Publish(previous.Pixels,0);
+            if(renderer is not null&&LastFrame is {} previous&&previous.SessionId==sessionId)Publish(previous.Pixels,0);
         }));
     }
 
@@ -186,7 +190,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         renderer?.Dispose();renderer=null;
         // A context must be created after the old context is disposed on this thread.
         // Creating both and disposing the old one could silently unbind the new WGL one.
-        resumeAudio=false;renderer=factory();renderer.Duration=duration;
+        resumeAudio=false;playbackEndFrame=null;renderer=factory();renderer.Duration=duration;
         sessionId++;frame=0;ResetRate();
         if(renderer is SceneState scene)StartTiming(scene);
         Render(0,[]);
@@ -197,6 +201,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         lock(gate){if(ReferenceEquals(update,pendingUpdate))pendingUpdate=null;}
         try
         {
+            update.SeekCancellation.ThrowIfCancellationRequested();
             RequireRenderer();
             if(update.HomeEdits is {} home)
             {
@@ -206,9 +211,14 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             if(update.SceneEdits.Count>0&&renderer is not SceneState)throw new InvalidOperationException("Load a scene project before applying scene edits.");
             if(update.Time.HasValue)resumeAudio=false;
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
-            Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue);
+            Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation);
             if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
             foreach(var waiter in update.Waiters)waiter.TrySetResult();
+        }
+        catch(OperationCanceledException) when(update.SeekCancellation.IsCancellationRequested)
+        {
+            // A superseded seek is not a renderer failure. Retain the previous displayed frame.
+            foreach(var waiter in update.Waiters)waiter.TrySetCanceled(update.SeekCancellation);
         }
         catch(Exception exception)
         {
@@ -220,11 +230,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     int FrameAt(double time)=>Math.Min(renderer!.EndFrame,checked((int)Math.Floor(time*renderer.Fps+1e-8)));
     void RequireRenderer(){if(renderer is null)throw new InvalidOperationException("Load a project into the native preview first.");}
 
-    void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false)
+    void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var active=renderer!;long stamp=Stopwatch.GetTimestamp(),allocated=GC.GetAllocatedBytesForCurrentThread();
         int from=frame;
-        if(active is SceneState scene&&(next<frame||replay&&scene.NeedsReplay))
+        if(active is SceneState scene&&(next<scene.NativeFrame||replay&&scene.NeedsReplay))
         {
             // Native ADV has a stateful interpreter and physics. Reconstruct only for
             // a backward seek; normal playback and live edits retain models/context.
@@ -232,7 +243,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             renderer=null;active.Dispose();
             active=renderer=new SceneState(source,document,project,cache){Duration=duration,Timing=timing};sessionId++;from=0;
         }
-        var pixels=active.Render(next,edits);
+        var pixels=active.Render(next,edits,cancellationToken);
         frame=active is SceneState current?current.NativeFrame:next;
         if(active is SceneState finished&&finished.Finished&&!finished.NeedsReplay&&finished.Source.DurationMode==PreviewDurationMode.Automatic)
         {
@@ -294,9 +305,10 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                     // the underlying animation still evaluates its required steps.
                     double elapsed=Stopwatch.GetElapsedTime(playClock).TotalSeconds;
                     double? audioPosition=PlaybackClock?.PositionSeconds;
-                    int target=FrameAt(audioPosition??(playFrom/(double)renderer.Fps+elapsed));
+                    int endFrame=Math.Min(renderer.EndFrame,playbackEndFrame??renderer.EndFrame);
+                    int target=Math.Min(endFrame,FrameAt(audioPosition??(playFrom/(double)renderer.Fps+elapsed)));
                     if(target>frame)Render(target,[]);
-                    if(frame>=renderer.EndFrame&&(audioPosition is null||audioPosition.Value>=(renderer.EndFrame+1)/(double)renderer.Fps-0.00001))
+                    if(frame>=endFrame&&(audioPosition is null||audioPosition.Value>=(endFrame+1)/(double)renderer.Fps-0.00001))
                     {
                         resumeAudio=false;PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
                         Publish(LastFrame!.Pixels,0);
@@ -390,7 +402,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             if(renderer is not SceneState scene||scene.CacheKey!=job.Key||scene.Timing?.IsComplete==true)return;
             if(job.Cancellation.IsCancellationRequested)return;
             ApplyTiming(scene,value);
-            if(LastFrame is {} previous)Publish(previous.Pixels,0);
+            if(LastFrame is {} previous&&previous.SessionId==sessionId)Publish(previous.Pixels,0);
         }));}catch(ObjectDisposedException){ }
     }
     void ApplyTiming(SceneState scene,NativePlaybackTiming value)
@@ -420,6 +432,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     sealed class Update
     {
         public double? Time;
+        public CancellationToken SeekCancellation;
         public HomeEditState? HomeEdits;
         public Dictionary<string,JsonObject> SceneEdits{get;}=new(StringComparer.Ordinal);
         public List<TaskCompletionSource> Waiters{get;}=[];
@@ -437,7 +450,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public virtual PreviewPerformance Performance=>new(0,0,0,0,0,0);
         public virtual IReadOnlyList<PreviewLipSync> LipSync()=>[];
         public virtual IReadOnlyList<PreviewActorAnimation> Animations()=>[];
-        public abstract Pixels Render(int frame,IReadOnlyList<JsonObject> edits);
+        public abstract Pixels Render(int frame,IReadOnlyList<JsonObject> edits,CancellationToken cancellationToken=default);
         public abstract IReadOnlyList<PreviewTarget> Targets();
         public abstract void Dispose();
     }
@@ -492,10 +505,10 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             Source=source;Duration=source.Duration;NeedsReplay=true;project=next;
             Document=DirectorProject.Document(source.ProjectPath);ProjectHash=Archive.Hash(Encoding.UTF8.GetBytes(Document.ToJsonString()));Timing=null;
         }
-        public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits)
+        public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits,CancellationToken cancellationToken=default)
         {
             double simulation=native.Timings.GetValueOrDefault("simulation"),readback=native.Timings.GetValueOrDefault("readbackAndResolve"),total=native.Timings.Values.Sum();
-            var pixels=native.Frame(frame,clean,edits,Source.DurationMode==PreviewDurationMode.Automatic);
+            var pixels=native.Frame(frame,clean,edits,Source.DurationMode==PreviewDurationMode.Automatic,cancellationToken);
             double simulationDelta=native.Timings.GetValueOrDefault("simulation")-simulation,readbackDelta=native.Timings.GetValueOrDefault("readbackAndResolve")-readback;
             measured=new(simulationDelta,Math.Max(0,native.Timings.Values.Sum()-total-simulationDelta-readbackDelta),readbackDelta,0,0,0);
             return pixels;
@@ -530,8 +543,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 project.EditState.Framing,project.EditState.Background,project.EditState){PreferGpuPresentation=source.GpuPresentation};
         }
         public void SetEdits(HomeEditState state)=>native.SetEditState(state);
-        public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits)
+        public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits,CancellationToken cancellationToken=default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if(frame<last)animation.Reset();
             last=frame;return native.Frame(frame);
         }

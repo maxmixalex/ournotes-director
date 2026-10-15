@@ -87,9 +87,9 @@ public sealed class AdvStoryRenderer : IDisposable
             Player.Prepare=p=>Ui.Prepare();Player.Start();
         }catch{Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
     }
-    public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
+    public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
     {
-        RenderFrame(frame,clean,previewEdits,stopAtEnd);
+        RenderFrame(frame,clean,previewEdits,stopAtEnd,cancellationToken);
         var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();return pixels;
     }
     public IReadOnlyList<PreviewTarget> PreviewTargets()
@@ -97,10 +97,11 @@ public sealed class AdvStoryRenderer : IDisposable
         double top=viewportY/(double)outputHeight,height=gl.Height/(double)supersample/outputHeight;
         return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height}).ToArray();
     }
-    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
+    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
     {
         if(frame<Loop.Frame)throw new ArgumentException("Frame requests must be increasing");
-        Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
+        Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){cancellationToken.ThrowIfCancellationRequested();Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
+        cancellationToken.ThrowIfCancellationRequested();
         if(previewEdits is {Count:>0})Scene.ApplyPreviewEdits(previewEdits,Player);
         Draw(clean);
     }

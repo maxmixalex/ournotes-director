@@ -145,9 +145,9 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         status.Text=LastFrame is null?"打开项目，开始预览":"等待载入，保留上一画面";
         diagnostics.Content=null;diagnosticFailure=false;
     }
-    public async Task SeekAsync(double seconds)
+    public async Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
-        await session.SeekAsync(seconds);
+        await session.SeekAsync(seconds,cancellationToken);
         await AwaitPresentationAsync();
     }
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
@@ -166,7 +166,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     {
         if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);
     }
-    public void Play()=>session.Play();
+    public void Play(double? exclusiveEndSeconds=null)=>session.Play(exclusiveEndSeconds);
     public void Pause()=>session.Pause();
 
     /// <summary>Completes only after the raw native pixels have been copied into the XAML image.</summary>

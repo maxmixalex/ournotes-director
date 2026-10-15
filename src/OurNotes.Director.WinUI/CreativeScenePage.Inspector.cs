@@ -225,6 +225,11 @@ internal sealed partial class CreativeScenePage
         var full=viewport.LastFrame!;var targets=full.Targets.ToArray();var lips=full.LipSync?.ToArray()??[];
         var dialogue=document.Clips.OfType<JsonObject>().First(c=>S(c,"kind")=="voice"&&N(c,"start")<=3.1&&N(c,"start")+N(c,"duration")>=3.1);
         timeline.Select(S(dialogue,"id"),true);timeline.FilterActor(S(dialogue,"actor"));timeline.FitSelection();
+        string unchanged=document.ToJson();
+        timeline.Position=3.1;timeline.MarkIn();timeline.Position=4.1;timeline.MarkOut();timeline.Position=playhead;
+        check(timeline.WorkRange is {StartFrame:93,EndFrameExclusive:124,FrameCount:31}&&document.ToJson()==unchanged,
+            "在时间轴标记短镜头区间不裁掉源指令；入出点包括目标31帧");
+        await App.CaptureCheckpointAsync("shot-range");
         await App.CaptureCheckpointAsync("dialogue-editor");
         await EditAsync(()=>document.Canvas["content"]="characters");
         var cutout=viewport.LastFrame!;

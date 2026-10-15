@@ -45,7 +45,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     static double N(JsonObject value,string key,double fallback=0)=>CreativeScene.Number(value,key,fallback);
     internal CreativeScenePage(MainWindow window)
     {
-        this.window=window;scrubber=new(SeekAsync,error=>ShowError(error.Message));document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();
+        this.window=window;scrubber=new((time,token)=>SeekAsync(time,token),error=>ShowError(error.Message));document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();
         HorizontalContentAlignment=HorizontalAlignment.Stretch;VerticalContentAlignment=VerticalAlignment.Stretch;
         var toolbar=new Grid{ColumnSpacing=16};toolbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});toolbar.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});toolbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         toolbar.Children.Add(Ui.Row(4,StudioMenus.Button("文件",FileMenu),StudioMenus.Button("编辑",EditMenu),StudioMenus.Button("视图",ViewMenu)));
@@ -67,7 +67,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         {
             if(disposed||!viewport.HasCurrentSource)return;if(!scrubber.IsBusy){playhead=frame.Time;timeline.Position=playhead;}timeline.IsPlaying=frame.IsPlaying;
             bool ended=playingLast&&!frame.IsPlaying;playingLast=frame.IsPlaying;
-            if(ended&&timeline.Repeat&&playhead>=document.Duration-.04)_=Safe(async()=>{await SeekAsync(0);viewport.Play();});
+            if(ended&&timeline.Repeat&&playhead>=timeline.PlaybackLastTime-.04)_=Safe(async()=>{await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);});
         };
         viewport.Failed+=(_,error)=>ShowError(error.Message);viewport.ContextMenuFactory=ActorMenu;
         timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>{viewport.Pause();timeline.Position=seconds;scrubber.Request(seconds);};
