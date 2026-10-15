@@ -1,0 +1,25 @@
+name: Export editor sources
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.github/workflows/editor-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: windows-2022
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: |
+          New-Item -ItemType Directory -Path source-export -Force | Out-Null
+          git archive --format=zip -o source-export/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rev-parse HEAD | Set-Content source-export/commit.txt -Encoding ascii
+      - uses: actions/upload-artifact@v7
+        with:
+          name: editor-source
+          path: source-export/*
+          retention-days: 3
