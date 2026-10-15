@@ -1,0 +1,41 @@
+name: Integrate shared Windows workbench
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.dev/workbench-edits-a.json, .dev/workbench-edits-b.json, .dev/apply-workbench-edits.py, .github/workflows/workbench-integration.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Apply checksum-guarded source edits
+        run: |
+          python .dev/apply-workbench-edits.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build editing models and native engine
+        run: dotnet build OurNotes.Director.sln -c Release --nologo
+      - name: Compile actual WinUI
+        run: dotnet build src/OurNotes.Director.WinUI -c Release -p:Platform=x64 -p:PublishReadyToRun=false --nologo
+      - name: Run editing contracts
+        run: dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release --no-build --no-restore
+      - name: Commit the compiled source changes
+        run: |
+          git rm .dev/workbench-edits-a.json .dev/workbench-edits-b.json .dev/apply-workbench-edits.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git add src tests
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Unify workbench clip editing and preserve resumed audio position'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
