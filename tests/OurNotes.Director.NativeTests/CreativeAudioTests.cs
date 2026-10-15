@@ -10,6 +10,13 @@ static class CreativeAudioTests
         Directory.CreateDirectory(outputDirectory);outputDirectory=Path.GetFullPath(outputDirectory);
         var checks=new JsonArray();var report=new JsonObject{["ok"]=false,["checks"]=checks};
         void Check(bool result,string name){checks.Add((JsonNode)new JsonObject{["name"]=name,["ok"]=result});if(!result)throw new InvalidOperationException(name);}
+        void Stage(string name)
+        {
+            report["stage"]=name;
+            File.WriteAllText(Path.Combine(outputDirectory,"report.json"),report.ToJsonString());
+            Console.WriteLine("Audio regression: "+name);
+        }
+        Stage("prepare fixtures");
         string fixture=Path.Combine(outputDirectory,"audio-fixture");RealtimeSceneFixture.Write(fixture);
         string a=Path.Combine(outputDirectory,"tone-a.wav"),b=Path.Combine(outputDirectory,"tone-b.wav");
         WriteWave(a,Enumerable.Range(0,48000).Select(i=>(short)Math.Round(5000*Math.Sin(i*2*Math.PI*220/48000))).ToArray(),1);
@@ -23,13 +30,18 @@ static class CreativeAudioTests
         File.WriteAllText(project,document.ToJsonString());
         try
         {
+            Stage("initialize software test driver");
             NativeTestGraphics.Configure();
+            Stage("compare audio-only and graphical playback");
+            long decodedBefore=VoiceDecodeCache.Shared.DecodeCount;
             Check(ExternalVoiceTimeline.Supports(document),"Locally voiced scheduled scene uses the audio-only interpreter");
             const int frames=31;
             var reference=new float[frames*AdvAudio.SamplesPerFrame*2];var accelerated=new float[reference.Length];
             // Both implementations run on the same thread here. Comparison is sample-exact,
             // not a render-FPS claim or a substituted silence track.
+            Stage("decode shared voice sources");
             var fast=new ExternalVoiceTimeline(document,outputDirectory,ffmpeg);
+            Stage("create graphics context and render comparison");
             using(var rendered=new AdvStoryRenderer(new Archive(fixture),"intl","","43","zh-Hans",128,96,project,ffmpeg,1))
                 for(int frame=0;frame<frames;frame++)
                 {
@@ -43,6 +55,7 @@ static class CreativeAudioTests
             WriteWave(Path.Combine(outputDirectory,"parallel-voice-mix.wav"),MemoryMarshal.Cast<byte,short>(pcm).ToArray(),2);
             var source=new ScenePreviewSource(fixture,project,"not-used-by-audio-only",ffmpeg,128,96,frames/30d);
             var timer=Stopwatch.StartNew();
+            Stage("prepare seekable soundtrack");
             await using(var soundtrack=new PreviewSoundtrack(source))
             {
                 soundtrack.RequestThrough(frames*1600L+48000);
@@ -53,6 +66,11 @@ static class CreativeAudioTests
                 var block=new byte[960*4];Check(soundtrack.Read(4800,block)==960&&block.SequenceEqual(pcm.AsSpan(4800*4,block.Length).ToArray()),
                     "Seeking into the prepared soundtrack starts at the requested source samples");
             }
+            long decodedFiles=VoiceDecodeCache.Shared.DecodeCount-decodedBefore;
+            Check(decodedFiles==2,"Four trimmed voice clips, graphical playback and soundtrack preparation share exactly two file decodes");
+            report["voiceFileDecodes"]=decodedFiles;
+            report["voiceDecodeCacheHits"]=VoiceDecodeCache.Shared.HitCount;
+            Stage("check transparent drawing content");
             var drawing=RealtimeSceneFixture.Document();string drawingPath=Path.Combine(outputDirectory,"drawing.project.json");
             File.WriteAllText(drawingPath,drawing.ToJsonString());
             Pixels full;
@@ -64,7 +82,7 @@ static class CreativeAudioTests
                 Check(full.Rgba.Any(x=>x>0)&&pixels.Rgba.All(x=>x==0),"Character-only drawing removes the actual background, not only the UI checkbox");
                 Check(transparent.Loop.Frame==15,"Layer selection does not alter the requested simulation frame");
             }
-            report["ok"]=true;report["mixedSampleFrames"]=frames*1600;report["audioOnlyPreparationMilliseconds"]=timer.Elapsed.TotalMilliseconds;
+            report["stage"]="complete";report["ok"]=true;report["mixedSampleFrames"]=frames*1600;report["audioOnlyPreparationMilliseconds"]=timer.Elapsed.TotalMilliseconds;
             Console.WriteLine($"Passed {checks.Count} actual PCM/export and drawing-content checks.");return 0;
         }
         finally{File.WriteAllText(Path.Combine(outputDirectory,"report.json"),report.ToJsonString());}

@@ -11,7 +11,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
     const uint Done = 1, Prepared = 2, TimeSamples = 2, TimeBytes = 4;
     readonly object gate = new();
     readonly AutoResetEvent wake = new(false);
-    readonly Task pump;
+    Task? pump;
     readonly List<Task> retired = [];
     PreviewSoundtrack? source;
     bool wanted, closing, deviceFailed, started;
@@ -24,8 +24,8 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
     public double Volume { get { lock (gate) return volume; } set { lock (gate) volume = double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 1; } }
     public double? PositionSeconds { get { lock (gate) return source is null || deviceFailed ? null : position; } }
 
-    public WindowsPreviewAudio() => pump = Task.Factory.StartNew(Pump, CancellationToken.None,
-        TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    // No audio worker is started for an empty or silent workbench.
+    public WindowsPreviewAudio() { }
 
     public void Configure(ScenePreviewSource next)
     {
@@ -34,6 +34,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
         {
             if (closing) { Retire(created); return; }
             Retire(source); source = created; wanted = false; deviceFailed = false;
+            pump ??= Task.Factory.StartNew(Pump, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             revision++; started = false; position = requestedTime = 0; SetStatus("语音准备中"); wake.Set();
         }
     }
@@ -89,6 +90,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
         {
             while (true)
             {
+                int wait = Timeout.Infinite;
                 lock (gate)
                 {
                     if (closing) break;
@@ -113,6 +115,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
                         }
                         else
                         {
+                            wait = 5;
                             if (source.Failure is { } preparationError) throw new IOException("语音解码失败。", preparationError);
                             if (device == 0)
                             {
@@ -156,7 +159,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
                         try { Failed?.Invoke(error); } catch { }
                     }
                 }
-                wake.WaitOne(5);
+                wake.WaitOne(wait);
             }
         }
         finally { CloseDevice(ref device, headers); }
@@ -199,7 +202,7 @@ internal sealed class WindowsPreviewAudio : IPreviewPlaybackClock, IAsyncDisposa
     public async ValueTask DisposeAsync()
     {
         lock (gate) { if (closing) return; closing = true; wanted = false; wake.Set(); }
-        await pump.ConfigureAwait(false);
+        if (pump is not null) await pump.ConfigureAwait(false);
         Task[] pending;
         lock (gate) { Retire(source); source = null; pending = retired.ToArray(); }
         foreach (var task in pending) await task.ConfigureAwait(false);

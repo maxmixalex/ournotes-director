@@ -125,7 +125,7 @@ internal sealed partial class CreativeScenePage
     {string? file=await window.PickFileAsync(extensions:[".wav",".ogg",".mp3",".m4a",".flac",".aac"]);if(file is not null)await InsertVoiceFileAsync(file,Path.GetFileNameWithoutExtension(file),playhead);}
     async Task InsertVoiceFileAsync(string file,string label,double at)
     {
-        file=Path.GetFullPath(file);string ffmpeg=Ffmpeg();var cue=await Task.Run(()=>VoiceFile.Decode(file,-1,ffmpeg));var peaks=VoiceFile.Peaks(cue);
+        file=Path.GetFullPath(file);string ffmpeg=Ffmpeg();var cue=await Task.Run(()=>VoiceDecodeCache.Shared.Read(file,ffmpeg));var peaks=VoiceFile.Peaks(cue);
         double duration=cue.Samples/(double)AdvAudio.SampleRate;string actor=selectedActor??"";
         await EditAsync(()=>
         {
@@ -223,6 +223,7 @@ internal sealed partial class CreativeScenePage
     }
     async Task ExportAsync(string kind,bool actorOnly=false)
     {
+        await scrubber.FlushAsync();
         viewport.Pause();
         var native=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);
         // This read-only view supplies shared export settings without invoking the old
@@ -234,6 +235,7 @@ internal sealed partial class CreativeScenePage
             string? model=viewport.LastFrame?.ActorAnimations?.FirstOrDefault(a=>a.TargetId==actor)?.Model??document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==actor)?["model"]?.ToString();
             if(model is null)throw new InvalidOperationException("请先载入所选角色。");metadata=await Task.Run(()=>new Archive(window.Settings.ArchivePath).Model(document.Site,model));
         }
-        await StudioExportDialog.ShowSceneAsync(window,editor,playhead,initialKind:kind,actorId:actor,actorMetadata:metadata);
+        await StudioExportDialog.ShowSceneAsync(window,editor,playhead,initialKind:kind,actorId:actor,actorMetadata:metadata,
+            preserveTransparency:document.Root["imported"]?.GetValue<bool>()!=true&&document.Canvas["transparent"]?.GetValue<bool>()!=false);
     }
 }

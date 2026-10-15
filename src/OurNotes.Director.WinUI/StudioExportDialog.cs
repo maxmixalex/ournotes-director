@@ -10,10 +10,10 @@ namespace OurNotes.Director.WinUI;
 /// <summary>One final-output workflow, shared by both editors and independent of preview resolution.</summary>
 internal static class StudioExportDialog
 {
-    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false, string initialKind = "clip", string? actorId = null, JsonNode? actorMetadata = null)
+    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false, string initialKind = "clip", string? actorId = null, JsonNode? actorMetadata = null, bool preserveTransparency = false)
     {
         var document = scene.ToSceneDocument(); var output = document.Output;
-        bool transparencyRequired = actorId is not null || SceneContent.Read(document.Root["output"]?["content"]) == "characters";
+        bool transparencyRequired = preserveTransparency || actorId is not null || SceneContent.Read(document.Root["output"]?["content"]) == "characters";
         Func<string, int, Task<(int Width, int Height)>>? canvas = actorMetadata is null ? null
             : (codec, _) => Task.FromResult(SceneAssetExport.Canvas(actorMetadata, codec));
         var settings = await ChooseAsync(window, actorId is not null ? "导出角色素材" : singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, transparencyRequired && output.Codec == "h264" || actorId is not null ? "cineform" : output.Codec,

@@ -42,7 +42,7 @@ public static class VoiceFile
     }
 }
 
-public sealed class ExternalVoiceBank(AdvAudio audio, string baseDirectory, string ffmpeg)
+public sealed class ExternalVoiceBank(AdvAudio audio, string baseDirectory, string ffmpeg, VoiceDecodeCache? cache = null)
 {
     readonly Dictionary<string, AdvCue> externalVoices = new(StringComparer.OrdinalIgnoreCase);
     long externalVoiceId = -1;
@@ -55,13 +55,13 @@ public sealed class ExternalVoiceBank(AdvAudio audio, string baseDirectory, stri
         string key = path + "\0" + file.Length + "\0" + file.LastWriteTimeUtc.Ticks + "\0" + row.Text("AudioIn") + "\0" + row.Text("AudioDuration");
         if (!externalVoices.TryGetValue(key, out var cue))
         {
-            cue = VoiceFile.Decode(path, externalVoiceId--, ffmpeg);
-            double start = row.Number("AudioIn"), duration = row.Number("AudioDuration");
-            if (start < 0 || duration < 0 || !double.IsFinite(start + duration)) throw new ArgumentException("语音裁剪范围无效。");
-            int offset = checked((int)Math.Round(start * AdvAudio.SampleRate));
-            if (offset >= cue.Samples) throw new ArgumentException("语音入点超出文件长度。");
-            int count = duration > 0 ? Math.Min(cue.Samples - offset, checked((int)Math.Ceiling(duration * AdvAudio.SampleRate))) : cue.Samples - offset;
-            if (offset != 0 || count != cue.Samples) cue = cue with { Pcm = cue.Pcm.AsSpan(offset, count).ToArray() };
+            var decoded = (cache ?? VoiceDecodeCache.Shared).Read(path, ffmpeg);
+            var fields = row.Data.AsObject();
+            var range = VoiceSampleRange.FromSeconds(CreativeScene.Number(fields, "AudioIn"),
+                CreativeScene.Number(fields, "AudioDuration"), decoded.Samples);
+            cue = decoded with { SoundId = externalVoiceId--,
+                Pcm = range.Offset == 0 && range.Count == decoded.Samples ? decoded.Pcm
+                    : decoded.Pcm.AsSpan(range.Offset, range.Count).ToArray() };
             externalVoices.Add(key, cue); audio.AddCue(cue);
         }
         var data = row.Data.DeepClone(); data["VoiceIDs"] = new JsonArray(cue.SoundId);

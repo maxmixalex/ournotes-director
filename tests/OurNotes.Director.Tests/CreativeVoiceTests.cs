@@ -5,6 +5,7 @@ static class CreativeVoiceTests
 {
     internal static void Run(Action<bool,string> check)
     {
+        VoiceDecodeCacheTests.Run(check);
         var clock=new AdvLoop();
         AdvCue Cue(long id,float amplitude,int frames)=>new(id,2,Enumerable.Repeat(amplitude,frames*AdvAudio.SamplesPerFrame).ToArray(),1);
         var audio=new AdvAudio(clock,[Cue(1,.1f,3),Cue(2,.2f,4),Cue(3,.4f,8),Cue(4,.05f,1)]);
