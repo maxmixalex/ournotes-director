@@ -1,0 +1,27 @@
+name: Editor source snapshot
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.github/workflows/editor-source-snapshot.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Archive tracked source at this commit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path snapshot -Force | Out-Null
+          git archive --format=zip -o snapshot/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rev-parse HEAD | Set-Content snapshot/commit.txt -Encoding ascii
+      - uses: actions/upload-artifact@v7
+        with:
+          name: editor-source-snapshot
+          path: snapshot/*
+          retention-days: 3
