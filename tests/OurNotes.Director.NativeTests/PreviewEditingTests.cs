@@ -12,6 +12,7 @@ static class PreviewEditingTests
         { if (!result) throw new InvalidOperationException(label); checks++; Console.WriteLine(label); }
         try
         {
+            NativeTestGraphics.Configure();
             string path = RealtimeSceneFixture.Write(root);
             await Task.Run(() =>
             {
