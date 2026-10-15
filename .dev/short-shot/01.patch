@@ -1,0 +1,49 @@
+diff --git a/CREATIVE_EDITOR_PROGRESS.md b/CREATIVE_EDITOR_PROGRESS.md
+index 5791524..7d4c8ef 100644
+--- a/CREATIVE_EDITOR_PROGRESS.md
++++ b/CREATIVE_EDITOR_PROGRESS.md
+@@ -23 +23 @@
+-拖动播放头时只保留最后一个待处理位置。已经开始的有状态重放暂时不能中途取消，但过期定位请求不会排成长队。时间轴只创建可视范围内的轨道/片段控件，播放只更新播放头与时间文字；场景和主页共用实现。
++拖动播放头时只保留最后一个待处理位置。已开始的逐帧演算可以在完整帧之间取消；加载单个模型的操作仍不能在其内部打断。时间轴只创建可视范围内的轨道/片段控件，播放只更新播放头与时间文字；场景和主页共用实现。
+@@ -56,0 +57,11 @@ Live2D Cubism 的模型/声音轨道、素材替换，以及 nizima ACTION 的
++
++## 工作区入出点与可取消定位
++
++- 共享时间轴增加 I/O 入出点、“所选片段设为区间”和清除范围。标尺显示区间，播放/循环/导出共用区间；图片仍取当前播放头。区间是当前工作台的临时选择，不裁剪原项目，当前尚不随 JSON 持久保存。
++- 片段右键可以直接导出这一段，或只导出相应角色的这一段。导出保留原指令历史，保证片段开头的动作、物理和口型状态，不用重建替代镜头。
++- 单击片段默认定位到相应画面，“视图”中可以关闭跟随选择；右键只选择对象，不强制跳转。
++- 标尺定位真正取消过期的原生演算，取消检查发生在完整帧之间，不提交半成品像素。向后定位会比较实际模拟位置，而不是只比较上一次已显示位置。
++- 初次加载和重建模型仍无法在任意加载指令内部打断；这次减少的是无用的旧位置演算，不承诺硬件帧率。
++
++参考：nizima ACTION 当前时间轴说明包含播放头跟随选择和轨道上下文操作。
++https://docs.nizima-action.com/en/manual/timeline/
+diff --git a/DESKTOP.md b/DESKTOP.md
+index 45f3aa3..ca994db 100644
+--- a/DESKTOP.md
++++ b/DESKTOP.md
+@@ -36,0 +37,8 @@
++## 从长剧情导出短镜头
++
++在标尺定位后按 **I** 设置入点，按 **O** 设置出点（包括当前帧）。时间轴工具栏显示所选区间；也可以在区间菜单中把范围设为选中的动作或对白。循环播放只播放这个区间，导出面板默认采用同一区间，并显示实际秒数和帧数。
++
++右键一个片段选择“导出这一段…”可以直接输出短镜头；“仅导出这个角色的这一段…”会同时隔离其他角色与背景。原剧情和此前的动作状态保留，不需要先删除前面的指令。清除区间后恢复完整播放和导出。区间目前保留在打开的工作台中，不写进场景 JSON。
++
++单击片段默认定位到它的开始画面；“视图 → 单击片段时定位画面”可切换此行为。拖动标尺时会取消过期位置的计算，不再排队回放每个旧位置。
++
+diff --git a/src/OurNotes.Director.Core/AdvStoryRenderer.cs b/src/OurNotes.Director.Core/AdvStoryRenderer.cs
+index ed62399..a4413f7 100644
+--- a/src/OurNotes.Director.Core/AdvStoryRenderer.cs
++++ b/src/OurNotes.Director.Core/AdvStoryRenderer.cs
+@@ -90 +90 @@ public sealed class AdvStoryRenderer : IDisposable
+-    public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
++    public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
+@@ -92 +92 @@ public sealed class AdvStoryRenderer : IDisposable
+-        RenderFrame(frame,clean,previewEdits,stopAtEnd);
++        RenderFrame(frame,clean,previewEdits,stopAtEnd,cancellationToken);
+@@ -100 +100 @@ public sealed class AdvStoryRenderer : IDisposable
+-    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false)
++    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
+@@ -103 +103,2 @@ public sealed class AdvStoryRenderer : IDisposable
+-        Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
++        Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){cancellationToken.ThrowIfCancellationRequested();Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
++        cancellationToken.ThrowIfCancellationRequested();

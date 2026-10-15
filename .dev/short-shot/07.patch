@@ -1,0 +1,55 @@
+diff --git a/src/OurNotes.Director.WinUI/StudioExportDialog.cs b/src/OurNotes.Director.WinUI/StudioExportDialog.cs
+index a112bef..4f9dd74 100644
+--- a/src/OurNotes.Director.WinUI/StudioExportDialog.cs
++++ b/src/OurNotes.Director.WinUI/StudioExportDialog.cs
+@@ -13 +13 @@ internal static class StudioExportDialog
+-    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false, string initialKind = "clip", string? actorId = null, JsonNode? actorMetadata = null, bool preserveTransparency = false)
++    internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false, string initialKind = "clip", string? actorId = null, JsonNode? actorMetadata = null, bool preserveTransparency = false, TimelineRange? initialRange = null)
+@@ -22 +22 @@ internal static class StudioExportDialog
+-            isolated: actorId is not null, transparencyRequired: transparencyRequired);
++            isolated: actorId is not null, transparencyRequired: transparencyRequired, initialRange:initialRange);
+@@ -31 +31 @@ internal static class StudioExportDialog
+-    internal static async Task ShowHomeAsync(MainWindow window, HomeStudioDocument document, double playhead, string initialKind = "clip", bool isolated = false)
++    internal static async Task ShowHomeAsync(MainWindow window, HomeStudioDocument document, double playhead, string initialKind = "clip", bool isolated = false, TimelineRange? initialRange = null)
+@@ -40,2 +40,2 @@ internal static class StudioExportDialog
+-            output.CineformQuality, project.Duration, playhead, true, !string.IsNullOrEmpty(document.SelectedCharacterKey), output.Supersample,
+-            nativeCanvas: NativeCanvas, initialKind: initialKind, isolated: isolated);
++            output.CineformQuality, TimelineRange.Full(project.Duration, output.Fps).Duration, playhead, true, !string.IsNullOrEmpty(document.SelectedCharacterKey), output.Supersample,
++            nativeCanvas: NativeCanvas, initialKind: initialKind, isolated: isolated, initialRange:initialRange);
+@@ -82 +82 @@ internal static class StudioExportDialog
+-        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false, bool transparencyRequired = false)
++        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false, bool transparencyRequired = false, TimelineRange? initialRange = null)
+@@ -97,4 +97,5 @@ internal static class StudioExportDialog
+-        var start = Number("开始（秒）", 0, 0, 36000, .1);
+-        var length = Number("时长（秒）", Math.Max(duration, 1d / 30), 1d / 30, 36000, .1);
+-        var rangeMode = Ui.Choice("时间范围", [("complete", "完整剧情 · 含对白、语音与等待"), ("range", "指定时间区间")], automaticDuration ? "complete" : "range");
+-        rangeMode.Visibility = automaticDuration ? Visibility.Visible : Visibility.Collapsed;
++        var start = Number("开始（秒）", initialRange?.Start ?? 0, 0, 36000, .1);
++        var length = Number("时长（秒）", initialRange?.Duration ?? Math.Max(duration, 1d / fps), 1d / fps, 36000, .1);
++        var rangeMode = Ui.Choice("时间范围", [("complete", "完整动画"), ("work", "时间轴区间"), ("range", "自定义区间")], initialRange is null ? "complete" : "work");
++        ((ComboBoxItem)rangeMode.Items[1]).IsEnabled = initialRange is not null;
++        var rangeSummary = Ui.Text("", 12, true);
+@@ -128,2 +129,10 @@ internal static class StudioExportDialog
+-            range.Visibility = Ui.Selected(kind) == "frame" || automaticDuration && Ui.Selected(rangeMode) == "complete" ? Visibility.Collapsed : Visibility.Visible;
+-            rangeMode.Visibility = automaticDuration && Ui.Selected(kind) != "frame" ? Visibility.Visible : Visibility.Collapsed;
++            range.Visibility = Ui.Selected(kind) != "frame" && Ui.Selected(rangeMode) == "range" ? Visibility.Visible : Visibility.Collapsed;
++            rangeMode.Visibility = Ui.Selected(kind) != "frame" ? Visibility.Visible : Visibility.Collapsed;
++            rangeSummary.Visibility = Ui.Selected(kind) != "frame" ? Visibility.Visible : Visibility.Collapsed;
++            if (Ui.Selected(rangeMode) == "work" && initialRange is not null)
++            { start.Value = initialRange.Start; length.Value = initialRange.Duration; }
++            else if (Ui.Selected(rangeMode) == "complete")
++            { start.Value = 0; length.Value = home && double.IsFinite(frameRate.Value) && frameRate.Value >= 1
++                ? (Math.Floor((duration - 1d / fps) * frameRate.Value + 1e-8) + 1) / frameRate.Value : duration; }
++            rangeSummary.Text = automaticDuration && Ui.Selected(rangeMode) == "complete" ? "包括原剧情的对白、语音与等待。"
++                : $"{start.Value:0.###}–{start.Value + length.Value:0.###} 秒 · {Math.Ceiling(length.Value * frameRate.Value - 1e-8):0} 帧";
+@@ -131,0 +141,2 @@ internal static class StudioExportDialog
++        void RangeSummary() { if (Ui.Selected(rangeMode) != "complete" || !automaticDuration) rangeSummary.Text = $"{start.Value:0.###}–{start.Value + length.Value:0.###} 秒 · {Math.Ceiling(length.Value * frameRate.Value - 1e-8):0} 帧"; }
++        start.ValueChanged += (_, _) => RangeSummary(); length.ValueChanged += (_, _) => RangeSummary(); frameRate.ValueChanged += (_, _) => { if (Ui.Selected(rangeMode) == "complete") Update(); else RangeSummary(); };
+@@ -184,2 +195,2 @@ internal static class StudioExportDialog
+-        var advanced = new Expander { Header = "画质与时间范围", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Ui.Stack(12, sampling, frameRate, rangeMode, range, overwrite) };
+-        var body = Ui.Stack(12, kind, scope, format, qualityBox, resolution, dimensions, resolutionStatus, advanced, pathRow, error);
++        var advanced = new Expander { Header = "高级画质与帧率", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Ui.Stack(12, sampling, frameRate, overwrite) };
++        var body = Ui.Stack(12, kind, scope, format, qualityBox, resolution, dimensions, resolutionStatus, rangeMode, range, rangeSummary, advanced, pathRow, error);
+@@ -213 +224 @@ internal static class StudioExportDialog
+-                    explicitRange ? length.Value : Math.Max(duration, 1d / 30), target, overwrite.IsChecked == true, automaticDuration && Ui.Selected(rangeMode) == "complete");
++                    explicitRange ? length.Value : Math.Max(duration, 1d / 30), target, overwrite.IsChecked == true, mode != "frame" && automaticDuration && Ui.Selected(rangeMode) == "complete");

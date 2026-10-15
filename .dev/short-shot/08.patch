@@ -1,0 +1,114 @@
+diff --git a/src/OurNotes.Director.WinUI/TimelineScrubber.cs b/src/OurNotes.Director.WinUI/TimelineScrubber.cs
+index bdad637..5e07044 100644
+--- a/src/OurNotes.Director.WinUI/TimelineScrubber.cs
++++ b/src/OurNotes.Director.WinUI/TimelineScrubber.cs
+@@ -3,2 +3,3 @@ namespace OurNotes.Director.WinUI;
+-/// <summary>Owned by the window thread. Keep only the latest position while replay is busy.</summary>
+-internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception> failed)
++/// <summary>Window-thread seek coordinator. Superseded work is cancelled at a complete native
++/// simulation step; only the newest target may publish a replacement image.</summary>
++internal sealed class TimelineScrubber(Func<double, CancellationToken, Task> seek, Action<Exception> failed)
+@@ -7,0 +9 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
++    CancellationTokenSource? active;
+@@ -9,0 +12 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
++
+@@ -13,0 +17 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
++        active?.Cancel();
+@@ -15 +19,2 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
+-        running = true; completion = DrainAsync();
++        running = true;
++        completion = DrainAsync();
+@@ -17 +22,2 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
+-    internal void Cancel() => pending = null;
++
++    internal void Cancel() { pending = null; active?.Cancel(); }
+@@ -18,0 +25 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
++
+@@ -24 +31,9 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
+-            while (pending is { } time) { pending = null; await seek(time); }
++            while (pending is { } time)
++            {
++                pending = null;
++                using var request = new CancellationTokenSource();
++                active = request;
++                try { await seek(time, request.Token); }
++                catch (OperationCanceledException) when (request.IsCancellationRequested) { }
++                finally { active = null; }
++            }
+@@ -26 +41 @@ internal sealed class TimelineScrubber(Func<double, Task> seek, Action<Exception
+-        catch (OperationCanceledException) { }
++        catch (OperationCanceledException) { pending = null; }
+diff --git a/tests/OurNotes.Director.Desktop.Tests/OurNotes.Director.Desktop.Tests.csproj b/tests/OurNotes.Director.Desktop.Tests/OurNotes.Director.Desktop.Tests.csproj
+index f897312..c95c2e2 100644
+--- a/tests/OurNotes.Director.Desktop.Tests/OurNotes.Director.Desktop.Tests.csproj
++++ b/tests/OurNotes.Director.Desktop.Tests/OurNotes.Director.Desktop.Tests.csproj
+@@ -3,0 +4 @@
++  <ItemGroup><Compile Include="../../src/OurNotes.Director.WinUI/TimelineScrubber.cs" Link="TimelineScrubber.cs" /></ItemGroup>
+diff --git a/tests/OurNotes.Director.Desktop.Tests/Program.cs b/tests/OurNotes.Director.Desktop.Tests/Program.cs
+index 39cd569..62c40ee 100644
+--- a/tests/OurNotes.Director.Desktop.Tests/Program.cs
++++ b/tests/OurNotes.Director.Desktop.Tests/Program.cs
+@@ -16,0 +17 @@ CreativeExportTests.Run(Check);
++await TimelineEditingTests.RunAsync(Check);
+diff --git a/tests/OurNotes.Director.Desktop.Tests/TimelineEditingTests.cs b/tests/OurNotes.Director.Desktop.Tests/TimelineEditingTests.cs
+new file mode 100644
+index 0000000..e07932b
+--- /dev/null
++++ b/tests/OurNotes.Director.Desktop.Tests/TimelineEditingTests.cs
+@@ -0,0 +1,56 @@
++using OurNotes.Director.Desktop.Core;
++using OurNotes.Director.WinUI;
++
++namespace OurNotes.Director.Desktop.Tests;
++
++static class TimelineEditingTests
++{
++    public static async Task RunAsync(Action<bool, string> check)
++    {
++        var full = TimelineRange.Full(4, 30);
++        check(full.FrameCount == 121 && full.End == 121d / 30, "Full range includes the displayed terminal pose exactly once");
++        var marked = full.MarkIn(1).MarkOut(2);
++        check(marked.StartFrame == 30 && marked.EndFrameExclusive == 61 && marked.Duration == 31d / 30,
++            "I/O marks define sample duration and include the marked out frame");
++        var one = full.MarkIn(2).MarkOut(2);
++        check(one.FrameCount == 1, "Marking the same frame in and out makes a valid one-frame range");
++        var clip = TimelineRange.ForClip(1, 1, 30, 4);
++        check(clip.StartFrame == 30 && clip.EndFrameExclusive == 60, "A clip's end is exclusive, unlike a marked out-frame");
++        check(marked.ClampTo(TimelineRange.Full(.5, 30)).FrameCount == 1,
++            "Shortening a project clamps existing marks without creating an invalid empty range");
++        check(TimelineRange.Full(36000, 120).EndFrameExclusive == 4320000,
++            "The maximum project boundary remains within the native ten-hour limit");
++        foreach (double bad in new[] { double.NaN, double.PositiveInfinity, -1d })
++        {
++            bool rejected = false;
++            try { full.MarkIn(bad); } catch (ArgumentOutOfRangeException) { rejected = true; }
++            check(rejected, "Invalid marker input is rejected without mutating an existing range");
++        }
++
++        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        bool cancelled = false; double reached = -1; Exception? failure = null;
++        var coordinator = new TimelineScrubber(async (at, token) =>
++        {
++            if (at == 100)
++            {
++                started.TrySetResult();
++                try { await Task.Delay(Timeout.Infinite, token); }
++                catch (OperationCanceledException) when (token.IsCancellationRequested) { cancelled = true; throw; }
++            }
++            token.ThrowIfCancellationRequested(); reached = at;
++        }, error => failure = error);
++        coordinator.Request(100);
++        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
++        coordinator.Request(2);
++        await coordinator.FlushAsync().WaitAsync(TimeSpan.FromSeconds(3));
++        check(cancelled && reached == 2 && failure is null && !coordinator.IsBusy,
++            "A newer scrub target interrupts old replay instead of waiting for it to finish");
++        reached = -1;
++        coordinator.Request(10); coordinator.Request(20); coordinator.Request(30);
++        await coordinator.FlushAsync().WaitAsync(TimeSpan.FromSeconds(3));
++        check(reached == 30, "Requests inside the input debounce execute only the latest target");
++        reached = -1; coordinator.Request(50); coordinator.Cancel();
++        await coordinator.FlushAsync().WaitAsync(TimeSpan.FromSeconds(3));
++        check(reached == -1 && !coordinator.IsBusy, "Leaving a workspace discards pending scrubs");
++    }
++}

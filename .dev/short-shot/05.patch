@@ -1,0 +1,50 @@
+diff --git a/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs b/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs
+index 89ce82e..cb4750a 100644
+--- a/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs
++++ b/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs
+@@ -34,0 +35,2 @@ internal sealed partial class CreativeScenePage
++        var follow = new ToggleMenuFlyoutItem { Text = "单击片段时定位画面", IsChecked = timeline.FollowSelection };
++        follow.Click += (_, _) => timeline.FollowSelection = follow.IsChecked; menu.Items.Add(follow);
+@@ -62,0 +65,3 @@ internal sealed partial class CreativeScenePage
++        TimelineRange ClipRange()=>TimelineRange.ForClip(N(clip,"start"),N(clip,"duration"),30,document.Duration);
++        menu.Items.Add(StudioMenus.Async("导出这一段…",()=>Safe(()=>ExportAsync("clip",false,ClipRange())),"\uE898"));
++        if(S(clip,"actor").Length>0)menu.Items.Add(StudioMenus.Async("仅导出这个角色的这一段…",()=>Safe(()=>ExportAsync("clip",true,ClipRange())),"\uE77B"));
+@@ -74 +79 @@ internal sealed partial class CreativeScenePage
+-        document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
++        document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);timeline.ClearRange();savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
+@@ -213 +218 @@ internal sealed partial class CreativeScenePage
+-    async Task SeekAsync(double seconds)
++    async Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
+@@ -216 +221,2 @@ internal sealed partial class CreativeScenePage
+-        if(viewport.HasCurrentSource)await viewport.SeekAsync(playhead);
++        cancellationToken.ThrowIfCancellationRequested();
++        if(viewport.HasCurrentSource)await viewport.SeekAsync(playhead,cancellationToken);
+@@ -222 +228 @@ internal sealed partial class CreativeScenePage
+-        if(playhead>=document.Duration-1d/30)await SeekAsync(0);viewport.Play();timeline.IsPlaying=true;
++        if(playhead<timeline.PlaybackStart||playhead>=timeline.PlaybackLastTime-1d/60)await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);timeline.IsPlaying=true;
+@@ -224 +230 @@ internal sealed partial class CreativeScenePage
+-    async Task ExportAsync(string kind,bool actorOnly=false)
++    async Task ExportAsync(string kind,bool actorOnly=false,TimelineRange? rangeOverride=null)
+@@ -239 +245 @@ internal sealed partial class CreativeScenePage
+-            preserveTransparency:document.Root["imported"]?.GetValue<bool>()!=true&&document.Canvas["transparent"]?.GetValue<bool>()!=false);
++            preserveTransparency:document.Root["imported"]?.GetValue<bool>()!=true&&document.Canvas["transparent"]?.GetValue<bool>()!=false, initialRange:rangeOverride??timeline.WorkRange);
+diff --git a/src/OurNotes.Director.WinUI/CreativeScenePage.cs b/src/OurNotes.Director.WinUI/CreativeScenePage.cs
+index e143431..83858ba 100644
+--- a/src/OurNotes.Director.WinUI/CreativeScenePage.cs
++++ b/src/OurNotes.Director.WinUI/CreativeScenePage.cs
+@@ -48 +48 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
+-        this.window=window;scrubber=new(SeekAsync,error=>ShowError(error.Message));document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();
++        this.window=window;scrubber=new((time,token)=>SeekAsync(time,token),error=>ShowError(error.Message));document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);savedText=document.ToJson();
+@@ -70 +70 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
+-            if(ended&&timeline.Repeat&&playhead>=document.Duration-.04)_=Safe(async()=>{await SeekAsync(0);viewport.Play();});
++            if(ended&&timeline.Repeat&&playhead>=timeline.PlaybackLastTime-.04)_=Safe(async()=>{await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);});
+diff --git a/src/OurNotes.Director.WinUI/HomeStudioPage.Workflow.cs b/src/OurNotes.Director.WinUI/HomeStudioPage.Workflow.cs
+index 59c1b6e..2875509 100644
+--- a/src/OurNotes.Director.WinUI/HomeStudioPage.Workflow.cs
++++ b/src/OurNotes.Director.WinUI/HomeStudioPage.Workflow.cs
+@@ -11,0 +12,2 @@ internal sealed partial class HomeStudioPage
++        var follow = new ToggleMenuFlyoutItem { Text = "单击片段时定位画面", IsChecked = timeline.FollowSelection };
++        follow.Click += (_, _) => timeline.FollowSelection = follow.IsChecked; menu.Items.Add(follow);
+@@ -45 +47 @@ internal sealed partial class HomeStudioPage
+-        Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead, initialKind: kind, isolated: true);
++        Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead, initialKind: kind, isolated: true, initialRange:timeline.WorkRange);
