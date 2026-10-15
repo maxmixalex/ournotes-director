@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Shapes;
 using OurNotes.Director.Desktop.Core;
 using Windows.System;
@@ -17,6 +18,16 @@ internal sealed partial class ClipTimeline
 
     void InitializeRange()
     {
+        // Canvas/Border do not take keyboard focus themselves. After a pointer
+        // selection, I/O and frame stepping must go to the timeline, not the
+        // inspector field which happened to be focused before the click.
+        PointerEventHandler focusTimeline = (_, args) =>
+        {
+            if (args.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                Focus(FocusState.Pointer);
+        };
+        canvas.AddHandler(PointerPressedEvent, focusTimeline, true);
+        ruler.AddHandler(PointerPressedEvent, focusTimeline, true);
         ToolTipService.SetToolTip(rangeButton, "设置预览 / 导出区间 · I 入点，O 出点；不会裁掉原剧情或丢失前面的状态");
         rangeButton.Click += (_, _) =>
         {
