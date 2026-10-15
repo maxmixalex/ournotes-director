@@ -13,12 +13,13 @@ internal static class StudioExportDialog
     internal static async Task ShowSceneAsync(MainWindow window, StudioSceneDocument scene, double playhead, bool singleActor = false, string initialKind = "clip", string? actorId = null, JsonNode? actorMetadata = null)
     {
         var document = scene.ToSceneDocument(); var output = document.Output;
+        bool transparencyRequired = actorId is not null || SceneContent.Read(document.Root["output"]?["content"]) == "characters";
         Func<string, int, Task<(int Width, int Height)>>? canvas = actorMetadata is null ? null
             : (codec, _) => Task.FromResult(SceneAssetExport.Canvas(actorMetadata, codec));
-        var settings = await ChooseAsync(window, actorId is not null ? "导出角色素材" : singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, actorId is not null ? "cineform" : output.Codec,
+        var settings = await ChooseAsync(window, actorId is not null ? "导出角色素材" : singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, transparencyRequired && output.Codec == "h264" || actorId is not null ? "cineform" : output.Codec,
             output.CineformQuality, scene.ResolvedDuration ?? scene.Duration, playhead, false, actorId is not null, actorId is not null ? 1 : output.Supersample,
             scene.DurationMode == StudioDurationMode.Automatic, nativeCanvas: canvas, initialKind: initialKind,
-            isolated: actorId is not null);
+            isolated: actorId is not null, transparencyRequired: transparencyRequired);
         if (settings is null) return;
         if (actorId is not null) document = SceneAssetExport.Isolate(document, actorId, settings.Width, settings.Height, settings.Supersample);
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
@@ -78,7 +79,7 @@ internal static class StudioExportDialog
 
     private static async Task<ExportSettings?> ChooseAsync(MainWindow window, string title, int width, int height,
         int fps, string codec, string quality, double duration, double playhead, bool home, bool selected,
-        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false)
+        int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false, bool transparencyRequired = false)
     {
         var kind = Ui.Choice("导出内容", [("frame", "图片 · 当前姿态 PNG"), ("clip", "动画 · 视频"), ("sequence", "动画 · PNG 帧序列")], initialKind);
         var scope = Ui.Choice("导出范围", [("scene", "完整主页"), ("selected", "选中的角色"), ("all", "每个角色分别导出"), ("both", "完整主页与全部角色")], isolated && home ? "selected" : "scene");
@@ -118,6 +119,10 @@ internal static class StudioExportDialog
             ((ComboBoxItem)scope.Items[2]).IsEnabled = video;
             ((ComboBoxItem)scope.Items[3]).IsEnabled = video;
             if (!video && (Ui.Selected(scope) is "all" or "both")) scope.SelectedIndex = isolated ? 1 : 0;
+            bool alpha = transparencyRequired || isolated || home && Ui.Selected(scope) != "scene";
+            var h264 = format.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "h264");
+            h264.IsEnabled = !alpha;
+            if (alpha && Ui.Selected(format) == "h264") format.SelectedIndex = 0;
             format.Visibility = video ? Visibility.Visible : Visibility.Collapsed;
             qualityBox.Visibility = video && Ui.Selected(format) == "cineform" ? Visibility.Visible : Visibility.Collapsed;
             range.Visibility = Ui.Selected(kind) == "frame" || automaticDuration && Ui.Selected(rangeMode) == "complete" ? Visibility.Collapsed : Visibility.Visible;
@@ -194,7 +199,7 @@ internal static class StudioExportDialog
                 string encoding = Ui.Selected(format);
                 RenderDimensions.Validate(checked((int)w.Value), checked((int)h.Value), int.Parse(Ui.Selected(sampling), CultureInfo.InvariantCulture));
                 if (mode == "clip") VideoEncoding.Validate(encoding, checked((int)w.Value), checked((int)h.Value), Ui.Selected(qualityBox));
-                if (mode == "clip" && encoding == "h264" && (isolated || home && selection != "scene")) throw new ArgumentException("透明角色请选择透明 MOV 或无损 MKV。");
+                if (mode == "clip" && encoding == "h264" && (transparencyRequired || isolated || home && selection != "scene")) throw new ArgumentException("透明角色请选择透明 MOV 或无损 MKV。");
                 bool explicitRange = mode != "frame" && !(automaticDuration && Ui.Selected(rangeMode) == "complete");
                 if (explicitRange && (!double.IsFinite(start.Value) || start.Value < 0 || !double.IsFinite(length.Value)
                     || length.Value <= 0 || start.Value + length.Value > 36000)) throw new ArgumentException("请检查导出的时间范围。");

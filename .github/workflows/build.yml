@@ -90,16 +90,22 @@ jobs:
         run: |
           python scripts/fetch-studio-fixture.py artifacts/real-scene-fixture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --home-fixture artifacts/studio-fixture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --scene-fixture artifacts/studio-fixture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $test = (Resolve-Path artifacts/native-tests/OurNotes.Director.NativeTests.exe).Path
+          Write-Host 'Writing home fixture'
+          & $test --home-fixture artifacts/studio-fixture
+          if ($LASTEXITCODE -ne 0) { throw "Home fixture failed: $LASTEXITCODE" }
+          Write-Host 'Writing scene fixture'
+          & $test --scene-fixture artifacts/studio-fixture
+          if ($LASTEXITCODE -ne 0) { throw "Scene fixture failed: $LASTEXITCODE" }
           $mesa = Get-ChildItem "$env:RUNNER_TEMP/msys64/ucrt64/bin/opengl32.dll", 'C:/msys64/ucrt64/bin/opengl32.dll', 'D:/a/_temp/msys64/ucrt64/bin/opengl32.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $mesa) { throw 'The test OpenGL driver was not installed.' }
           $env:OURNOTES_TEST_OPENGL = $mesa.FullName
           $env:OURNOTES_TEST_PACKAGE = (Resolve-Path artifacts/win-x64).Path
-          & ./artifacts/native-tests/OurNotes.Director.NativeTests.exe --creative-audio (Resolve-Path artifacts/win-x64/tools/ffmpeg.exe).Path artifacts/creative-audio
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host 'Checking parallel audio and drawing output'
+          $ffmpeg = (Resolve-Path artifacts/win-x64/tools/ffmpeg.exe).Path
+          & $test --creative-audio $ffmpeg artifacts/creative-audio
+          if ($LASTEXITCODE -ne 0) { throw "Creative audio checks failed: $LASTEXITCODE" }
+          Write-Host 'Opening actual workbench window'
           ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 240
       - name: Preserve actual window evidence
         if: always()
