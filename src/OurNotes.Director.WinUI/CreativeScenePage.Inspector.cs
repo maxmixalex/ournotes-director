@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media;
 using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Globalization.NumberFormatting;
 
 namespace OurNotes.Director.WinUI;
 
@@ -23,8 +24,12 @@ internal sealed partial class CreativeScenePage
         void Help(string text)=>inspector.Children.Add(new TextBlock{Text=text,TextWrapping=TextWrapping.Wrap,FontSize=11,Opacity=.7});
         NumberBox Field(string label,double value,double min,double max,Func<double,Task> changed)
         {
-            var input=new NumberBox{Header=label,Value=value,Minimum=min,Maximum=max,SmallChange=.1,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact};double original=value;
-            void Apply(){if(!Current()||!double.IsFinite(input.Value)||Math.Abs(input.Value-original)<.00001)return;double next=input.Value;original=next;_=Safe(()=>changed(next));}
+            bool seconds=label.Contains("秒",StringComparison.Ordinal);
+            var input=new NumberBox{Header=label,Value=value,Minimum=min,Maximum=max,SmallChange=seconds?1d/30:.1,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact};double original=value;
+            if(seconds)input.NumberFormatter=new DecimalFormatter{IntegerDigits=1,FractionDigits=3,
+                NumberRounder=new IncrementNumberRounder{Increment=.001,RoundingAlgorithm=RoundingAlgorithm.RoundHalfUp}};
+            // Display rounding alone must not produce a new edit on focus loss.
+            void Apply(){if(!Current()||!double.IsFinite(input.Value)||Math.Abs(input.Value-original)<(seconds ? 0.00051 : 0.00001))return;double next=input.Value;original=next;_=Safe(()=>changed(next));}
             input.LostFocus+=(_,_)=>Apply();input.KeyDown+=(_,args)=>{if(args.Key==Windows.System.VirtualKey.Enter){Apply();args.Handled=true;}};
             inspector.Children.Add(input);return input;
         }
@@ -37,7 +42,7 @@ internal sealed partial class CreativeScenePage
             var start=Field("开始（秒）",N(clip,"start"),0,36000,v=>EditAsync(()=>document.MoveClip(id,v)));
             if(document.CanResize(clip))
             {var duration=Field("持续（秒）",N(clip,"duration"),1d/30,36000,v=>EditAsync(()=>document.ResizeClip(id,v)));StudioLayout.PairFields(inspector,start,duration);}
-            else Help($"持续区间 {N(clip,"duration"):0.###} 秒。表情保持到下一次切换，原有动作保留原剧情演出。");
+            else Help($"持续 {N(clip,"duration"):0.###} 秒");
             if(kind=="voice")
             {
                 if(S(data,"cmd")=="Talk")
@@ -49,7 +54,7 @@ internal sealed partial class CreativeScenePage
                     Help("这里修改画面中的台词；原语音不变，不会自动生成配音。");
                 }
                 var binding=new ComboBox{Header="说话角色",HorizontalAlignment=HorizontalAlignment.Stretch};binding.Items.Add(new ComboBoxItem{Content="旁白",Tag=""});
-                foreach(var a in document.Actors.OfType<JsonObject>())binding.Items.Add(new ComboBoxItem{Content=CreativeScene.Text(a,"name",S(a,"id")),Tag=S(a,"id")});
+                foreach(var a in document.Actors.OfType<JsonObject>())binding.Items.Add(new ComboBoxItem{Content=DisplayNames.Character(CreativeScene.Text(a,"name",S(a,"id"))),Tag=S(a,"id")});
                 binding.SelectedItem=binding.Items.OfType<ComboBoxItem>().FirstOrDefault(item=>item.Tag?.ToString()==S(clip,"actor"))??binding.Items[0];
                 binding.SelectionChanged+=(_,_)=>{if(Current()){string actor=(binding.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"";_=Safe(()=>EditAsync(()=>{var c=document.Clip(id);c["actor"]=actor;c["data"]!["IgnoreLipSync"]=actor.Length==0;}));}};
                 inspector.Children.Add(binding);
@@ -224,7 +229,11 @@ internal sealed partial class CreativeScenePage
         check(document.Clips.OfType<JsonObject>().Any(c=>S(c,"kind")=="voice"),"原剧情对白成为可见语音片段");check(viewport.LastFrame is {Frame:93},"新工作台可定位真实剧情第93帧");
         var full=viewport.LastFrame!;var targets=full.Targets.ToArray();var lips=full.LipSync?.ToArray()??[];
         var dialogue=document.Clips.OfType<JsonObject>().First(c=>S(c,"kind")=="voice"&&N(c,"start")<=3.1&&N(c,"start")+N(c,"duration")>=3.1);
+        string beforeSelection=document.ToJson();
         timeline.Select(S(dialogue,"id"),true);timeline.FilterActor(S(dialogue,"actor"));timeline.FitSelection();
+        await LoadAssetsAsync();await Task.Delay(100);
+        check(timeline.IsSelectionVisible,"所选缩放后，整条对白片段实际位于可视范围内，不是只改变比例");
+        check(document.ToJson()==beforeSelection,"查看和格式化片段属性不会修改实际演出时序");
         string unchanged=document.ToJson();
         timeline.Position=3.1;timeline.MarkIn();timeline.Position=4.1;timeline.MarkOut();timeline.Position=playhead;
         check(timeline.WorkRange is {StartFrame:93,EndFrameExclusive:124,FrameCount:31}&&document.ToJson()==unchanged,

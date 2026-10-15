@@ -233,7 +233,27 @@ internal sealed partial class ClipTimeline : UserControl
         double start=clip?.Start??Math.Max(0,position-3),end=clip?.End??Math.Min(length,position+3);
         double span=Math.Max(1,end-start),padding=span*.12;
         scale=Math.Clamp((Math.Max(100,scroll.ActualWidth)-24)/(span+padding*2),zoom.Minimum,zoom.Maximum);
-        zoom.Value=scale;Draw();scroll.ChangeView(Math.Max(0,(start-padding)*scale),null,null);
+        fitPending=false;
+        zoom.Value=scale;Draw();
+        double offset=Math.Max(0,(start-padding)*scale),requestedScale=scale;
+        string? requestedSource=sourceKey,requestedSelection=selected;
+        // ChangeView otherwise clamps against the pre-zoom extent, leaving the
+        // selected clip outside the viewport even though its scale changed.
+        scroll.UpdateLayout();scroll.ChangeView(offset,null,null,true);Draw();
+        DispatcherQueue.TryEnqueue(()=>
+        {
+            if(sourceKey!=requestedSource||selected!=requestedSelection||Math.Abs(scale-requestedScale)>1e-8)return;
+            scroll.UpdateLayout();scroll.ChangeView(offset,null,null,true);Draw();
+        });
+    }
+    internal bool IsSelectionVisible
+    {
+        get
+        {
+            var clip=items.FirstOrDefault(c=>c.Id==selected);
+            return clip is not null&&clip.Start*scale>=scroll.HorizontalOffset-1
+                &&clip.End*scale<=scroll.HorizontalOffset+scroll.ViewportWidth+1;
+        }
     }
     public static string KindName(string kind) => kind switch
     { "motion" => "动作", "expression" => "表情", "voice" => "对白与语音", "transform" => "位置", "camera" => "镜头", "grade" => "画面", "setup" => "加载", "hold" => "停留", _ => "原有演出" };
