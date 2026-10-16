@@ -19,7 +19,7 @@ jobs:
           $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
           [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
           $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne '925e5f6e79d7f77dd5c20158e7dd4cb9875ee80b16ed876848e65709899fd66b') { throw 'Source patch transfer mismatch' }
+          if ($hash -ne '6e513cbbfde7f390df838910eb8e282f35011b44452d428c1ec5fcee4236d23a') { throw 'Source patch transfer mismatch' }
           git apply --check --unidiff-zero .dev/stage-edit.patch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git apply --unidiff-zero .dev/stage-edit.patch
@@ -27,10 +27,10 @@ jobs:
           git diff --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git rm .dev/stage-edit.patch
-          git add src tests DESKTOP.md
+          git add src
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Connect native stage, rack focus and spatial character controls to the workbench'
+          git commit -m 'Show selected stages immediately and expose material fades as normal UI choices'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git push origin HEAD:refs/heads/feat/windows-creative-editor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
