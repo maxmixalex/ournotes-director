@@ -25,6 +25,7 @@ internal sealed partial class CreativeScenePage
     {
         var menu=new MenuFlyout();menu.Items.Add(StudioMenus.Async("撤销",()=>Safe(()=>UndoAsync(false)),"\uE7A7",undo.Count>0,"Ctrl+Z"));
         menu.Items.Add(StudioMenus.Async("重做",()=>Safe(()=>UndoAsync(true)),"\uE7A6",redo.Count>0,"Ctrl+Y"));menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(StudioMenus.Async("舞台与站位…",()=>Safe(ChooseStageAsync),"\uE91B"));
         menu.Items.Add(StudioMenus.Async("添加停留片段",()=>Safe(()=>EditAsync(()=>{selectedClip=document.AddClip("","hold",playhead,1,new JsonObject{["cmd"]="Delay",["Frames"]=0},"停留");})),"\uE916"));
         menu.Items.Add(StudioMenus.Async("插入演出指令…",()=>Safe(()=>InsertNativeClipAsync(selectedActor,playhead)),"\uE943"));
         menu.Items.Add(StudioMenus.Async("粘贴场景 JSON…",()=>Safe(PasteAsync),"\uE943"));return menu;
@@ -43,6 +44,7 @@ internal sealed partial class CreativeScenePage
         var menu=new MenuFlyout();
         if(selectedActor is {Length:>0})
         {
+            AddStageMenuItems(menu,selectedActor);
             menu.Items.Add(StudioMenus.Async("导出当前姿态图片…",()=>Safe(()=>ExportAsync("frame",true)),"\uEB9F"));
             menu.Items.Add(StudioMenus.Async("导出角色演出…",()=>Safe(()=>ExportAsync("clip",true)),"\uE714"));menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(StudioMenus.Item("选择动作",()=>{assetKind.SelectedIndex=0;_=Safe(LoadAssetsAsync);}));
@@ -123,7 +125,11 @@ internal sealed partial class CreativeScenePage
     {
         if(!Directory.Exists(window.Settings.ArchivePath)){window.ShowResourceManager();return;}
         var chosen=await ResourcePicker.PickAsync(window,new("modelId","角色",CommandFieldKind.Text,""){LookupCommandId="model.list"},new Dictionary<string,string?>{["site"]=document.Site});if(chosen is null)return;
-        await EditAsync(()=>{selectedActor=document.AddActor(chosen.Value,chosen.RelatedValues.GetValueOrDefault("displayName")??chosen.Value);selectedClip=null;});
+        await AddActorResourceAsync(chosen.Value,chosen.RelatedValues.GetValueOrDefault("displayName")??chosen.Value);
+    }
+    async Task AddActorResourceAsync(string model,string name)
+    {
+        await EditAsync(()=>{selectedActor=document.AddActor(model,name);selectedClip=null;});
         viewport.SelectedTargetId=selectedActor;await LoadAssetsAsync();
     }
     async Task ImportVoiceAsync()
@@ -157,7 +163,7 @@ internal sealed partial class CreativeScenePage
         string? replacement=replaceAssetClip;replaceAssetClip=null;
         await EditAsync(()=>
         {
-            var data=new JsonObject{["cmd"]=kind=="expression"?"Expression":"Motion",["TargetName"]=actor,[kind=="expression"?"ExpressionName":"MotionName"]=row.Id,["MotionFadeIn"]=.15};
+            var data=new JsonObject{["cmd"]=kind=="expression"?"Expression":"Motion",["TargetName"]=actor,[kind=="expression"?"ExpressionName":"MotionName"]=row.Id,["MotionFadeIn"]=-1};
             var target=document.Clips.OfType<JsonObject>().FirstOrDefault(c=>S(c,"id")==replacement&&S(c,"kind")==kind&&S(c,"actor")==actor);
             if(target is not null){target["data"]=data;target["label"]=row.Title;target["sourcePerformance"]=false;target["duration"]=Math.Max(1d/30,Math.Round(duration*30)/30);selectedClip=S(target,"id");}
             else selectedClip=document.AddClip(actor,kind,at,Math.Max(1d/30,duration),data,row.Title);
@@ -173,6 +179,8 @@ internal sealed partial class CreativeScenePage
     {
         selectedActor=actor.Length==0?null:actor;selectedClip=replaceAssetClip=null;playhead=at;
         if(kind is "motion" or "expression" or "voice"){assetKind.SelectedIndex=kind=="motion"?0:kind=="expression"?1:2;RefreshActors();BuildInspector();await LoadAssetsAsync();return;}
+        if(kind=="focus"){await FocusActorAsync(actor);return;}
+        if(kind=="depth"){await EditAsync(()=>selectedClip=CreativeStaging.AddDepth(document,actor,at,-.5,.5));return;}
         if(kind=="transform"){var state=ActorTransform(actor);await AddTransformAsync(actor,state.X,state.Y,state.Height);return;}
         await EditAsync(()=>
         {

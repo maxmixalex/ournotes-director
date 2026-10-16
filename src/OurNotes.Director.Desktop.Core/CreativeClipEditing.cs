@@ -50,10 +50,11 @@ public static class CreativeClipEditing
     public static double DisplayEnd(CreativeScene source, JsonObject clip)
     {
         double end = N(clip, "start") + N(clip, "duration");
-        if (S(clip, "kind") != "expression") return end;
+        string kind = S(clip, "kind");
+        if (kind != "expression" && !(kind == "motion" && CreativeStaging.IsNativeActor(source,S(clip,"actor")))) return end;
         double start = N(clip, "start"); string actor = S(clip, "actor");
         return source.Clips.OfType<JsonObject>().Where(other => !ReferenceEquals(other, clip)
-                && S(other, "kind") == "expression" && S(other, "actor") == actor
+                && S(other, "kind") == kind && S(other, "actor") == actor
                 && other["enabled"]?.GetValue<bool>() != false && N(other, "start") > start)
             .Select(other => N(other, "start")).DefaultIfEmpty(source.Duration).Min();
     }

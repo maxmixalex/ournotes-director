@@ -15,7 +15,7 @@ internal sealed partial class CreativeScenePage
 {
     long inspectorVersion;
     readonly CheckBox recordTransform=new(){Content="在播放头记录位置变化",IsChecked=true};
-    bool IsSourceActor(string id)=>document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==id)?["fromSource"]?.GetValue<bool>()==true;
+    bool IsSourceActor(string id)=>CreativeStaging.IsNativeActor(document,id);
     void BuildInspector()
     {
         long version=++inspectorVersion;inspector.Children.Clear();var current=document;
@@ -43,6 +43,7 @@ internal sealed partial class CreativeScenePage
             if(document.CanResize(clip))
             {var duration=Field("持续（秒）",N(clip,"duration"),1d/30,36000,v=>EditAsync(()=>document.ResizeClip(id,v)));StudioLayout.PairFields(inspector,start,duration);}
             else Help($"持续 {N(clip,"duration"):0.###} 秒");
+            if(BuildStagingClipInspector(clip))return;
             if(kind=="voice")
             {
                 if(S(data,"cmd")=="Talk")
@@ -68,8 +69,9 @@ internal sealed partial class CreativeScenePage
             {
                 Help("素材："+data[kind=="motion"?"MotionName":"ExpressionName"]);
                 inspector.Children.Add(Button("替换素材…",()=>ChooseReplacementAsync(id),"\uE8D2"));
-                Field("切换渐变（秒）",N(data,"MotionFadeIn"),0,10,v=>EditAsync(()=>document.Clip(id)["data"]!["MotionFadeIn"]=v));
-                if(kind=="motion"&&clip["sourcePerformance"]?.GetValue<bool>()!=true)Help("片段结束时保持动作姿态；下一段动作开始时继续。声音和口型不受影响。");
+                Field("切换渐变（秒；-1 沿用素材）",N(data,"MotionFadeIn"),-1,10,v=>EditAsync(()=>document.Clip(id)["data"]!["MotionFadeIn"]=v));
+                if(kind=="motion"&&CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("按原作规则播放至下一次动作切换；不以剪短色块代替停止动作。");
+                if(kind=="motion"&&clip["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("片段结束时保持动作姿态；下一段动作开始时继续。声音和口型不受影响。");
             }
             else if(kind=="transform"&&data["Values"] is JsonObject values)
             {
@@ -108,7 +110,7 @@ internal sealed partial class CreativeScenePage
         var actorInfo=document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==selectedActor);
         if(actorInfo is not null)
         {
-            string id=S(actorInfo,"id");bool original=IsSourceActor(id);Heading(CreativeScene.Text(actorInfo,"name",id));var pose=ActorTransform(id);double w=N(document.Canvas,"width"),h=N(document.Canvas,"height");
+            string id=S(actorInfo,"id");bool original=IsSourceActor(id);Heading(DisplayNames.Character(CreativeScene.Text(actorInfo,"name",id)));if(BuildStagingActorInspector(actorInfo))return;var pose=ActorTransform(id);double w=N(document.Canvas,"width"),h=N(document.Canvas,"height");
             var x=Field(original?"水平偏移（像素）":"水平位置（像素）",pose.X*w,-100000,100000,v=>AddTransformAsync(id,v/w,pose.Y,pose.Height));
             var y=Field(original?"垂直偏移（像素）":"垂直位置（像素）",pose.Y*h,-100000,100000,v=>AddTransformAsync(id,pose.X,v/h,pose.Height));StudioLayout.PairFields(inspector,x,y);
             Field(original?"缩放（百分比）":"角色高度（百分比）",pose.Height*100,1,2000,v=>AddTransformAsync(id,pose.X,pose.Y,v/100));inspector.Children.Add(recordTransform);
@@ -116,7 +118,7 @@ internal sealed partial class CreativeScenePage
             inspector.Children.Add(Ui.Row(6,Button("当前姿态图片",()=>ExportAsync("frame",true),"\uEB9F"),Button("角色动画",()=>ExportAsync("clip",true),"\uE714")));
             return;
         }
-        Heading("场景");Help("添加角色，把动作、表情或语音拖到时间轴。场景长度随片段延伸。");
+        Heading("场景");inspector.Children.Add(Button(document.Root["staging"] is null?"选择舞台…":"更换舞台…",ChooseStageAsync,"\uE91B"));Help("添加角色，把动作、表情或语音拖到时间轴。场景长度随片段延伸。");
         var cw=Field("画布宽度",N(document.Canvas,"width",1920),16,32768,v=>EditAsync(()=>document.Canvas["width"]=(int)Math.Round(v)));
         var ch=Field("画布高度",N(document.Canvas,"height",1080),16,32768,v=>EditAsync(()=>document.Canvas["height"]=(int)Math.Round(v)));StudioLayout.PairFields(inspector,cw,ch);
         var presets=new ComboBox{PlaceholderText="常用画布",HorizontalAlignment=HorizontalAlignment.Stretch};
@@ -128,7 +130,7 @@ internal sealed partial class CreativeScenePage
         content.SelectedIndex=SceneContent.Read(document.Canvas["content"])=="characters"?1:0;
         content.SelectionChanged+=(_,_)=>{if(Current())_=Safe(()=>EditAsync(()=>document.Canvas["content"]=(content.SelectedItem as ComboBoxItem)!.Tag!.ToString()));};
         inspector.Children.Add(content);
-        if(document.Root["imported"]?.GetValue<bool>()!=true&&content.SelectedIndex==0)
+        if(document.Root["imported"]?.GetValue<bool>()!=true&&document.Root["staging"] is null&&content.SelectedIndex==0)
         {
             var transparent=new CheckBox{Content="画布底色透明",IsChecked=document.Canvas["transparent"]?.GetValue<bool>()!=false};
             transparent.Click+=(_,_)=>{if(Current())_=Safe(()=>EditAsync(()=>document.Canvas["transparent"]=transparent.IsChecked==true));};inspector.Children.Add(transparent);
@@ -248,5 +250,6 @@ internal sealed partial class CreativeScenePage
         check((cutout.LipSync??[]).Select(v=>(v.TargetId,v.MouthOpen)).SequenceEqual(lips.Select(v=>(v.TargetId,v.MouthOpen))),"移除背景不改变角色口型采样时间");
         selectedClip=null;selectedActor=null;Refresh();
         await App.CaptureCheckpointAsync("transparent-scene");
+        await RunStagingSmokeAsync(check,fixture);
     }
 }

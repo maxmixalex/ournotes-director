@@ -61,6 +61,13 @@ public sealed class CreativeScene
         if(string.IsNullOrWhiteSpace(model))throw new ArgumentException("请选择角色模型。");
         string id="actor_"+Id()[..8];
         Actors.Add((JsonNode)new JsonObject { ["id"]=id,["model"]=model,["name"]=name,["x"]=.5,["y"]=.5,["height"]=.95,["opacity"]=1 });
+        if(Root["staging"] is not null)
+        {
+            var used=Actors.OfType<JsonObject>().Where(a=>a["stageSlot"] is not null).Select(a=>(int)Number(a,"stageSlot")).ToHashSet();
+            int slot=new[]{3,7,5,1,9}.FirstOrDefault(p=>!used.Contains(p));
+            if(slot==0){Actors.Remove(Actor(id));throw new InvalidOperationException("原作舞台的五个站位已满。");}
+            Actor(id)["stageSlot"]=slot;
+        }
         return id;
     }
     static JsonObject NewClip(string actor,string kind,double start,double duration,JsonObject data,string label) => new()
@@ -81,16 +88,16 @@ public sealed class CreativeScene
         var clip=Clip(id); var old=clip["start"]?.DeepClone(); clip["start"]=Math.Round(seconds*30)/30;
         try { Validate(); } catch { clip["start"]=old; throw; }
     }
-    public bool CanResize(JsonObject clip) => Text(clip,"kind")=="hold" ||
+    public bool CanResize(JsonObject clip) => Text(clip,"kind") is "hold" or "focus" or "depth" ||
         Text(clip["data"]!.AsObject(),"cmd").StartsWith("Director.",StringComparison.Ordinal) || clip["data"]?["AudioPath"] is not null ||
-        Text(clip,"kind")=="motion" && clip["sourcePerformance"]?.GetValue<bool>()!=true;
+        Text(clip,"kind")=="motion" && clip["sourcePerformance"]?.GetValue<bool>()!=true && !CreativeStaging.IsNativeActor(this,Text(clip,"actor"));
     public void ResizeClip(string id,double seconds)
     {
         if(!double.IsFinite(seconds)||seconds<=0)throw new ArgumentException("持续时间无效。");
         var clip=Clip(id); if(!CanResize(clip))throw new InvalidOperationException("这段原有演出的时长由原始指令决定；请替换素材或编辑高级参数。");
         var before=(JsonObject)clip.DeepClone(); var data=clip["data"]!.AsObject(); seconds=Math.Max(1d/30,Math.Round(seconds*30)/30);
         if(data["AudioPath"] is not null)data["AudioDuration"]=seconds;
-        else if(Text(data,"cmd").StartsWith("Director.",StringComparison.Ordinal))data["Duration"]=seconds;
+        else if(Text(data,"cmd").StartsWith("Director.",StringComparison.Ordinal)||Text(clip,"kind") is "focus" or "depth")data["Duration"]=seconds;
         clip["duration"]=seconds;
         try { Validate(); } catch { int index=Clips.IndexOf(clip); Clips[index]=before; throw; }
     }
@@ -130,6 +137,7 @@ public sealed class CreativeScene
             }
             DirectorValidation.Check(AdvProgram.Row(data,"clip "+Text(c,"id")));
         }
+        CreativeStaging.Validate(this);
     }
     public JsonObject Compile()
     {
@@ -139,14 +147,24 @@ public sealed class CreativeScene
         if(Canvas["content"] is not null)output["content"]=SceneContent.Read(Canvas["content"]);
         var rows=new List<(int At,int Priority,int Order,JsonObject Row)>();int order=0;
         void Add(JsonObject row,int at,int priority=0){row["AtFrame"]=at;rows.Add((at,priority,order++,row));}
-        if(Root["imported"]?.GetValue<bool>()!=true)
+        if(Root["imported"]?.GetValue<bool>()!=true&&Root["staging"] is null)
         {
             Add(new(){["cmd"]="Director.Scene",["Values"]=new JsonObject{["stageVisible"]=false,["background"]=Canvas["transparent"]?.GetValue<bool>()!=false?new JsonArray(0,0,0,0):new JsonArray(0,0,0,1)}},0);
             Add(new(){["cmd"]="Director.Camera",["Values"]=new JsonObject{["framing"]=new JsonObject{["x"]=0,["y"]=0,["zoom"]=1,["roll"]=0}}},0);
         }
+        if(Root["staging"] is JsonObject staging)
+            Add(new(){["cmd"]="Stage",["TargetAssetName"]=staging["stage"]!.ToString(),["Duration"]=0},0);
         foreach(var a in Actors.OfType<JsonObject>().Where(a=>a["fromSource"]?.GetValue<bool>()!=true))
         {
             string id=Text(a,"id");Add(new(){["cmd"]="Character",["TargetName"]=id,["Model"]=Text(a,"model")},0);
+            if(a["stageSlot"] is not null)
+            {
+                int slot=(int)Number(a,"stageSlot");
+                Add(new(){["cmd"]="In",["TargetName"]=id,["PositionType"]=slot,["Duration"]=0},0);
+                if(Number(a,"depth")!=0)Add(new(){["cmd"]="MoveToDirection",["TargetName"]=id,["PositionType"]=slot,["Duration"]=0,["Parameter1"]=0,["Parameter2"]=0,["Parameter3"]=Number(a,"depth")},0);
+                if(Text(a,"layer") is "Forward" or "Back")Add(new(){["cmd"]=Text(a,"layer"),["TargetName"]=id,["PositionType"]=slot},0);
+                continue;
+            }
             Add(new(){["cmd"]="Director.Actor",["TargetName"]=id,["Space"]="screen",["Values"]=new JsonObject{
                 ["position"]=new JsonArray(Number(a,"x",.5),Number(a,"y",.5)),["height"]=Number(a,"height",.95),["opacity"]=Number(a,"opacity",1),
                 ["visible"]=true,["animation"]="director",["physics"]=true,["blink"]=true,["breath"]=true,["loop"]=true}},0);
@@ -156,9 +174,9 @@ public sealed class CreativeScene
             var row=(JsonObject)c["data"]!.DeepClone();string actor=Text(c,"actor"),kind=Text(c,"kind");
             if(actor.Length>0)row["TargetName"]=actor;
             int start=(int)Math.Round(Number(c,"start")*30),end=(int)Math.Round((Number(c,"start")+Number(c,"duration"))*30);
-            bool authoredMotion=kind=="motion"&&c["sourcePerformance"]?.GetValue<bool>()!=true;
+            bool authoredMotion=kind=="motion"&&c["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(this,actor);
             if(authoredMotion)Add(new(){["cmd"]="Director.Actor",["TargetName"]=actor,["Values"]=new JsonObject{["speed"]=1}},start);
-            Add(row,start);
+            foreach(var expanded in CreativeStaging.Expand(this,c))Add(expanded,start);
             if(authoredMotion)
             {
                 bool replaced=Clips.OfType<JsonObject>().Any(other=>!ReferenceEquals(other,c)&&Enabled(other)&&Text(other,"kind")=="motion"&&Text(other,"actor")==actor&&Number(other,"start")>=Number(c,"start")&&Number(other,"start")<end/30d);
@@ -217,5 +235,5 @@ public sealed class CreativeScene
         string field=language switch{"ja"=>"japanese","en"=>"english","zh-Hant"=>"traditionalChinese",_=>"simplifiedChinese"};
         return root["text"]?[Text(row,"AdvTextID")]?[field]?.ToString()??"语音";
     }
-    public static string Kind(string command)=>command switch {"Talk" or "Voice"=>"voice","Motion" or "MotionLoop"=>"motion","Expression"=>"expression", "Director.Actor" or "In" or "Out"=>"transform","Director.Camera" or "Pan" or "Zoom"=>"camera","Director.Scene" or "PostEffect"=>"grade","Character"=>"setup",_=>"source"};
+    public static string Kind(string command)=>command switch {"Talk" or "Voice"=>"voice","Motion" or "MotionLoop"=>"motion","Expression"=>"expression", "Director.Actor" or "In" or "Out"=>"transform","Stage"=>"stage","DoF" or "Focus"=>"focus","MoveToDirection" or "MoveToForward" or "MoveToBack"=>"depth","Director.Camera" or "Pan" or "Zoom"=>"camera","Director.Scene" or "PostEffect"=>"grade","Character"=>"setup",_=>"source"};
 }
