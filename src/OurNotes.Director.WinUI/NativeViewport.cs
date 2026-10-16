@@ -57,6 +57,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     public event EventHandler<PreviewDrag>? ObjectDragged;
     public event EventHandler<PreviewScale>? ObjectScaled;
     public PreviewFrame? LastFrame=>Volatile.Read(ref lastFrame);
+    public Func<PreviewTarget,string>? TargetLabel { get; set; }
     public bool IsPlaying=>session.IsPlaying;
     public bool HasCurrentSource{get;private set;}
     public string? SelectedTargetId
@@ -306,13 +307,14 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(!HasCurrentSource){HideSelection();return;}
         var target=LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
         if(target is null||imageRect.Width<=0){HideSelection();return;}
-        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible)return;
+        string label=TargetLabel?.Invoke(target)??target.Label;
+        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible&&selectionText.Text==label)return;
         displayedTarget=target;selectionRect=imageRect;overlay.Visibility=Visibility.Visible;
         double x=imageRect.X+target.X*imageRect.Width,y=imageRect.Y+target.Y*imageRect.Height;
         double width=target.Width*imageRect.Width,height=target.Height*imageRect.Height;
         outline.Width=width;outline.Height=height;
         Canvas.SetLeft(outline,x);Canvas.SetTop(outline,y);
-        if(selectionText.Text!=target.Label)selectionText.Text=target.Label;
+        if(selectionText.Text!=label)selectionText.Text=label;
         Canvas.SetLeft(selectionLabel,Math.Clamp(x,0,Math.Max(0,surface.ActualWidth-80)));
         Canvas.SetTop(selectionLabel,Math.Max(0,y-26));
         for(int i=0;i<handles.Length;i++)

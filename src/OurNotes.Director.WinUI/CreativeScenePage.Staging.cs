@@ -62,7 +62,11 @@ internal sealed partial class CreativeScenePage
             else { CreativeStaging.SetStage(document, stage.Key, stage.Label); selectedActor = selectedClip = null; }
         });
     }
-    Task FocusActorAsync(string actor) => EditAsync(() => { selectedActor = actor; selectedClip = CreativeFocusEditing.FocusHere(document, actor, playhead); });
+    async Task FocusActorAsync(string actor)
+    {
+        await EditAsync(() => { selectedActor = actor; selectedClip = CreativeFocusEditing.FocusHere(document, actor, playhead); });
+        timeline.RevealSelection();
+    }
     void AddStageMenuItems(MenuFlyout menu, string actor)
     {
         if (!CreativeStaging.Slots.Contains(CreativeStaging.SlotAt(document, actor, playhead))) return;
@@ -236,6 +240,9 @@ internal sealed partial class CreativeScenePage
         check(document.Clips.OfType<JsonObject>().Count(c=>S(c,"kind")=="focus")==2,"界面处理函数建立两个可编辑焦点片段");
         check(viewport.LastFrame?.ActorAnimations?.Any(a=>a.TargetId==first&&a.Motion==motion&&a.Expression==expression)==true,
             "原作站位上的动作和表情经过素材栏插入后仍实际生效");
+        timeline.RevealSelection();
+        await Task.Delay(40);
+        check(timeline.IsSelectedLaneVisible,"新增焦点片段的轨道进入可见区域，不留在屏幕下方");
         await App.CaptureCheckpointAsync("authored-stage-rear-focus");
         check(inspector.Children.OfType<ComboBox>().Any(b=>b.Header?.ToString()=="镜头方式"),"焦点人物、镜头方式、虚化程度均直接在检查器编辑，无需手写 JSON");
         string focused = selectedClip!;

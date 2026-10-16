@@ -69,6 +69,11 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             bool ended=playingLast&&!frame.IsPlaying;playingLast=frame.IsPlaying;
             if(ended&&timeline.Repeat&&playhead>=timeline.PlaybackLastTime-.04)_=Safe(async()=>{await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);});
         };
+        viewport.TargetLabel=target=>
+        {
+            var actor=document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==target.Id);
+            return actor is null?target.Label:DisplayNames.Character(CreativeScene.Text(actor,"name",target.Label));
+        };
         viewport.Failed+=(_,error)=>ShowError(error.Message);viewport.ContextMenuFactory=ActorMenu;
         timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>{viewport.Pause();timeline.Position=seconds;scrubber.Request(seconds);};
         timeline.ClipSelected+=id=>

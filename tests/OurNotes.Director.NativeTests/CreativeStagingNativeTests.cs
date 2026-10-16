@@ -75,6 +75,7 @@ static class CreativeStagingNativeTests
             Check(scene.Source["adv"] is null, "The authored scene does not require importing an original story");
             report["mouthRange"] = mouth.Max() - mouth.Min(); report["modelA"] = models[0]; report["modelB"] = models[1]; report["stage"] = stage.Key;
             report["comparisonScope"] = "native interpreter equivalence; not a pixel comparison against a recording of the original game";
+            CreativeStagingExports.Run(archive, core, ffmpeg, project, output, a, Check);
             report["ok"] = true; Console.WriteLine($"Passed {checks.Count} real native staging checks."); return 0;
         }
         finally { File.WriteAllText(Path.Combine(output, "report.json"), report.ToJsonString()); }
