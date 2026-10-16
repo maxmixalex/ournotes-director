@@ -1,0 +1,142 @@
+diff --git a/DESKTOP.md b/DESKTOP.md
+index ca994db..af32de8 100644
+--- a/DESKTOP.md
++++ b/DESKTOP.md
+@@ -65,0 +66,13 @@
++
++
++## 从空白制作双人前后景演出
++
++在场景工作台的新建空白画布中点“选择舞台…”（也可从“编辑 → 舞台与站位…”进入），然后添加两个角色。角色会使用该舞台的原作站位，不需要选择原剧情或粘贴 JSON。
++
++选中角色，可选择左侧、中央、右侧等初始站位，用“初始前后距离”把人物放近或放远；这是实际空间位移，而不是只改立绘大小。画布拖动仍可微调画面构图。同一深度的遮挡顺序单独控制，不与距离混用。
++
++点“对焦此人”或右键角色选择同名操作，在播放头建立焦点片段。选择片段后，可直接更换对焦人物、虚化程度、过渡时间与曲线。“保持构图，只转移焦点”使用原生分层 DoF；“原作镜头对焦”则使用舞台对应的 Focus 景别与相机运动。两者不会混为同一效果。
++
++动作和表情从常驻素材栏加入，声音从归档搜索或本地声音文件加入。舞台人物继续走原作动画路径，不会因插入动作而脱离站位和景深图层。切换渐变的 -1 表示沿用素材；动作按原生规则执行至下一动作，不以缩窄色块伪装裁剪。
++
++保存场景 JSON 会保留舞台、站位、景深目标及原生参数。当前姿态图片和单角色动画仍从角色右键导出。此工作流的测试比较的是编辑模型与独立原生指令的渲染一致性，不宣称已逐像素对照原游戏录像或完成物理音频设备听音验收。
+diff --git a/src/OurNotes.Director.Core/CreativeScene.cs b/src/OurNotes.Director.Core/CreativeScene.cs
+index 275da1b..6fc482a 100644
+--- a/src/OurNotes.Director.Core/CreativeScene.cs
++++ b/src/OurNotes.Director.Core/CreativeScene.cs
+@@ -63,0 +64,7 @@ public sealed class CreativeScene
++        if(Root["staging"] is not null)
++        {
++            var used=Actors.OfType<JsonObject>().Where(a=>a["stageSlot"] is not null).Select(a=>(int)Number(a,"stageSlot")).ToHashSet();
++            int slot=new[]{3,7,5,1,9}.FirstOrDefault(p=>!used.Contains(p));
++            if(slot==0){Actors.Remove(Actor(id));throw new InvalidOperationException("原作舞台的五个站位已满。");}
++            Actor(id)["stageSlot"]=slot;
++        }
+@@ -84 +91 @@ public sealed class CreativeScene
+-    public bool CanResize(JsonObject clip) => Text(clip,"kind")=="hold" ||
++    public bool CanResize(JsonObject clip) => Text(clip,"kind") is "hold" or "focus" or "depth" ||
+@@ -86 +93 @@ public sealed class CreativeScene
+-        Text(clip,"kind")=="motion" && clip["sourcePerformance"]?.GetValue<bool>()!=true;
++        Text(clip,"kind")=="motion" && clip["sourcePerformance"]?.GetValue<bool>()!=true && !CreativeStaging.IsNativeActor(this,Text(clip,"actor"));
+@@ -93 +100 @@ public sealed class CreativeScene
+-        else if(Text(data,"cmd").StartsWith("Director.",StringComparison.Ordinal))data["Duration"]=seconds;
++        else if(Text(data,"cmd").StartsWith("Director.",StringComparison.Ordinal)||Text(clip,"kind") is "focus" or "depth")data["Duration"]=seconds;
+@@ -132,0 +140 @@ public sealed class CreativeScene
++        CreativeStaging.Validate(this);
+@@ -142 +150 @@ public sealed class CreativeScene
+-        if(Root["imported"]?.GetValue<bool>()!=true)
++        if(Root["imported"]?.GetValue<bool>()!=true&&Root["staging"] is null)
+@@ -146,0 +155,2 @@ public sealed class CreativeScene
++        if(Root["staging"] is JsonObject staging)
++            Add(new(){["cmd"]="Stage",["TargetAssetName"]=staging["stage"]!.ToString(),["Duration"]=0},0);
+@@ -149,0 +160,8 @@ public sealed class CreativeScene
++            if(a["stageSlot"] is not null)
++            {
++                int slot=(int)Number(a,"stageSlot");
++                Add(new(){["cmd"]="In",["TargetName"]=id,["PositionType"]=slot,["Duration"]=0},0);
++                if(Number(a,"depth")!=0)Add(new(){["cmd"]="MoveToDirection",["TargetName"]=id,["PositionType"]=slot,["Duration"]=0,["Parameter1"]=0,["Parameter2"]=0,["Parameter3"]=Number(a,"depth")},0);
++                if(Text(a,"layer") is "Forward" or "Back")Add(new(){["cmd"]=Text(a,"layer"),["TargetName"]=id,["PositionType"]=slot},0);
++                continue;
++            }
+@@ -159 +177 @@ public sealed class CreativeScene
+-            bool authoredMotion=kind=="motion"&&c["sourcePerformance"]?.GetValue<bool>()!=true;
++            bool authoredMotion=kind=="motion"&&c["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(this,actor);
+@@ -161 +179 @@ public sealed class CreativeScene
+-            Add(row,start);
++            foreach(var expanded in CreativeStaging.Expand(this,c))Add(expanded,start);
+@@ -220 +238 @@ public sealed class CreativeScene
+-    public static string Kind(string command)=>command switch {"Talk" or "Voice"=>"voice","Motion" or "MotionLoop"=>"motion","Expression"=>"expression", "Director.Actor" or "In" or "Out"=>"transform","Director.Camera" or "Pan" or "Zoom"=>"camera","Director.Scene" or "PostEffect"=>"grade","Character"=>"setup",_=>"source"};
++    public static string Kind(string command)=>command switch {"Talk" or "Voice"=>"voice","Motion" or "MotionLoop"=>"motion","Expression"=>"expression", "Director.Actor" or "In" or "Out"=>"transform","Stage"=>"stage","DoF" or "Focus"=>"focus","MoveToDirection" or "MoveToForward" or "MoveToBack"=>"depth","Director.Camera" or "Pan" or "Zoom"=>"camera","Director.Scene" or "PostEffect"=>"grade","Character"=>"setup",_=>"source"};
+diff --git a/src/OurNotes.Director.Desktop.Core/CreativeClipEditing.cs b/src/OurNotes.Director.Desktop.Core/CreativeClipEditing.cs
+index 4d17b4b..75dabfb 100644
+--- a/src/OurNotes.Director.Desktop.Core/CreativeClipEditing.cs
++++ b/src/OurNotes.Director.Desktop.Core/CreativeClipEditing.cs
+@@ -53 +53,2 @@ public static class CreativeClipEditing
+-        if (S(clip, "kind") != "expression") return end;
++        string kind = S(clip, "kind");
++        if (kind != "expression" && !(kind == "motion" && CreativeStaging.IsNativeActor(source,S(clip,"actor")))) return end;
+@@ -56 +57 @@ public static class CreativeClipEditing
+-                && S(other, "kind") == "expression" && S(other, "actor") == actor
++                && S(other, "kind") == kind && S(other, "actor") == actor
+diff --git a/src/OurNotes.Director.WinUI/ClipTimeline.cs b/src/OurNotes.Director.WinUI/ClipTimeline.cs
+index 2ff8adb..bb1c5a2 100644
+--- a/src/OurNotes.Director.WinUI/ClipTimeline.cs
++++ b/src/OurNotes.Director.WinUI/ClipTimeline.cs
+@@ -259 +259 @@ internal sealed partial class ClipTimeline : UserControl
+-    { "motion" => "动作", "expression" => "表情", "voice" => "对白与语音", "transform" => "位置", "camera" => "镜头", "grade" => "画面", "setup" => "加载", "hold" => "停留", _ => "原有演出" };
++    { "motion" => "动作", "expression" => "表情", "voice" => "对白与语音", "transform" => "位置", "camera" => "镜头", "grade" => "画面", "setup" => "加载", "focus" => "焦点", "depth" => "前后移动", "stage" => "舞台", "hold" => "停留", _ => "原有演出" };
+diff --git a/src/OurNotes.Director.WinUI/CreativeScenePage.Inspector.cs b/src/OurNotes.Director.WinUI/CreativeScenePage.Inspector.cs
+index 0730869..ae9da21 100644
+--- a/src/OurNotes.Director.WinUI/CreativeScenePage.Inspector.cs
++++ b/src/OurNotes.Director.WinUI/CreativeScenePage.Inspector.cs
+@@ -18 +18 @@ internal sealed partial class CreativeScenePage
+-    bool IsSourceActor(string id)=>document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==id)?["fromSource"]?.GetValue<bool>()==true;
++    bool IsSourceActor(string id)=>CreativeStaging.IsNativeActor(document,id);
+@@ -45,0 +46 @@ internal sealed partial class CreativeScenePage
++            if(BuildStagingClipInspector(clip))return;
+@@ -71,2 +72,3 @@ internal sealed partial class CreativeScenePage
+-                Field("切换渐变（秒）",N(data,"MotionFadeIn"),0,10,v=>EditAsync(()=>document.Clip(id)["data"]!["MotionFadeIn"]=v));
+-                if(kind=="motion"&&clip["sourcePerformance"]?.GetValue<bool>()!=true)Help("片段结束时保持动作姿态；下一段动作开始时继续。声音和口型不受影响。");
++                Field("切换渐变（秒；-1 沿用素材）",N(data,"MotionFadeIn"),-1,10,v=>EditAsync(()=>document.Clip(id)["data"]!["MotionFadeIn"]=v));
++                if(kind=="motion"&&CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("按原作规则播放至下一次动作切换；不以剪短色块代替停止动作。");
++                if(kind=="motion"&&clip["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("片段结束时保持动作姿态；下一段动作开始时继续。声音和口型不受影响。");
+@@ -111 +113 @@ internal sealed partial class CreativeScenePage
+-            string id=S(actorInfo,"id");bool original=IsSourceActor(id);Heading(CreativeScene.Text(actorInfo,"name",id));var pose=ActorTransform(id);double w=N(document.Canvas,"width"),h=N(document.Canvas,"height");
++            string id=S(actorInfo,"id");bool original=IsSourceActor(id);Heading(DisplayNames.Character(CreativeScene.Text(actorInfo,"name",id)));if(BuildStagingActorInspector(actorInfo))return;var pose=ActorTransform(id);double w=N(document.Canvas,"width"),h=N(document.Canvas,"height");
+@@ -119 +121 @@ internal sealed partial class CreativeScenePage
+-        Heading("场景");Help("添加角色，把动作、表情或语音拖到时间轴。场景长度随片段延伸。");
++        Heading("场景");inspector.Children.Add(Button(document.Root["staging"] is null?"选择舞台…":"更换舞台…",ChooseStageAsync,"\uE91B"));Help("添加角色，把动作、表情或语音拖到时间轴。场景长度随片段延伸。");
+@@ -131 +133 @@ internal sealed partial class CreativeScenePage
+-        if(document.Root["imported"]?.GetValue<bool>()!=true&&content.SelectedIndex==0)
++        if(document.Root["imported"]?.GetValue<bool>()!=true&&document.Root["staging"] is null&&content.SelectedIndex==0)
+@@ -250,0 +253 @@ internal sealed partial class CreativeScenePage
++        await RunStagingSmokeAsync(check,fixture);
+diff --git a/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs b/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs
+index cb4750a..4aaabcb 100644
+--- a/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs
++++ b/src/OurNotes.Director.WinUI/CreativeScenePage.Workflow.cs
+@@ -27,0 +28 @@ internal sealed partial class CreativeScenePage
++        menu.Items.Add(StudioMenus.Async("舞台与站位…",()=>Safe(ChooseStageAsync),"\uE91B"));
+@@ -45,0 +47 @@ internal sealed partial class CreativeScenePage
++            AddStageMenuItems(menu,selectedActor);
+@@ -126 +128,5 @@ internal sealed partial class CreativeScenePage
+-        await EditAsync(()=>{selectedActor=document.AddActor(chosen.Value,chosen.RelatedValues.GetValueOrDefault("displayName")??chosen.Value);selectedClip=null;});
++        await AddActorResourceAsync(chosen.Value,chosen.RelatedValues.GetValueOrDefault("displayName")??chosen.Value);
++    }
++    async Task AddActorResourceAsync(string model,string name)
++    {
++        await EditAsync(()=>{selectedActor=document.AddActor(model,name);selectedClip=null;});
+@@ -160 +166 @@ internal sealed partial class CreativeScenePage
+-            var data=new JsonObject{["cmd"]=kind=="expression"?"Expression":"Motion",["TargetName"]=actor,[kind=="expression"?"ExpressionName":"MotionName"]=row.Id,["MotionFadeIn"]=.15};
++            var data=new JsonObject{["cmd"]=kind=="expression"?"Expression":"Motion",["TargetName"]=actor,[kind=="expression"?"ExpressionName":"MotionName"]=row.Id,["MotionFadeIn"]=-1};
+@@ -175,0 +182,2 @@ internal sealed partial class CreativeScenePage
++        if(kind=="focus"){await FocusActorAsync(actor);return;}
++        if(kind=="depth"){await EditAsync(()=>selectedClip=CreativeStaging.AddDepth(document,actor,at,-.5,.5));return;}
+diff --git a/tests/OurNotes.Director.Desktop.Tests/Program.cs b/tests/OurNotes.Director.Desktop.Tests/Program.cs
+index 62c40ee..e58d7eb 100644
+--- a/tests/OurNotes.Director.Desktop.Tests/Program.cs
++++ b/tests/OurNotes.Director.Desktop.Tests/Program.cs
+@@ -16,0 +17 @@ CreativeExportTests.Run(Check);
++CreativeStagingTests.Run(Check);
+diff --git a/tests/OurNotes.Director.NativeTests/Program.cs b/tests/OurNotes.Director.NativeTests/Program.cs
+index 8355318..b16cb8b 100644
+--- a/tests/OurNotes.Director.NativeTests/Program.cs
++++ b/tests/OurNotes.Director.NativeTests/Program.cs
+@@ -4,0 +5 @@ try
++    if(args.Length==3&&args[0]=="--stage-authoring")return await CreativeStagingNativeTests.RunAsync(args[1],args[2]);

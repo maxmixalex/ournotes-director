@@ -1,0 +1,33 @@
+name: Integrate native stage authoring
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.dev/stage-edit.patch, .github/workflows/stage-integration.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply exact reviewed source patch
+        run: |
+          $hash = (Get-FileHash .dev/stage-edit.patch -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne '925e5f6e79d7f77dd5c20158e7dd4cb9875ee80b16ed876848e65709899fd66b') { throw 'Source patch transfer mismatch' }
+          git apply --check --unidiff-zero .dev/stage-edit.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply --unidiff-zero .dev/stage-edit.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rm .dev/stage-edit.patch
+          git add src tests DESKTOP.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect native stage, rack focus and spatial character controls to the workbench'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

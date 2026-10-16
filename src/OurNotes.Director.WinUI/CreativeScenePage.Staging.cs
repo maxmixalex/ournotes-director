@@ -1,0 +1,180 @@
+using System.Text.Json.Nodes;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using OurNotes.Director.Core;
+using OurNotes.Director.Desktop.Core;
+
+namespace OurNotes.Director.WinUI;
+
+internal sealed partial class CreativeScenePage
+{
+    static readonly string[] ShotNames = ["全景", "远景", "中远景", "中景", "近景", "特写", "大特写"];
+    IReadOnlyList<NativeStageOption> stageOptions = [];
+    string? stageOptionsKey;
+    async Task EnsureStageOptionsAsync()
+    {
+        string source = DirectorProject.SourceId(document.Source);
+        string key = window.Settings.ArchivePath + "\n" + document.Site + "\n" + source;
+        if (key == stageOptionsKey) return;
+        stageOptions = await Task.Run(() => NativeStageCatalog.Read(new Archive(window.Settings.ArchivePath), document.Site, source));
+        stageOptionsKey = key;
+    }
+    async Task ChooseStageAsync()
+    {
+        viewport.Pause();
+        if (!Directory.Exists(window.Settings.ArchivePath)) { window.ShowResourceManager(); return; }
+        await EnsureStageOptionsAsync();
+        var find = new TextBox { PlaceholderText = "筛选舞台…" };
+        var list = new ListView { Height = 300, MinWidth = 370, SelectionMode = ListViewSelectionMode.Single };
+        var dialog = new ContentDialog { XamlRoot = window.RootXaml, Title = "舞台与原作站位", PrimaryButtonText = "使用舞台", CloseButtonText = "取消",
+            IsPrimaryButtonEnabled = false, Content = Ui.Stack(12, find, list) };
+        void Populate()
+        {
+            list.Items.Clear();
+            foreach (var stage in stageOptions.Where(s => (s.Label + " " + s.Key).Contains(find.Text.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                var item = new ListViewItem { Tag = stage, Content = Ui.Row(10, new FontIcon { Glyph = "\uE91B", FontSize = 18 },
+                    new TextBlock { Text = stage.Label, IsTextSelectionEnabled = false }), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                ToolTipService.SetToolTip(item, stage.Key); list.Items.Add(item);
+            }
+        }
+        Populate(); find.TextChanged += (_, _) => Populate();
+        list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not ListViewItem { Tag: NativeStageOption chosen }) return;
+        await UseStageAsync(chosen);
+    }
+    async Task UseStageAsync(NativeStageOption stage)
+    {
+        await EditAsync(() =>
+        {
+            if (document.Root["imported"]?.GetValue<bool>() == true)
+            {
+                // Replace the selected/active stage row, not every stage in the story.
+                var clip = document.Clips.OfType<JsonObject>().Where(c => S(c["data"]!.AsObject(), "cmd") == "Stage" && N(c, "start") <= playhead)
+                    .OrderBy(c => N(c, "start")).LastOrDefault();
+                if (clip is null) selectedClip = document.AddClip("", "stage", playhead, 1d / 30,
+                    new JsonObject { ["cmd"] = "Stage", ["TargetAssetName"] = stage.Key, ["Duration"] = 0 }, stage.Label);
+                else { clip["data"]!["TargetAssetName"] = stage.Key; clip["label"] = stage.Label; selectedClip = S(clip, "id"); }
+            }
+            else { CreativeStaging.SetStage(document, stage.Key, stage.Label); selectedActor = selectedClip = null; }
+        });
+    }
+    Task FocusActorAsync(string actor) => EditAsync(() => selectedClip = CreativeStaging.AddFocus(document, actor, playhead, .5));
+    void AddStageMenuItems(MenuFlyout menu, string actor)
+    {
+        if (!CreativeStaging.Slots.Contains(CreativeStaging.SlotAt(document, actor, playhead))) return;
+        menu.Items.Insert(0, StudioMenus.Async("对焦此人", () => Safe(() => FocusActorAsync(actor)), "\uE722"));
+        menu.Items.Insert(1, StudioMenus.Async("添加前后移动", () => Safe(() => EditAsync(() => selectedClip = CreativeStaging.AddDepth(document, actor, playhead, -.5, .5))), "\uE7C2"));
+    }
+    void StageNumber(string label, double value, double min, double max, Func<double, Task> edit)
+    {
+        long version = inspectorVersion; double initial = value;
+        var input = new NumberBox { Header = label, Value = value, Minimum = min, Maximum = max, SmallChange = .1,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+        void Apply()
+        {
+            if (version != inspectorVersion || !double.IsFinite(input.Value) || Math.Abs(initial - input.Value) < .00001) return;
+            initial = input.Value; _ = Safe(() => edit(initial));
+        }
+        input.LostFocus += (_, _) => Apply(); input.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter) { Apply(); e.Handled = true; } };
+        inspector.Children.Add(input);
+    }
+    void StageChoice(string label, IEnumerable<(string Key, string Label)> choices, string selected, Func<string, Task> edit)
+    {
+        long version = inspectorVersion;
+        var select = new ComboBox { Header = label, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var (key, name) in choices) select.Items.Add(new ComboBoxItem { Tag = key, Content = name });
+        select.SelectedItem = select.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag?.ToString() == selected);
+        select.SelectionChanged += (_, _) =>
+        {
+            if (version == inspectorVersion && select.SelectedItem is ComboBoxItem { Tag: string key } && key != selected)
+                _ = Safe(() => edit(key));
+        };
+        inspector.Children.Add(select);
+    }
+    bool BuildStagingActorInspector(JsonObject actor)
+    {
+        if (actor["stageSlot"] is null) return false;
+        string id = S(actor, "id");
+        StageChoice("初始站位", CreativeStaging.Slots.Select(p => (p.ToString(), CreativeStaging.SlotName(p))), actor["stageSlot"]!.ToString(),
+            key => EditAsync(() => CreativeStaging.AssignSlot(document, id, int.Parse(key))));
+        StageNumber("初始前后距离", N(actor, "depth"), -20, 20, value => EditAsync(() => document.Actor(id)["depth"] = value));
+        inspector.Children.Add(Button("对焦此人", () => FocusActorAsync(id), "\uE722", true));
+        inspector.Children.Add(Button("添加前后移动", () => EditAsync(() => selectedClip = CreativeStaging.AddDepth(document, id, playhead, -.5, .5)), "\uE7C2"));
+        StageChoice("同深度遮挡顺序", new[] { ("", "沿用原作"), ("Forward", "置于前面"), ("Back", "置于后面") }, S(actor, "layer"),
+            value => EditAsync(() => document.Actor(id)["layer"] = value));
+        inspector.Children.Add(new TextBlock { Text = "负值靠近镜头，正值远离。直接拖动可微调构图，不改变原作站位。", TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = .7 });
+        inspector.Children.Add(Ui.Row(6, Button("姿态图片", () => ExportAsync("frame", true), "\uEB9F"), Button("角色动画", () => ExportAsync("clip", true), "\uE714")));
+        return true;
+    }
+    bool BuildStagingClipInspector(JsonObject clip)
+    {
+        string id = S(clip, "id"), kind = S(clip, "kind"); var row = clip["data"]!.AsObject();
+        if (kind == "depth")
+        {
+            StageNumber("前后位移", N(row, "Parameter3"), -20, 20, value => EditAsync(() => document.Clip(id)["data"]!["Parameter3"] = value));
+            return true;
+        }
+        if (kind == "stage") { inspector.Children.Add(Button("更换舞台…", ChooseStageAsync, "\uE91B")); return true; }
+        if (kind != "focus") return false;
+        var available = document.Actors.OfType<JsonObject>().Where(a => CreativeStaging.Slots.Contains(CreativeStaging.SlotAt(document, S(a, "id"), N(clip, "start"))))
+            .Select(a => (S(a, "id"), DisplayNames.Character(CreativeScene.Text(a, "name", S(a, "id"))))).ToArray();
+        StageChoice("对焦人物", available, S(clip, "actor"), target => EditAsync(() =>
+        { var c = document.Clip(id); c["actor"] = target; c["actorSlot"] = true; c["data"]!["TargetName"] = target; }));
+        bool rack = clip["rackFocus"] is JsonObject;
+        StageChoice("镜头方式", new[] { ("rack", "保持构图，只转移焦点"), ("native", "原作镜头对焦") }, rack ? "rack" : "native", value => EditAsync(() =>
+        {
+            var c = document.Clip(id); var data = c["data"]!.AsObject();
+            if (value == "rack")
+            { data["cmd"] = "DoF"; data["Parameter1"] = 0; data.Remove("CameraDistance"); data["CanvasLayers"] = new JsonArray(2); c["rackFocus"] = new JsonObject { ["others"] = 1, ["background"] = .5 }; }
+            else { data["cmd"] = "Focus"; data["CameraDistance"] = 3; data.Remove("Parameter1"); data.Remove("CanvasLayers"); c.Remove("rackFocus"); }
+            c["label"] = value == "rack" ? "转移焦点" : "镜头对焦";
+        }));
+        if (rack)
+        {
+            StageNumber("其他人物虚化（%）", N(clip["rackFocus"]!.AsObject(), "others") * 100, 0, 100,
+                value => EditAsync(() => document.Clip(id)["rackFocus"]!["others"] = value / 100));
+            StageNumber("背景虚化（%）", N(clip["rackFocus"]!.AsObject(), "background") * 100, 0, 100,
+                value => EditAsync(() => document.Clip(id)["rackFocus"]!["background"] = value / 100));
+        }
+        else StageChoice("原作景别", Enumerable.Range(0, 7).Select(i => (i.ToString(), ShotNames[i])), N(row, "CameraDistance").ToString(),
+            value => EditAsync(() => document.Clip(id)["data"]!["CameraDistance"] = int.Parse(value)));
+        StageChoice("过渡", new[] { ("Linear", "匀速"), ("InOutQuad", "柔和进出"), ("OutQuad", "逐渐减速") }, CreativeScene.Text(row, "Parameter2", "InOutQuad"),
+            value => EditAsync(() => document.Clip(id)["data"]!["Parameter2"] = value));
+        return true;
+    }
+    internal async Task RunStagingSmokeAsync(Action<bool,string> check,string fixture)
+    {
+        // Exercise the normal resource-selection and insertion handlers. No scene JSON is
+        // pasted/imported here; the only fixture inputs are real asset choices.
+        savedText=document.ToJson();await NewAsync();
+        _ = new Archive(fixture).Manifest("intl", "stories", DirectorProject.LibrarySource);
+        await EnsureStageOptionsAsync();await UseStageAsync(stageOptions.First());
+        var archive=new Archive(fixture);var manifest=archive.Manifest("intl","stories","10462");
+        var definition=JsonNode.Parse(archive.Logical("intl",manifest,"story.json"))!;
+        var modelIds=definition["models"]!.AsObject().Select(p=>p.Value!.ToString()).Distinct().Take(2).ToArray();
+        await AddActorResourceAsync(modelIds[0],"前景人物");string first=selectedActor!;
+        await AddActorResourceAsync(modelIds[1],"后景人物");string second=selectedActor!;
+        await EditAsync(()=>{document.Actor(first)["depth"]=-.6;document.Actor(second)["depth"]=.8;});
+        selectedActor=first;var metadata=archive.Model("intl",modelIds[0]);
+        string motion=metadata["motions"]!.AsArray().Select(m=>m!.ToString()).First(m=>m!=metadata["defaultMotion"]?.ToString());
+        string expression=metadata["expressions"]!.AsArray().Select(m=>m!.ToString()).First(m=>m!=metadata["defaultExpression"]?.ToString());
+        await InsertAssetAsync(new ResultRow(motion,motion,"",new JsonObject{["duration"]=3}),"motion",0);
+        await InsertAssetAsync(new ResultRow(expression,expression,"",new JsonObject{["duration"]=3}),"expression",.2);
+        string voice=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(fixture))!,"staging-evidence","original-voice.wav");
+        if(!File.Exists(voice))throw new FileNotFoundException("Staging audio fixture was not produced.",voice);
+        await InsertVoiceFileAsync(voice,"原语音",0);
+        await SeekAsync(0);await FocusActorAsync(first);await SeekAsync(.8);
+        check(document.Source["adv"] is null&&document.Root["staging"] is not null,"从空白界面建立原作舞台，不导入原剧情 JSON");
+        check(viewport.LastFrame?.Targets.Count(t=>t.Id==first||t.Id==second)==2,"双人原作站位在实际画布中同时可见");
+        await App.CaptureCheckpointAsync("authored-stage-front-focus");
+        await SeekAsync(1.8);await FocusActorAsync(second);await SeekAsync(2.5);BuildInspector();
+        check(document.Clips.OfType<JsonObject>().Count(c=>S(c,"kind")=="focus")==2,"界面处理函数建立两个可编辑焦点片段");
+        check(viewport.LastFrame?.ActorAnimations?.Any(a=>a.TargetId==first&&a.Motion==motion&&a.Expression==expression)==true,
+            "原作站位上的动作和表情经过素材栏插入后仍实际生效");
+        await App.CaptureCheckpointAsync("authored-stage-rear-focus");
+        check(inspector.Children.OfType<ComboBox>().Any(b=>b.Header?.ToString()=="镜头方式"),"焦点人物、镜头方式、虚化程度均直接在检查器编辑，无需手写 JSON");
+    }
+
+}

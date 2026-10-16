@@ -108,8 +108,11 @@ jobs:
           Write-Host 'Checking interruptible scrubbing and frame-exact playback ranges'
           & $test --preview-editing
           if ($LASTEXITCODE -ne 0) { throw "Preview editing checks failed: $LASTEXITCODE" }
+          Write-Host 'Authoring a two-actor scene with native staging, focus and actual voice'
+          & $test --stage-authoring artifacts/real-scene-fixture artifacts/staging-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Native staging authoring checks failed: $LASTEXITCODE" }
           Write-Host 'Opening actual workbench window'
-          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 240
+          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 360
       - name: Preserve actual window evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -120,6 +123,7 @@ jobs:
             artifacts/creative-audio/report.json
             artifacts/creative-audio/parallel-voice-mix.wav
             artifacts/creative-audio/range-31.mkv
+            artifacts/staging-evidence/*
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload Windows package
