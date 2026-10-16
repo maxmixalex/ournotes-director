@@ -69,8 +69,8 @@ internal sealed partial class CreativeScenePage
             {
                 Help("素材："+data[kind=="motion"?"MotionName":"ExpressionName"]);
                 inspector.Children.Add(Button("替换素材…",()=>ChooseReplacementAsync(id),"\uE8D2"));
-                Field("切换渐变（秒；-1 沿用素材）",N(data,"MotionFadeIn"),-1,10,v=>EditAsync(()=>document.Clip(id)["data"]!["MotionFadeIn"]=v));
-                if(kind=="motion"&&CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("按原作规则播放至下一次动作切换；不以剪短色块代替停止动作。");
+                BuildMaterialFadeInspector(clip);
+                if(kind=="motion"&&CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("沿用素材的循环与结束规则。");
                 if(kind=="motion"&&clip["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("片段结束时保持动作姿态；下一段动作开始时继续。声音和口型不受影响。");
             }
             else if(kind=="transform"&&data["Values"] is JsonObject values)

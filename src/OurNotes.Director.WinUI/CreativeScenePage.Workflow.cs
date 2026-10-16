@@ -204,7 +204,7 @@ internal sealed partial class CreativeScenePage
         try
         {
             if(version!=loadVersion||disposed)return;
-            if(document.Actors.Count==0&&document.Clips.Count==0){viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));previewDirty=false;loadedSourceKey=null;return;}
+            if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null){viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));previewDirty=false;loadedSourceKey=null;return;}
             if(!Directory.Exists(window.Settings.ArchivePath)){ShowError("请先选择素材库；当前场景已经保留。");return;}
             double restore=playhead;var parsed=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);var input=parsed.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview"));
             string sourceKey=parsed.Root["source"]!.ToJsonString()+parsed.Root["output"]!.ToJsonString()+window.Settings.ArchivePath;

@@ -93,6 +93,20 @@ internal sealed partial class CreativeScenePage
         };
         inspector.Children.Add(select);
     }
+    void BuildMaterialFadeInspector(JsonObject clip)
+    {
+        string id = S(clip, "id"); long version = inspectorVersion;
+        double fade = N(clip["data"]!.AsObject(), "MotionFadeIn");
+        var authored = new CheckBox { Content = "沿用素材过渡", IsChecked = fade < 0 };
+        authored.Click += (_, _) =>
+        {
+            if (version == inspectorVersion)
+                _ = Safe(() => EditAsync(() => document.Clip(id)["data"]!["MotionFadeIn"] = authored.IsChecked == true ? -1 : .2));
+        };
+        inspector.Children.Add(authored);
+        if (fade >= 0) StageNumber("切换时长（秒）", fade, 0, 10,
+            value => EditAsync(() => document.Clip(id)["data"]!["MotionFadeIn"] = value));
+    }
     bool BuildStagingActorInspector(JsonObject actor)
     {
         if (actor["stageSlot"] is null) return false;

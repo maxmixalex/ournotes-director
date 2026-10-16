@@ -101,7 +101,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             else if(args.Key==VirtualKey.Space){_=Safe(TogglePlayAsync);args.Handled=true;}
             else if(args.Key==VirtualKey.F){viewport.FitCanvas();args.Handled=true;}
         };
-        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);};
+        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);};
         Unloaded+=(_,_)=>Deactivate();Refresh();
     }
     static bool IsTextInput(DependencyObject? item)
