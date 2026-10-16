@@ -17,8 +17,10 @@ internal sealed partial class CreativeScenePage
         string source = DirectorProject.SourceId(document.Source);
         string key = window.Settings.ArchivePath + "\n" + document.Site + "\n" + source;
         if (key == stageOptionsKey) return;
-        stageOptions = await Task.Run(() => NativeStageCatalog.Read(new Archive(window.Settings.ArchivePath), document.Site, source));
-        stageOptionsKey = key;
+        var owner = document; string archivePath = window.Settings.ArchivePath, site = document.Site;
+        var result = await Task.Run(() => NativeStageCatalog.Read(new Archive(archivePath), site, source));
+        if (ReferenceEquals(owner, document) && archivePath == window.Settings.ArchivePath)
+        { stageOptions = result; stageOptionsKey = key; }
     }
     async Task ChooseStageAsync()
     {
@@ -60,12 +62,14 @@ internal sealed partial class CreativeScenePage
             else { CreativeStaging.SetStage(document, stage.Key, stage.Label); selectedActor = selectedClip = null; }
         });
     }
-    Task FocusActorAsync(string actor) => EditAsync(() => selectedClip = CreativeStaging.AddFocus(document, actor, playhead, .5));
+    Task FocusActorAsync(string actor) => EditAsync(() => { selectedActor = actor; selectedClip = CreativeFocusEditing.FocusHere(document, actor, playhead); });
     void AddStageMenuItems(MenuFlyout menu, string actor)
     {
         if (!CreativeStaging.Slots.Contains(CreativeStaging.SlotAt(document, actor, playhead))) return;
         menu.Items.Insert(0, StudioMenus.Async("对焦此人", () => Safe(() => FocusActorAsync(actor)), "\uE722"));
         menu.Items.Insert(1, StudioMenus.Async("添加前后移动", () => Safe(() => EditAsync(() => selectedClip = CreativeStaging.AddDepth(document, actor, playhead, -.5, .5))), "\uE7C2"));
+        menu.Items.Insert(2, StudioMenus.Async("同深度置于前面", () => Safe(() => EditAsync(() => selectedClip = CreativeFocusEditing.OrderHere(document, actor, playhead, true))), "\uE8B0"));
+        menu.Items.Insert(3, StudioMenus.Async("同深度置于后面", () => Safe(() => EditAsync(() => selectedClip = CreativeFocusEditing.OrderHere(document, actor, playhead, false))), "\uE8B1"));
     }
     void StageNumber(string label, double value, double min, double max, Func<double, Task> edit)
     {
@@ -125,6 +129,16 @@ internal sealed partial class CreativeScenePage
     bool BuildStagingClipInspector(JsonObject clip)
     {
         string id = S(clip, "id"), kind = S(clip, "kind"); var row = clip["data"]!.AsObject();
+        if (S(row, "cmd") is "Forward" or "Back")
+        {
+            StageChoice("同深度遮挡顺序", new[] { ("Forward", "置于前面"), ("Back", "置于后面") }, S(row, "cmd"),
+                value => EditAsync(() =>
+                {
+                    var c = document.Clip(id); c["data"]!["cmd"] = value;
+                    c["label"] = value == "Forward" ? "置于前面" : "置于后面";
+                }));
+            return true;
+        }
         if (kind == "depth")
         {
             StageNumber("前后位移", N(row, "Parameter3"), -20, 20, value => EditAsync(() => document.Clip(id)["data"]!["Parameter3"] = value));
@@ -133,31 +147,66 @@ internal sealed partial class CreativeScenePage
         if (kind == "stage") { inspector.Children.Add(Button("更换舞台…", ChooseStageAsync, "\uE91B")); return true; }
         if (kind != "focus") return false;
         var available = document.Actors.OfType<JsonObject>().Where(a => CreativeStaging.Slots.Contains(CreativeStaging.SlotAt(document, S(a, "id"), N(clip, "start"))))
-            .Select(a => (S(a, "id"), DisplayNames.Character(CreativeScene.Text(a, "name", S(a, "id"))))).ToArray();
-        StageChoice("对焦人物", available, S(clip, "actor"), target => EditAsync(() =>
-        { var c = document.Clip(id); c["actor"] = target; c["actorSlot"] = true; c["data"]!["TargetName"] = target; }));
-        bool rack = clip["rackFocus"] is JsonObject;
-        StageChoice("镜头方式", new[] { ("rack", "保持构图，只转移焦点"), ("native", "原作镜头对焦") }, rack ? "rack" : "native", value => EditAsync(() =>
+            .Select(a => (Key: S(a, "id"), Label: DisplayNames.Character(CreativeScene.Text(a, "name", S(a, "id"))))).ToArray();
+        string mode = CreativeFocusEditing.Mode(clip);
+        if (mode == "layer")
         {
-            var c = document.Clip(id); var data = c["data"]!.AsObject();
-            if (value == "rack")
-            { data["cmd"] = "DoF"; data["Parameter1"] = 0; data.Remove("CameraDistance"); data["CanvasLayers"] = new JsonArray(2); c["rackFocus"] = new JsonObject { ["others"] = 1, ["background"] = .5 }; }
-            else { data["cmd"] = "Focus"; data["CameraDistance"] = 3; data.Remove("Parameter1"); data.Remove("CanvasLayers"); c.Remove("rackFocus"); }
-            c["label"] = value == "rack" ? "转移焦点" : "镜头对焦";
-        }));
-        if (rack)
+            string actor = CreativeFocusEditing.LayerActor(document, clip);
+            var scope = CreativeFocusEditing.LayerScope(clip);
+            string current = scope.Background ? scope.Character ? "both" : "background" : "character";
+            StageChoice("作用范围", new[] { ("character", "人物"), ("background", "背景"), ("both", "背景与人物") }, current,
+                choice => EditAsync(() => CreativeFocusEditing.SetLayerScope(document, id,
+                    actor.Length > 0 ? actor : available.FirstOrDefault().Key ?? "", choice != "character", choice != "background")));
+            if (scope.Character) StageChoice("虚化人物", available, actor,
+                target => EditAsync(() => CreativeFocusEditing.SetLayerScope(document, id, target, scope.Background, true)));
+            StageNumber("虚化程度（%）", N(row, "Parameter1") * 100, 0, 100,
+                value => EditAsync(() => document.Clip(id)["data"]!["Parameter1"] = value / 100));
+        }
+        else StageChoice("对焦人物", available, S(clip, "actor"), target => EditAsync(() =>
+        { var c = document.Clip(id); c["actor"] = target; c["actorSlot"] = true; c["data"]!["TargetName"] = target; }));
+        StageChoice("镜头方式", new[] { ("rack", "保持构图，只转移焦点"), ("native", "原作镜头对焦"), ("layer", "单独调整虚化层") }, mode,
+            value => ChangeFocusModeAsync(id, value));
+        if (mode == "rack")
         {
             StageNumber("其他人物虚化（%）", N(clip["rackFocus"]!.AsObject(), "others") * 100, 0, 100,
                 value => EditAsync(() => document.Clip(id)["rackFocus"]!["others"] = value / 100));
             StageNumber("背景虚化（%）", N(clip["rackFocus"]!.AsObject(), "background") * 100, 0, 100,
                 value => EditAsync(() => document.Clip(id)["rackFocus"]!["background"] = value / 100));
         }
-        else StageChoice("原作景别", Enumerable.Range(0, 7).Select(i => (i.ToString(), ShotNames[i])), N(row, "CameraDistance").ToString(),
-            value => EditAsync(() => document.Clip(id)["data"]!["CameraDistance"] = int.Parse(value)));
+        else if (mode == "native")
+        {
+            string stageKey = CreativeFocusEditing.StageAt(document, N(clip, "start"));
+            var options = stageOptions.FirstOrDefault(s => s.Key == stageKey)?.FocusDistances;
+            if (options is null)
+            {
+                long version = inspectorVersion;
+                inspector.Children.Add(new TextBlock { Text = stageOptions.Count == 0 ? "正在读取舞台景别…" : "当前舞台未提供可用景别", FontSize = 12 });
+                _ = Safe(async () => { await EnsureStageOptionsAsync(); if (version == inspectorVersion && stageOptions.Any(s => s.Key == stageKey)) BuildInspector(); });
+            }
+            else StageChoice("原作景别", options.Select(i => (i.ToString(), i >= 0 && i < ShotNames.Length ? ShotNames[i] : $"景别 {i}")), N(row, "CameraDistance").ToString(),
+                value => EditAsync(() => document.Clip(id)["data"]!["CameraDistance"] = int.Parse(value)));
+        }
         StageChoice("过渡", new[] { ("Linear", "匀速"), ("InOutQuad", "柔和进出"), ("OutQuad", "逐渐减速") }, CreativeScene.Text(row, "Parameter2", "InOutQuad"),
             value => EditAsync(() => document.Clip(id)["data"]!["Parameter2"] = value));
         return true;
     }
+    async Task ChangeFocusModeAsync(string id, string mode)
+    {
+        // Awaiting resource discovery must not apply to a different project after Open/New.
+        var owner = document;
+        int distance = 3;
+        if (mode == "native")
+        {
+            await EnsureStageOptionsAsync();
+            if (!ReferenceEquals(owner, document)) return;
+            string stage = CreativeFocusEditing.StageAt(document, N(document.Clip(id), "start"));
+            var options = stageOptions.FirstOrDefault(s => s.Key == stage)?.FocusDistances;
+            if (options is null || options.Count == 0) throw new InvalidOperationException("当前舞台没有可用的原作景别。");
+            distance = options.Contains(3) ? 3 : options[0];
+        }
+        if (ReferenceEquals(owner, document)) await EditAsync(() => CreativeFocusEditing.SetMode(document, id, mode, distance));
+    }
+
     internal async Task RunStagingSmokeAsync(Action<bool,string> check,string fixture)
     {
         // Exercise the normal resource-selection and insertion handlers. No scene JSON is
@@ -189,6 +238,26 @@ internal sealed partial class CreativeScenePage
             "原作站位上的动作和表情经过素材栏插入后仍实际生效");
         await App.CaptureCheckpointAsync("authored-stage-rear-focus");
         check(inspector.Children.OfType<ComboBox>().Any(b=>b.Header?.ToString()=="镜头方式"),"焦点人物、镜头方式、虚化程度均直接在检查器编辑，无需手写 JSON");
+        string focused = selectedClip!;
+        async Task ChooseControlAsync(string header, string key)
+        {
+            var control = inspector.Children.OfType<ComboBox>().Single(box => box.Header?.ToString() == header);
+            control.SelectedItem = control.Items.OfType<ComboBoxItem>().Single(item => item.Tag?.ToString() == key);
+            // Production SelectionChanged handlers own the edit and request the new frame.
+            await loadGate.WaitAsync(); loadGate.Release(); await Task.Delay(30);
+        }
+        await ChooseControlAsync("镜头方式", "layer");
+        await ChooseControlAsync("作用范围", "both");
+        check(CreativeFocusEditing.Mode(document.Clip(focused)) == "layer"
+            && CreativeFocusEditing.LayerScope(document.Clip(focused)) == (true, true),
+            "实际下拉控件能切换为背景与人物分层虚化，不把 DoF 改成镜头运动");
+        await ChooseControlAsync("镜头方式", "native");
+        check(inspector.Children.OfType<ComboBox>().Single(box => box.Header?.ToString() == "原作景别").Items.Count
+            == stageOptions.First().FocusDistances.Count, "原作景别下拉框只列出该舞台实际支持的项目");
+        await ChooseControlAsync("镜头方式", "rack");
+        check(CreativeFocusEditing.Mode(document.Clip(focused)) == "rack" && !notice.IsOpen,
+            "镜头方式经实际控件切换后可返回焦点片段，原生预览没有报错");
+
     }
 
 }
