@@ -15,7 +15,10 @@ jobs:
           ref: ${{ github.sha }}
       - name: Apply exact reviewed source patch
         run: |
-          $hash = (Get-FileHash .dev/stage-edit.patch -Algorithm SHA256).Hash.ToLowerInvariant()
+          $path = (Resolve-Path .dev/stage-edit.patch).Path
+          $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
+          [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+          $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne '925e5f6e79d7f77dd5c20158e7dd4cb9875ee80b16ed876848e65709899fd66b') { throw 'Source patch transfer mismatch' }
           git apply --check --unidiff-zero .dev/stage-edit.patch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
