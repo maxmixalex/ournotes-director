@@ -57,6 +57,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     public event EventHandler<PreviewDrag>? ObjectDragged;
     public event EventHandler<PreviewScale>? ObjectScaled;
     public PreviewFrame? LastFrame=>Volatile.Read(ref lastFrame);
+    public Func<PreviewTarget,string>? TargetLabel { get; set; }
     public bool IsPlaying=>session.IsPlaying;
     public bool HasCurrentSource{get;private set;}
     public string? SelectedTargetId
@@ -99,7 +100,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         surface.PointerCanceled+=OnPointerCanceled;
         surface.PointerCaptureLost+=OnPointerCanceled;
         surface.PointerWheelChanged+=OnPointerWheelChanged;
-        InitializeWorkspaceNavigation();InitializeGpuPresentation();
+        InitializeWorkspaceNavigation();InitializeGpuPresentation();InitializeAudioPresentation();
         Unloaded+=(_,_)=>{if(!disposed)session.Pause();};
         session.FrameReady+=OnFrameReady;session.Failed+=OnFailed;
     }
@@ -112,6 +113,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         try
         {
             await session.LoadSceneAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
+            if(version==sourceVersion)ConfigureAudio(source);
             if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
@@ -128,6 +130,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     }
     long BeginLoad(string message)
     {
+        previewAudio.Clear();
         showingEmptyCanvas=false;HasCurrentSource=false;loading=true;dragTarget=null;dragMoved=false;
         surface.ReleasePointerCaptures();HideSelection();status.Text=message;diagnostics.Content=null;diagnosticFailure=false;
         return ++sourceVersion;
@@ -138,14 +141,21 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     /// </summary>
     public void InvalidateSource()
     {
-        session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
+        previewAudio.Clear();session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
         dragTarget=null;dragMoved=false;surface.ReleasePointerCaptures();HideSelection();
         status.Text=LastFrame is null?"打开项目，开始预览":"等待载入，保留上一画面";
         diagnostics.Content=null;diagnosticFailure=false;
     }
-    public async Task SeekAsync(double seconds)
+    public async Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
-        await session.SeekAsync(seconds);
+        await session.SeekAsync(seconds,cancellationToken);
+        await AwaitPresentationAsync();
+    }
+    public async Task PauseForEditingAsync()
+    { session.Pause(); await session.SynchronizeAsync(); await AwaitPresentationAsync(); }
+    public async Task PreviewStagePositionAsync(string actor,int slot,System.Numerics.Vector3 position,long expectedSession,int expectedFrame)
+    {
+        await session.PreviewStagePositionAsync(actor,slot,position,expectedSession,expectedFrame);
         await AwaitPresentationAsync();
     }
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
@@ -158,13 +168,13 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await session.SetHomeEditStateAsync(state);
         await AwaitPresentationAsync();
     }
-    public Task CommitSceneProjectAsync(ScenePreviewSource source)=>session.CommitSceneProjectAsync(source with{GpuPresentation=true});
+    public async Task CommitSceneProjectAsync(ScenePreviewSource source){await session.CommitSceneProjectAsync(source with{GpuPresentation=true});ConfigureAudio(source);}
     public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
     async Task AwaitPresentationAsync()
     {
         if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);
     }
-    public void Play()=>session.Play();
+    public void Play(double? exclusiveEndSeconds=null)=>session.Play(exclusiveEndSeconds);
     public void Pause()=>session.Pause();
 
     /// <summary>Completes only after the raw native pixels have been copied into the XAML image.</summary>
@@ -304,13 +314,14 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(!HasCurrentSource){HideSelection();return;}
         var target=LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
         if(target is null||imageRect.Width<=0){HideSelection();return;}
-        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible)return;
+        string label=TargetLabel?.Invoke(target)??target.Label;
+        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible&&selectionText.Text==label)return;
         displayedTarget=target;selectionRect=imageRect;overlay.Visibility=Visibility.Visible;
         double x=imageRect.X+target.X*imageRect.Width,y=imageRect.Y+target.Y*imageRect.Height;
         double width=target.Width*imageRect.Width,height=target.Height*imageRect.Height;
         outline.Width=width;outline.Height=height;
         Canvas.SetLeft(outline,x);Canvas.SetTop(outline,y);
-        if(selectionText.Text!=target.Label)selectionText.Text=target.Label;
+        if(selectionText.Text!=label)selectionText.Text=label;
         Canvas.SetLeft(selectionLabel,Math.Clamp(x,0,Math.Max(0,surface.ActualWidth-80)));
         Canvas.SetTop(selectionLabel,Math.Max(0,y-26));
         for(int i=0;i<handles.Length;i++)
@@ -333,10 +344,12 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(args.Pointer.PointerDeviceType==Microsoft.UI.Input.PointerDeviceType.Mouse&&!point.Properties.IsLeftButtonPressed)return;
         if(!InCanvas(point.Position))return;
         var normalized=Normalize(point.Position);var target=HitTest(normalized.X,normalized.Y);
-        SelectedTargetId=target?.Id;
-        if(target is null)return;
+        TracePointer($"pressed id={args.Pointer.PointerId} point={point.Position} normalized={normalized} target={target?.Id} source={args.OriginalSource?.GetType().Name}");
+        if(target is null){SelectedTargetId=null;return;}
+        // Keep pointer ownership before selection rebuilds inspectors and scrolls tracks.
         Pause();dragTarget=target.Id;dragPointer=args.Pointer.PointerId;dragStart=dragLast=normalized;dragMoved=false;
-        surface.CapturePointer(args.Pointer);args.Handled=true;
+        if(!surface.CapturePointer(args.Pointer)){dragTarget=null;TracePointer("capture failed");return;}
+        args.Handled=true;SelectedTargetId=target.Id;
     }
     void OnPointerMoved(object sender,PointerRoutedEventArgs args)
     {
@@ -344,15 +357,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         dragLast=Normalize(args.GetCurrentPoint(surface).Position);
         if(Math.Abs(dragLast.X-dragStart.X)+Math.Abs(dragLast.Y-dragStart.Y)<.001&&!dragMoved)return;
         dragMoved=true;
+        TracePointer($"move id={args.Pointer.PointerId} actor={dragTarget} delta=({dragLast.X-dragStart.X},{dragLast.Y-dragStart.Y})");
         ObjectDragged?.Invoke(this,new(dragTarget,dragLast.X-dragStart.X,dragLast.Y-dragStart.Y,false));args.Handled=true;
     }
     void OnPointerReleased(object sender,PointerRoutedEventArgs args)
     {
+        TracePointer($"released id={args.Pointer.PointerId} actor={dragTarget} moved={dragMoved}");
         if(dragTarget is null||args.Pointer.PointerId!=dragPointer)return;
         dragLast=Normalize(args.GetCurrentPoint(surface).Position);FinishDrag();surface.ReleasePointerCapture(args.Pointer);args.Handled=true;
     }
     void OnPointerCanceled(object sender,PointerRoutedEventArgs args)
     {
+        TracePointer($"capture-ended id={args.Pointer.PointerId} actor={dragTarget} moved={dragMoved}");
         if(dragTarget is not null&&args.Pointer.PointerId==dragPointer)FinishDrag();
     }
     void FinishDrag()
@@ -384,7 +400,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             waiters.Clear();
         }
         session.FrameReady-=OnFrameReady;session.Failed-=OnFailed;
-        DetachGpu();await session.DisposeAsync();
+        DetachGpu();await session.DisposeAsync();await previewAudio.DisposeAsync();
         pixelStream?.Dispose();pixelStream=null;
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using OurNotes.Director.Desktop.Core;
 using Windows.System;
@@ -12,102 +13,116 @@ internal static class ResourcePicker
 {
     internal static async Task<ResourceSelection?> PickAsync(MainWindow window, CommandField field, IReadOnlyDictionary<string, string?> formValues)
     {
-        string id = field.LookupCommandId!;
-        var definition = CommandCatalog.Get(id);
-        string? queryKey = definition.Fields.Any(input => input.Key == "query") ? "query"
-            : id == "model.list" ? "character" : null;
+        string command = field.LookupCommandId!;
+        var definition = CommandCatalog.Get(command);
+        string? queryKey = definition.Fields.Any(input => input.Key == "query") ? "query" : command == "model.list" ? "character" : null;
         bool needsQuery = queryKey is not null && definition.Fields.First(input => input.Key == queryKey).Required;
-        var search = Ui.Input(id == "voice.search" ? "搜索语音台词" : "搜索归档", queryKey is null ? "" : formValues.GetValueOrDefault(queryKey) ?? "",
-            id == "voice.search" ? "输入实际台词关键词后搜索" : "输入标题、路径或角色关键词");
-        var filter = Ui.Input("筛选已加载结果", "", "按名称、角色或编号筛选");
-        var list = new ListView { Height = 340, SelectionMode = ListViewSelectionMode.Single };
-        var message = Ui.Text(needsQuery ? "输入台词关键词，再点击搜索。" : "正在读取归档…", 12, true);
-        var busy = new ProgressRing { IsActive = false, Width = 22, Height = 22 };
+        var search = new TextBox { PlaceholderText = command == "voice.search" ? "搜索语音台词…" : "搜索名称、角色或编号…",
+            Text = queryKey is null ? "" : formValues.GetValueOrDefault(queryKey) ?? "", HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetName(search, "搜索" + field.Label);
+        var list = new ListView { Height = 320, SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var message = Ui.Text(needsQuery ? "输入台词开始搜索" : "正在读取…", 12, true);
+        var busy = new ProgressRing { Width = 18, Height = 18, IsActive = false, Visibility = Visibility.Collapsed };
         var rows = new List<ResultRow>();
-        var presets = field.Choices.Select(choice => new ResultRow(choice.Value, choice.Label, "快捷选择", JsonValue.Create(choice.Value)!) { Kind = "choice" }).ToArray();
-        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (var input in definition.Fields)
-        {
-            if (formValues.TryGetValue(input.Key, out var inherited)) values[input.Key] = inherited;
-        }
+        var presets = field.Choices.Select(choice => new ResultRow(choice.Value, choice.Label, "", JsonValue.Create(choice.Value)!) { Kind = "choice" }).ToArray();
+        var values = definition.Fields.Where(input => formValues.ContainsKey(input.Key))
+            .ToDictionary(input => input.Key, input => formValues[input.Key], StringComparer.Ordinal);
         values.Remove("out"); values.Remove("offset"); values.Remove(field.Key);
         if (queryKey is not null) values.Remove(queryKey);
         if (definition.Fields.Any(input => input.Key == "limit")) values["limit"] = "200";
-        using var cancellation = new CancellationTokenSource();
-        CancellationTokenSource? activeRequest = null;
+        using var lifetime = new CancellationTokenSource();
+        CancellationTokenSource? request = null;
         int? nextOffset = null;
-        string loadedQuery = "";
-        int requestVersion = 0;
-        bool closed = false;
-        var next = Ui.Button("加载更多", () => { });
-        next.Visibility = Visibility.Collapsed;
-        var searchButton = Ui.Button("搜索", () => { }, "\uE721");
-        var content = Ui.Stack(12);
-        if (queryKey is not null) content.Children.Add(Ui.Stack(8, search, searchButton));
-        content.Children.Add(filter); content.Children.Add(Ui.Row(8, busy, message)); content.Children.Add(list); content.Children.Add(next);
-        var dialog = new ContentDialog { XamlRoot = window.RootXaml, Title = "选择" + field.Label, PrimaryButtonText = "使用所选", CloseButtonText = "返回",
-            IsPrimaryButtonEnabled = false, Content = content };
+        int generation = 0;
+        bool closed = false, loading = false, failed = false;
+        string? loadedQuery = null;
+        var delay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        var more = new Button { Content = "加载更多", Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Center };
+        var refresh = new Button { Content = new FontIcon { Glyph = "\uE721", FontSize = 14 }, Padding = new(10) };
+        AutomationProperties.SetName(refresh, "搜索"); ToolTipService.SetToolTip(refresh, "搜索 · Enter");
+        var searchRow = new Grid { ColumnSpacing = 8 };
+        searchRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); searchRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        searchRow.Children.Add(search); searchRow.Children.Add(refresh); Grid.SetColumn(refresh, 1);
+        var footer = new Grid { ColumnSpacing = 8 };
+        footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); footer.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        footer.Children.Add(busy); footer.Children.Add(message); Grid.SetColumn(message, 1);
+        var dialog = new ContentDialog { XamlRoot = window.RootXaml, Title = "选择" + field.Label,
+            PrimaryButtonText = "选择", CloseButtonText = "取消", IsPrimaryButtonEnabled = false,
+            Content = Ui.Stack(10, searchRow, list, more, footer) };
+        bool CurrentResults() => !failed && (queryKey is null || loadedQuery == search.Text.Trim());
+        void Selectable() => dialog.IsPrimaryButtonEnabled = list.SelectedItem is ListViewItem && CurrentResults();
         void Filter()
         {
-            string query = filter.Text.Trim();
+            string query = search.Text.Trim(); string? previous = (list.SelectedItem as ListViewItem)?.Tag is ResultRow old ? old.Id : null;
             list.Items.Clear();
-            foreach (var row in presets.Concat(rows.Where(row => row.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase))))
-                list.Items.Add(new ListViewItem { Content = Ui.Stack(3, Ui.Text(row.Title), Ui.Text(row.Subtitle, 12, true)), Tag = row });
+            // Remote matching may include aliases not literally present in a translated title.
+            bool remoteMatched = queryKey is not null && loadedQuery == query;
+            foreach (var row in presets.Concat(rows).Where(row => remoteMatched || row.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase)))
+            {
+                var name = new TextBlock { Text = row.Title, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis, IsHitTestVisible = false };
+                var detail = new TextBlock { Text = row.Subtitle, FontSize = 11, Opacity = .6, TextTrimming = TextTrimming.CharacterEllipsis, IsHitTestVisible = false,
+                    Visibility = string.IsNullOrEmpty(row.Subtitle) ? Visibility.Collapsed : Visibility.Visible };
+                var item = new ListViewItem { Tag = row, Content = Ui.Stack(3, name, detail), HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(10, 8, 10, 8) };
+                AutomationProperties.SetName(item, row.Title); ToolTipService.SetToolTip(item, row.Subtitle.Length == 0 ? row.Id : row.Title + "\n" + row.Subtitle);
+                list.Items.Add(item); if (row.Id == previous) list.SelectedItem = item;
+            }
+            Selectable();
+            if (!loading && !failed) message.Text = needsQuery && query.Length == 0 ? "输入台词开始搜索"
+                : list.Items.Count == 0 ? "没有匹配的素材" : $"{list.Items.Count} 项";
         }
-        filter.TextChanged += (_, _) => Filter();
-        list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
         async Task LoadAsync(bool append)
         {
-            string query = search.Text.Trim();
-            if (append && query != loadedQuery) append = false;
+            delay.Stop(); if (closed) return;
+            string query = search.Text.Trim(); if (append && query != loadedQuery) append = false;
+            request?.Cancel(); request?.Dispose(); request = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            var token = request.Token; int version = ++generation;
             if (needsQuery && query.Length == 0)
-            {
-                message.Text = "请输入实际台词关键词后搜索，不能用空白搜索语音。";
-                return;
-            }
-            activeRequest?.Cancel(); activeRequest?.Dispose();
-            activeRequest = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-            var token = activeRequest.Token;
-            int version = ++requestVersion;
-            var request = new Dictionary<string, string?>(values, StringComparer.Ordinal);
-            if (queryKey is not null && query.Length > 0) request[queryKey] = id == "model.list" ? DisplayNames.SearchAlias(query) : query;
-            if (append && nextOffset is { } offset) request["offset"] = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (!append) { rows.Clear(); nextOffset = null; loadedQuery = query; Filter(); }
-            busy.IsActive = true; searchButton.IsEnabled = false; next.IsEnabled = false;
-            message.Text = "正在查询归档…";
+            { rows.Clear(); loadedQuery = ""; nextOffset = null; loading = failed = false; busy.Visibility = more.Visibility = Visibility.Collapsed; Filter(); return; }
+            var parameters = new Dictionary<string, string?>(values, StringComparer.Ordinal);
+            if (queryKey is not null && query.Length > 0) parameters[queryKey] = command == "model.list" ? DisplayNames.SearchAlias(query) : query;
+            if (append && nextOffset is { } offset) parameters["offset"] = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            loading = true; failed = false; busy.IsActive = true; busy.Visibility = Visibility.Visible; more.IsEnabled = false;
+            message.Text = "正在读取…"; Selectable();
             try
             {
-                var result = await window.QueryAsync(id, request, token);
-                if (closed || token.IsCancellationRequested || version != requestVersion) return;
-                if (!result.Success) { message.Text = result.Error ?? "归档查询未完成。"; return; }
-                rows.AddRange(ResultRow.ForPicker(result.Json, id, field.Key, request));
+                var result = await window.QueryAsync(command, parameters, token);
+                if (closed || token.IsCancellationRequested || version != generation) return;
+                if (!result.Success) { failed = true; message.Text = result.Error ?? "读取失败，请重试"; Selectable(); return; }
+                if (!append) rows.Clear();
+                rows.AddRange(ResultRow.ForPicker(result.Json, command, field.Key, parameters)); loadedQuery = query;
                 nextOffset = result.Result is JsonObject page && page["nextOffset"] is JsonValue number && number.TryGetValue<int>(out int nextPage) ? nextPage : null;
-                Filter();
-                message.Text = rows.Count == 0
-                    ? id == "home.animations" ? "选中骨架没有共同的动画名称；留空保留各骨架原动画。" : "没有匹配结果。请调整关键词，或先选择关联主页、模型。"
-                    : $"已加载 {rows.Count} 项" + (id == "home.animations" ? "；这些名称存在于全部选中骨架中。" : nextOffset is null ? "；可筛选并选择。" : "；可以继续加载更多。" );
             }
             catch (OperationCanceledException) { }
-            catch (Exception error) { if (!closed && version == requestVersion) message.Text = error.Message; }
+            catch (Exception error) { if (!closed && version == generation) { failed = true; message.Text = error.Message; } }
             finally
             {
-                if (!closed && version == requestVersion)
+                if (!closed && version == generation)
                 {
-                    busy.IsActive = false; searchButton.IsEnabled = true; next.IsEnabled = true;
-                    next.Visibility = nextOffset is null ? Visibility.Collapsed : Visibility.Visible;
+                    loading = false; busy.IsActive = false; busy.Visibility = Visibility.Collapsed; more.IsEnabled = true;
+                    more.Visibility = nextOffset.HasValue ? Visibility.Visible : Visibility.Collapsed; Filter();
                 }
             }
         }
-        searchButton.Click += async (_, _) => await LoadAsync(false);
-        next.Click += async (_, _) => await LoadAsync(true);
-        search.KeyDown += async (_, args) => { if (args.Key == VirtualKey.Enter) { args.Handled = true; await LoadAsync(false); } };
-        dialog.Opened += async (_, _) => { Filter(); if (!needsQuery || search.Text.Trim().Length > 0) await LoadAsync(false); };
-        list.DoubleTapped += (_, _) => { if (list.SelectedItem is not null) { dialog.Tag = "selected"; dialog.Hide(); } };
-        var outcome = await dialog.ShowAsync(); closed = true; cancellation.Cancel(); activeRequest?.Cancel(); activeRequest?.Dispose();
+        search.TextChanged += (_, _) =>
+        {
+            Filter(); if (queryKey is null) return;
+            request?.Cancel(); delay.Stop(); delay.Start();
+        };
+        delay.Tick += async (_, _) => await LoadAsync(false);
+        refresh.Click += async (_, _) => { if (queryKey is not null || failed) await LoadAsync(false); else Filter(); };
+        more.Click += async (_, _) => await LoadAsync(true);
+        list.SelectionChanged += (_, _) => Selectable();
+        void Accept() { if (dialog.IsPrimaryButtonEnabled) { dialog.Tag = "selected"; dialog.Hide(); } }
+        list.DoubleTapped += (_, args) => { Accept(); args.Handled = true; };
+        list.KeyDown += (_, args) => { if (args.Key == VirtualKey.Enter) { Accept(); args.Handled = true; } };
+        search.KeyDown += async (_, args) => { if (args.Key == VirtualKey.Enter) { args.Handled = true; if (queryKey is not null) await LoadAsync(false); else if (list.Items.Count == 1) { list.SelectedIndex = 0; Accept(); } } };
+        dialog.Opened += async (_, _) => { search.Focus(FocusState.Programmatic); await LoadAsync(false); };
+        ContentDialogResult outcome;
+        try { outcome = await dialog.ShowAsync(); }
+        finally { closed = true; delay.Stop(); lifetime.Cancel(); request?.Cancel(); request?.Dispose(); }
         if (outcome != ContentDialogResult.Primary && dialog.Tag?.ToString() != "selected") return null;
         if ((list.SelectedItem as ListViewItem)?.Tag is not ResultRow selected) return null;
-        var selection = selected.Selection(field.Key);
-        var related = new Dictionary<string, string?>(selection.RelatedValues) { ["displayName"] = selected.Title };
-        return new ResourceSelection(selection.Value, related);
+        var choice = selected.Selection(field.Key);
+        return new(choice.Value, new Dictionary<string, string?>(choice.RelatedValues) { ["displayName"] = selected.Title });
     }
 }

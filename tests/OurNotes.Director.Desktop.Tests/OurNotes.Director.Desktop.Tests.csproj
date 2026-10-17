@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/OurNotes.Director.Desktop.Core/OurNotes.Director.Desktop.Core.csproj" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/OurNotes.Director.WinUI/TimelineScrubber.cs" Link="TimelineScrubber.cs" /></ItemGroup>
 </Project>

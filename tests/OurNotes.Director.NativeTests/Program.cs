@@ -2,6 +2,9 @@
 // shipped Core/MotionSync libraries and does not need a game archive or model.
 try
 {
+    if(args.Length==3&&args[0]=="--stage-authoring")return await CreativeStagingNativeTests.RunAsync(args[1],args[2]);
+    if (args.Length == 1 && args[0] == "--preview-editing") return await PreviewEditingTests.RunAsync();
+    if (args.Length == 3 && args[0] == "--creative-audio") return await CreativeAudioTests.RunAsync(args[1],args[2]);
     if (args.Length == 2 && args[0] == "--runtime-package") return RuntimeDependencyTests.Run(args[1]);
     if (args.Length == 2 && args[0] == "--home-fixture") return HomeRenderingTests.WriteFixture(args[1]);
     if (args.Length == 2 && args[0] == "--scene-fixture") return RealtimePreviewTests.WriteFixture(args[1]);

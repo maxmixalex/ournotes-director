@@ -79,7 +79,7 @@ public sealed partial class AdvUi : IDisposable
         typing=false;
     }
     void StopVoices(){foreach(int id in voices)audio.Stop(id);voices.Clear();}
-    int[] PlayVoices(AdvRow r,bool lipSync=false){StopVoices();string split=Archive.S(settings,"_targetNameSplitKey");var names=r.Text("TargetName").Split(split==""?",":split,StringSplitOptions.RemoveEmptyEntries);int index=0;foreach(var id in r.Data["VoiceIDs"]?.AsArray()??[]){var sound=audio.Play(id!.GetValue<long>(),crossFade:.3f);voices.Add(sound.Id);if(lipSync&&!r.Flag("IgnoreLipSync")&&index<names.Length&&ResolveCharacter?.Invoke(names[index]) is Actor actor)AttachVoiceLipSync(actor,sound);index++;}return voices.ToArray();}
+    int[] PlayVoices(AdvRow r,bool lipSync=false){r=ResolveExternalVoice(r);StopVoices();string split=Archive.S(settings,"_targetNameSplitKey");var names=r.Text("TargetName").Split(split==""?",":split,StringSplitOptions.RemoveEmptyEntries);int index=0;foreach(var id in r.Data["VoiceIDs"]?.AsArray()??[]){var sound=audio.Play(id!.GetValue<long>(),crossFade:.3f);voices.Add(sound.Id);if(lipSync&&!r.Flag("IgnoreLipSync")&&index<names.Length&&ResolveCharacter?.Invoke(names[index]) is Actor actor)AttachVoiceLipSync(actor,sound);index++;}return voices.ToArray();}
     public static string SpeakerName(AdvRow row,JsonNode? masterIds,Func<string,string> localize)
     {
         if(row.Text("TargetName")==""||row.Number("TargetStatus")==2)return "";
@@ -101,7 +101,11 @@ public sealed partial class AdvUi : IDisposable
         float remaining=p.CalcDuration(Actor.N(settings["_minTalkDisplayTime"]))-(loop.Time-start);foreach(var w in p.DelayAdjusted(remaining))yield return w;
         yield return loop.YieldUpdate();yield return loop.YieldUpdate();
     }
-    IEnumerable<AdvWait> Voice(AdvRow r,AdvPlayback p){yield return p.NoWait(r,VoiceInner(r,p));}
+    IEnumerable<AdvWait> Voice(AdvRow r,AdvPlayback p)
+    {
+        if(r.Data["AtFrame"] is not null){foreach(var wait in ClipVoice(r,p))yield return wait;}
+        else yield return p.NoWait(r,VoiceInner(r,p));
+    }
     IEnumerable<AdvWait> VoiceInner(AdvRow r,AdvPlayback p)
     {
         int scope=++voiceScope;if(audio.LastBgmOrSeFrame==loop.Frame)yield return loop.DelayFrames(2);if(scope!=voiceScope)yield break;

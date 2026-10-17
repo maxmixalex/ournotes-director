@@ -14,7 +14,7 @@ public static class DirectorSequence
         using var renderer=new AdvStoryRenderer(archive,site,dll,adv,language,width,height,script,ffmpeg,supersample);
         var document=DirectorProject.Document(script);var dependencyHashes=new SortedDictionary<string,string>();
         string models=archive.SitePath(site,"models");
-        foreach(string file in Directory.EnumerateFiles(models,"*.json"))dependencyHashes[Path.GetFileName(file)]=Archive.Hash(File.ReadAllBytes(file));
+        foreach(string file in Directory.Exists(models)?Directory.EnumerateFiles(models,"*.json"):[])dependencyHashes[Path.GetFileName(file)]=Archive.Hash(File.ReadAllBytes(file));
         foreach(var row in new[]{"initialize","commands","finalize"}.SelectMany(key=>(document[key] as JsonArray??new JsonArray()).OfType<JsonNode>())){
             if(row["Values"]?["backgroundImage"]?["path"] is {} image){string path=Path.GetFullPath(image.ToString(),Path.GetDirectoryName(Path.GetFullPath(script))!);dependencyHashes[path]=Archive.Hash(File.ReadAllBytes(path));}
         }
@@ -24,7 +24,7 @@ public static class DirectorSequence
             var prior=Archive.ReadJson(report);if(Archive.S(prior,"jobHash")!=jobHash)throw new InvalidDataException("Resume input, resources, renderer or GPU changed; choose a new directory");
             foreach(var pair in prior["frameHashes"]!.AsObject())hashes[int.Parse(pair.Key)]=pair.Value!.ToString();
         }
-        Directory.CreateDirectory(output);int count=(int)Math.Ceiling(duration*30),start=(int)Math.Floor(time*30+1e-8),written=0,reused=0,frames=0;bool complete=false,finished=false;
+        Directory.CreateDirectory(output);int count=Math.Max(1,Story.Frames(duration)),start=(int)Math.Floor(time*30+1e-8),written=0,reused=0,frames=0;bool complete=false,finished=false;
         foreach(string file in Directory.EnumerateFiles(output,"*.png"))if(int.TryParse(Path.GetFileNameWithoutExtension(file),out int n)&&n>=count)throw new IOException("Sequence contains frames beyond requested duration");
         void Atomic(string path,byte[] bytes){string temporary=path+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllBytes(temporary,bytes);File.Move(temporary,path,true);}finally{if(File.Exists(temporary))File.Delete(temporary);}}
         void Save()=>Atomic(report,JsonOutput.SerializeToUtf8Bytes(JsonOutput.Object(("jobHash", jobHash), ("complete", complete), ("finished", finished), ("frames", frames), ("frameHashes", hashes), ("width", width), ("height", height), ("fps", 30), ("alpha", "straight"), ("Device", renderer.Device), ("source", Path.GetFullPath(script))),Shot.JsonOptions));

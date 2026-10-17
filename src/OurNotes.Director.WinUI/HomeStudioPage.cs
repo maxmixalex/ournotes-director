@@ -18,13 +18,13 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     const string SceneId = "$scene";
     readonly MainWindow window;
     readonly NativeViewport viewport = new();
-    readonly StudioTimeline timeline = new();
+    readonly ClipTimeline timeline = new();
+    readonly TimelineScrubber scrubber;
     readonly ListView objects = new() { SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     readonly StackPanel properties = Ui.Stack(11);
     readonly TextBlock title = Ui.Text("未打开主页", 15), sourceLabel = Ui.Text("", 12, true);
     readonly CheckBox autoKey = new() { Content = "自动关键帧", IsChecked = true };
     readonly CheckBox previewOnly = new() { Content = "仅预览此角色", IsEnabled = false };
-    readonly CheckBox repeat = new() { Content = "循环播放", IsChecked = true };
     readonly InfoBar notice = new() { IsClosable = true };
     readonly StackPanel welcome;
     readonly Dictionary<string, NumberBox> numbers = new(StringComparer.Ordinal);
@@ -50,7 +50,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
 
     internal HomeStudioPage(MainWindow window)
     {
-        this.window = window;
+        this.window = window; scrubber = new((time, token) => SeekAsync(time, token), error => Notice(error.Message));
         ToolTipService.SetToolTip(autoKey, "开启时只编辑当前时刻；关闭时整体调整已有轨道，保留原有运动和关键帧。");
         HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch;
         var file = StudioLayout.Tool("文件", () => { }, "\uE8B7");
@@ -60,19 +60,24 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         file.Flyout = menu;
         var toolbar = new Grid { ColumnSpacing = 8 };
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); toolbar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var edits = Ui.Row(5, file, StudioLayout.AsyncTool("保存", () => SaveAsync(), "\uE74E"),
-            StudioLayout.Tool("", () => Edit(() => document?.Undo()), "\uE7A7"), StudioLayout.Tool("", () => Edit(() => document?.Redo()), "\uE7A6"));
-        ToolTipService.SetToolTip(edits.Children[2], "撤销 · Ctrl+Z"); ToolTipService.SetToolTip(edits.Children[3], "重做 · Ctrl+Y");
-        edits.Children.Add(StudioMenus.Button("视图", HomeViewMenu));
+        var edits = Ui.Row(4, file, StudioMenus.Button("编辑", HomeEditMenu), StudioMenus.Button("视图", HomeViewMenu));
         toolbar.Children.Add(edits); toolbar.Children.Add(title); Grid.SetColumn(title, 1); title.VerticalAlignment = VerticalAlignment.Center;
-        var finalTools = Ui.Row(7, StudioLayout.AsyncTool("导出…", ExportAsync, "\uE898", true));
+        var finalTools = Ui.Row(8, StudioLayout.AsyncTool("保存", () => SafeAsync(() => SaveAsync()), "\uE74E"), StudioLayout.AsyncTool("导出…", () => SafeAsync(ExportAsync), "\uE898", true));
         toolbar.Children.Add(finalTools); Grid.SetColumn(finalTools, 2);
 
-        var left = new Grid { RowSpacing = 9 };
-        left.RowDefinitions.Add(new() { Height = GridLength.Auto }); left.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); left.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        left.Children.Add(Ui.Stack(8, Ui.Row(6, StudioLayout.Section("主页对象"), StudioMenus.Button("…", HomeObjectMenu)), StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5")));
+        var left = new Grid { RowSpacing = 8 };
+        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        left.RowDefinitions.Add(new() { Height = new(160), MinHeight = 80 });
+        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        left.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
+        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        left.Children.Add(Ui.Row(8, StudioLayout.Section("主页角色"), StudioLayout.AsyncTool("选择…", () => SafeAsync(ChooseHomeAsync), "\uE8E5")));
         left.Children.Add(objects); Grid.SetRow(objects, 1);
-        var footer = Ui.Stack(4, sourceLabel); left.Children.Add(footer); Grid.SetRow(footer, 2);
+        left.Children.Add(StudioLayout.Section("动作素材")); Grid.SetRow((FrameworkElement)left.Children[^1], 2);
+        left.Children.Add(animationSearch); Grid.SetRow(animationSearch, 3);
+        left.Children.Add(animationLibrary); Grid.SetRow(animationLibrary, 4);
+        left.Children.Add(animationHint); Grid.SetRow(animationHint, 5);
         welcome = Ui.Stack(13, new TextBlock { Text = "让主页动起来", FontSize = 21, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center },
             Ui.Text("选择主页，在画布中摆放角色，用时间轴编排动作。", 13, true),
             Ui.Row(8, StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5", true), StudioLayout.AsyncTool("打开项目", () => OpenAsync(), "\uE8E5")),
@@ -94,17 +99,8 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         viewport.ObjectScaled += (_, scale) => ScaleCharacter(scale);
         viewport.FramePresented += (_, frame) => OnFrame(frame);
         viewport.Failed += (_, error) => Notice(error.Message);
-        timeline.SeekRequested += time => _ = SafeAsync(() => SeekAsync(time));
-        timeline.PlayPauseRequested += () => _ = SafeAsync(TogglePlaybackAsync);
-        timeline.DurationChanged += value => { if (!refreshing && document is not null) Edit(() => document.SetDuration(value), reload: true); };
-        timeline.MarkerSelected += marker =>
-        {
-            selectedMarker = marker.Id; var key = document?.TimelineKeys().FirstOrDefault(k => k.Id == marker.Id);
-            Select(key?.CharacterKey ?? SceneId); _ = SafeAsync(() => SeekAsync(marker.Time));
-        };
-        timeline.MarkerMoved += (marker, time) => Edit(() => document?.MoveKey(marker.Id, time));
-        timeline.AddKeyRequested += AddKey;
-        timeline.DeleteKeyRequested += () => { if (selectedMarker is { } id) Edit(() => { document?.DeleteKey(id); selectedMarker = null; }); };
+        timeline.SeekRequested += time => { Pause(); timeline.Position = time; scrubber.Request(time); };
+        ConnectTimeline();
         previewTimer = DispatcherQueue.CreateTimer(); previewTimer.Interval = TimeSpan.FromMilliseconds(35); previewTimer.IsRepeating = false;
         previewTimer.Tick += (_, _) => _ = SafeAsync(ApplyPreviewAsync);
         draftTimer = DispatcherQueue.CreateTimer(); draftTimer.Interval = TimeSpan.FromMilliseconds(800); draftTimer.IsRepeating = false; draftTimer.Tick += (_, _) => SaveDraft();
@@ -201,7 +197,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     }
     void SetDocument(HomeStudioDocument value, Metadata? data = null)
     {
-        Pause(); viewport.InvalidateSource(); document = value; metadata = data; loadVersion++; editVersion++; previewLoaded = false; pendingPreview = null; selectedMarker = null;
+        scrubber.Cancel(); Pause(); viewport.InvalidateSource(); document = value; metadata = data; libraryKey = null; loadVersion++; editVersion++; previewLoaded = false; pendingPreview = null; selectedMarker = null;
         dragStart = dragValue = null; dragTarget = null; dragDocument = null;
         refreshing = true; previewOnly.IsChecked = false; refreshing = false;
         welcome.Visibility = Visibility.Collapsed; notice.IsOpen = false;
@@ -214,7 +210,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         var current = document; var version = ++loadVersion; string archive = ArchivePath;
         var data = await Task.Run(() => ReadMetadata(archive, current.Project.Source, window.Settings.Language), lifetime.Token);
         if (disposed || version != loadVersion || current != document) return;
-        metadata = data; RefreshObjects(); RefreshTimeline(); BuildProperties(); RefreshHeader(); await ReloadPreviewAsync();
+        metadata = data; libraryKey = null; RefreshAnimationLibrary(); RefreshObjects(); RefreshTimeline(); BuildProperties(); RefreshHeader(); await ReloadPreviewAsync();
     }
     async Task ReloadPreviewAsync()
     {
@@ -282,6 +278,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         if (refreshing || document is null) return;
         string? key = id is null or SceneId ? null : id;
         if (metadata is not null && key is not null && !metadata.Characters.Any(c => c.Key == key)) return;
+        if (!selectingTimeline) { selectedMarker = null; timeline.Select(null); }
         bool changed = document.SelectedCharacterKey != key, wasIsolated = previewOnly.IsChecked == true;
         document.SelectedCharacterKey = key;
         refreshing = true;
@@ -289,7 +286,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         previewOnly.IsEnabled = key is not null && metadata?.Characters.FirstOrDefault(c => c.Key == key)?.Supported != false;
         if (key is null) previewOnly.IsChecked = false;
         viewport.SelectedTargetId = key;
-        refreshing = false; BuildProperties();
+        refreshing = false; BuildProperties(); RefreshAnimationLibrary();
         if (changed && wasIsolated) _ = SafeAsync(ReloadPreviewAsync);
     }
     void RefreshObjects()
@@ -301,7 +298,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
             foreach (var character in metadata?.Characters ?? [])
             {
                 bool visible = document.TransformAt(character.Key, document.Playhead).Visible;
-                var item = new ListViewItem { Tag = character.Key, Content = Ui.Stack(2, Ui.Text(character.Name + (visible ? "" : " · 已隐藏")), Ui.Text(character.Key, 11, true)) };
+                var item = new ListViewItem { Tag = character.Key, Content = Ui.Text(character.Name + (visible ? "" : " · 已隐藏")) };
                 ToolTipService.SetToolTip(item, character.Supported ? "拖动摆放 · Ctrl+滚轮缩放角色 · 右键导出素材" : character.Error);
                 StudioMenus.Context(item, () => { Select(character.Key); return document?.SelectedCharacterKey == character.Key; }, HomeObjectMenu);
                 objects.Items.Add(item);
@@ -316,28 +313,15 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         title.Text = document is null ? "未打开主页" : (document.FilePath is { } file ? Path.GetFileNameWithoutExtension(file) : metadata?.Name ?? "未命名主页") + (HasUnsavedChanges ? " · 未保存" : "");
         sourceLabel.Text = document is null ? "" : (document.Project.Source.Site == "jp" ? "日服" : "国际服") + " · 主页 " + document.Project.Source.SpotId;
     }
-    void RefreshTimeline()
-    {
-        if (document is null) return;
-        refreshing = true; timeline.Duration = document.Project.Duration; timeline.Position = document.Playhead;
-        var keys = document.TimelineKeys(); var tracks = new List<StudioTimelineTrack>();
-        foreach (var character in metadata?.Characters ?? [])
-            foreach (var kind in new[] { "transform", "animation" })
-            {
-                string id = character.Key + ":" + kind;
-                tracks.Add(new(id, character.Name + (kind == "transform" ? " · 位置" : " · 动作"), keys.Where(k => k.TrackId == id).Select(k => new StudioTimelineMarker(k.Id, k.TrackId, k.Time, k.Label, k.Kind)).ToArray()));
-            }
-        tracks.Add(new("grade", "画面 · 调色", keys.Where(k => k.TrackId == "grade").Select(k => new StudioTimelineMarker(k.Id, k.TrackId, k.Time, k.Label, k.Kind)).ToArray()));
-        timeline.SetTracks(tracks); refreshing = false;
-    }
-
     void BuildProperties()
     {
+        autoKey.Visibility = document?.SelectedCharacterKey is not null || selectedMarker is not null ? Visibility.Visible : Visibility.Collapsed;
         refreshing = true; properties.Children.Clear(); numbers.Clear(); animationBox = loopBox = framingBox = null; visibleBox = roomBox = postBox = null;
         if (document is null) { properties.Children.Add(Ui.Text("选择主页，开始创作。", 13, true)); refreshing = false; return; }
         if (document.SelectedCharacterKey is not { } key)
         {
-            properties.Children.Add(Ui.Text("画布", 16));
+            properties.Children.Add(Ui.Text("画布与播放范围", 16));
+            AddNumber("range", "播放范围（秒）", 1d/120, 36000, 1, () => { if (!refreshing && document is not null) Edit(() => document.SetDuration(Number("range", document.Project.Duration)), reload: true); });
             AddNumber("canvasWidth", "宽度（像素）", 16, RenderDimensions.MaxSide, 16, Pause);
             AddNumber("canvasHeight", "高度（像素）", 16, RenderDimensions.MaxSide, 8, Pause);
             AddNumber("canvasFps", "帧率", 1, 120, 1, Pause);
@@ -356,11 +340,13 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
             properties.Children.Add(Ui.Text("关闭房间后，画布保留原生透明背景。", 12, true));
             var framing = framingBox = Ui.Choice("构图", [("scene", "原场景相机"), ("fit", "原始动画固定适配")], document.Project.EditState.Framing);
             framing.SelectionChanged += (_, _) => Edit(() => document.SetScene(framing: Ui.Selected(framing))); properties.Children.Add(framing);
+            int gradeStart = properties.Children.Count;
             AddNumber("exposure", "曝光（EV）", -10, 10, .1, GradeChanged);
             AddNumber("contrast", "对比度", 0, 4, .05, GradeChanged);
             AddNumber("saturation", "饱和度", 0, 4, .05, GradeChanged);
             AddNumber("vignette", "暗角", 0, 1, .05, GradeChanged);
-            properties.Children.Add(StudioLayout.Tool("添加调色关键帧", () => Edit(() => document.AddGradeKey(document.Playhead)), "\uE710"));
+            properties.Children.Add(StudioLayout.Tool("在播放头记录调色", () => Edit(() => document.AddGradeKey(document.Playhead)), "\uE710"));
+            FoldFields("调色", gradeStart, selectedMarker is not null);
         }
         else
         {
@@ -368,24 +354,41 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
             properties.Children.Add(Ui.Text(DisplayNames.Character(character?.Name ?? key), 16));
             
             if (character?.Supported == false) { properties.Children.Add(Ui.Text(character.Error ?? "该角色暂不支持独立编辑。", 13, true)); refreshing = false; return; }
+            bool editingMotion = selectedMarker is { } marker && timelineItems.TryGetValue(marker, out var selectedItem) && selectedItem.Kind == "motion";
+            if (editingMotion)
+            {
             animationBox = Ui.Choice("动作", new[] { ("", "原始动作") }.Concat((character?.Animations ?? []).Select(name => (name, DisplayNames.Animation(name)))), "");
             loopBox = Ui.Choice("循环", [("source", "沿用原设置"), ("once", "播放一次"), ("loop", "持续循环")], "source");
             animationBox.SelectionChanged += (_, _) => AnimationChanged(); loopBox.SelectionChanged += (_, _) => AnimationChanged();
             properties.Children.Add(animationBox); properties.Children.Add(loopBox);
             AddNumber("speed", "动作速度", .05, 8, .1, AnimationChanged);
             AddNumber("sourceTime", "动作内起点（秒）", 0, 36000, .1, AnimationChanged);
-            properties.Children.Add(StudioLayout.Tool("在此处开始动作", AnimationChanged, "\uE768"));
+
+                properties.Children.Add(Ui.Text("在左侧双击动作可替换这个片段；拖动时间轴片段改变开始位置。", 11, true));
+            }
+            else properties.Children.Add(Ui.Text("从左侧添加动作；在画布中拖动摆放。", 11, true));
+            int placementStart = properties.Children.Count;
             visibleBox = new CheckBox { Content = "显示角色" }; visibleBox.Checked += (_, _) => TransformChanged(); visibleBox.Unchecked += (_, _) => TransformChanged(); properties.Children.Add(visibleBox);
             AddNumber("x", "水平位移（%）", -1000, 1000, 1, TransformChanged);
             AddNumber("y", "垂直位移（%）", -1000, 1000, 1, TransformChanged);
             AddNumber("scale", "缩放（%）", 1, 2000, 5, TransformChanged);
+            if (editingMotion) FoldFields("角色摆放", placementStart, false);
             
             
             
         }
         foreach (var pair in new[] { ("x", "y"), ("speed", "sourceTime"), ("canvasWidth", "canvasHeight"), ("exposure", "contrast"), ("saturation", "vignette") })
             if (numbers.TryGetValue(pair.Item1, out var first) && numbers.TryGetValue(pair.Item2, out var second)) StudioLayout.PairFields(properties, first, second);
-        refreshing = false; RefreshValues();
+        refreshing = false; RefreshValues(); RefreshAnimationLibrary();
+    }
+    void FoldFields(string heading, int start, bool expanded)
+    {
+        var group = Ui.Stack(10);
+        while (properties.Children.Count > start)
+        {
+            var child = properties.Children[start]; properties.Children.RemoveAt(start); group.Children.Add(child);
+        }
+        properties.Children.Add(new Expander { Header = heading, Content = group, IsExpanded = expanded, HorizontalAlignment = HorizontalAlignment.Stretch });
     }
     void ApplyCanvas()
     {
@@ -409,7 +412,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         void Value(string id, double value) { if (numbers.TryGetValue(id, out var number) && number.FocusState == FocusState.Unfocused) number.Value = value; }
         if (document.SelectedCharacterKey is { } key)
         {
-            var transform = document.TransformAt(key, document.Playhead); var cue = document.Track(key).AnimationAt(document.Playhead);
+            var transform = document.TransformAt(key, PropertyTime); var cue = document.Track(key).AnimationAt(PropertyTime);
             Value("x", transform.X * 100); Value("y", transform.Y * 100); Value("scale", transform.Scale * 100); Value("speed", cue?.Speed ?? 1);
             Value("sourceTime", cue?.SourceTime ?? 0);
             if (visibleBox is not null) visibleBox.IsChecked = transform.Visible;
@@ -418,11 +421,11 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         }
         else
         {
-            Value("canvasWidth", document.Project.Output.Width); Value("canvasHeight", document.Project.Output.Height); Value("canvasFps", document.Project.Output.Fps);
+            Value("range", document.Project.Duration); Value("canvasWidth", document.Project.Output.Width); Value("canvasHeight", document.Project.Output.Height); Value("canvasFps", document.Project.Output.Fps);
             if (roomBox is not null) roomBox.IsChecked = document.Project.EditState.Background;
             if (postBox is not null) postBox.IsChecked = document.Project.EditState.PostProcessing;
             if (framingBox is not null) framingBox.SelectedItem = framingBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag?.ToString() == document.Project.EditState.Framing);
-            var grade = document.Project.EditState.GradeAt(document.Playhead);
+            var grade = document.Project.EditState.GradeAt(PropertyTime);
             Value("exposure", grade.Exposure); Value("contrast", grade.Contrast); Value("saturation", grade.Saturation); Value("vignette", grade.Vignette);
         }
         refreshing = false;
@@ -431,18 +434,18 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     void TransformChanged()
     {
         if (refreshing || document?.SelectedCharacterKey is not { } key) return;
-        Edit(() => document.SetTransform(key, document.Playhead, new(Number("x", 0) / 100, Number("y", 0) / 100, Number("scale", 100) / 100, visibleBox?.IsChecked != false), autoKey.IsChecked == true));
+        Edit(() => document.SetTransform(key, PropertyTime, new(Number("x", 0) / 100, Number("y", 0) / 100, Number("scale", 100) / 100, visibleBox?.IsChecked != false), autoKey.IsChecked == true));
     }
     void GradeChanged()
     {
         if (refreshing || document is null) return;
-        Edit(() => document.SetGrade(document.Playhead, new(Number("exposure", 0), Number("contrast", 1), Number("saturation", 1), Number("vignette", 0)), autoKey.IsChecked == true));
+        Edit(() => document.SetGrade(PropertyTime, new(Number("exposure", 0), Number("contrast", 1), Number("saturation", 1), Number("vignette", 0)), autoKey.IsChecked == true));
     }
     void AnimationChanged()
     {
         if (refreshing || document?.SelectedCharacterKey is not { } key || animationBox is null || loopBox is null) return;
         string name = Ui.Selected(animationBox); bool? loop = Ui.Selected(loopBox) switch { "once" => false, "loop" => true, _ => null };
-        Edit(() => document.SetAnimation(key, document.Playhead, name.Length == 0 ? null : name, loop, Number("speed", 1), Number("sourceTime", 0)));
+        Edit(() => document.SetAnimation(key, PropertyTime, name.Length == 0 ? null : name, loop, Number("speed", 1), Number("sourceTime", 0)));
     }
     void AddKey()
     {
@@ -480,37 +483,38 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         tracks[key] = track.WithTransformAt(time, value, keyframe);
         return state with { Characters = tracks };
     }
-    async Task SeekAsync(double time)
+    async Task SeekAsync(double time,CancellationToken cancellationToken=default)
     {
         if (document is null) return; Pause(); document.Playhead = document.Snap(time); timeline.Position = document.Playhead;
         RefreshValues();
-        if (previewLoaded && !suppressPreview) { await ApplyPreviewAsync(); await viewport.SeekAsync(document.Playhead); }
+        if (previewLoaded && !suppressPreview) { await ApplyPreviewAsync(); cancellationToken.ThrowIfCancellationRequested(); await viewport.SeekAsync(document.Playhead,cancellationToken); }
     }
     async Task TogglePlaybackAsync()
     {
+        await scrubber.FlushAsync();
         if (document is null) return;
         if (viewport.IsPlaying) { Pause(); return; }
         if (!previewLoaded) await ReloadPreviewAsync();
         if (!previewLoaded) return;
         await ApplyPreviewAsync();
-        if (document.Playhead >= document.Project.Duration - 1d / document.Project.Output.Fps) await viewport.SeekAsync(0);
-        playbackRequested = true; viewport.Play(); timeline.IsPlaying = true;
+        if (document.Playhead < timeline.PlaybackStart || document.Playhead >= timeline.PlaybackLastTime - .5 / document.Project.Output.Fps) await viewport.SeekAsync(timeline.PlaybackStart);
+        playbackRequested = true; viewport.Play(timeline.WorkRange?.End); timeline.IsPlaying = true;
     }
     void OnFrame(PreviewFrame frame)
     {
         if (disposed || document is null || !previewLoaded || !viewport.HasCurrentSource) return;
-        document.Playhead = Math.Min(frame.Time, document.Project.Duration); timeline.Position = document.Playhead; timeline.IsPlaying = frame.IsPlaying;
+        if (!scrubber.IsBusy) { document.Playhead = Math.Min(frame.Time, document.Project.Duration); timeline.Position = document.Playhead; } timeline.IsPlaying = frame.IsPlaying;
         if (!frame.IsPlaying) RefreshValues();
-        if (playbackRequested && !frame.IsPlaying && frame.Frame >= Math.Floor(document.Project.Duration * document.Project.Output.Fps + 1e-8))
+        if (playbackRequested && !frame.IsPlaying && frame.Frame >= Math.Floor(timeline.PlaybackLastTime * document.Project.Output.Fps + 1e-8))
         {
             playbackRequested = false;
-            if (active && repeat.IsChecked == true)
-                _ = SafeAsync(async () => { await viewport.SeekAsync(0); if (active) { playbackRequested = true; viewport.Play(); } });
+            if (active && timeline.Repeat)
+                _ = SafeAsync(async () => { await viewport.SeekAsync(timeline.PlaybackStart); if (active) { playbackRequested = true; viewport.Play(timeline.WorkRange?.End); } });
         }
     }
 
     async Task ExportAsync()
-    { CommitDrag(); if (document is not null) { Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead); } }
+    { CommitDrag(); if (document is not null) { Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead, initialRange:timeline.WorkRange); } }
     async Task ShowJsonAsync()
     {
         CommitDrag(); Pause();
@@ -567,6 +571,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     }
     internal void Deactivate()
     {
+        scrubber.Cancel();
         active = false; Pause(); previewTimer.Stop(); draftTimer.Stop(); SaveDraft();
     }
     public async ValueTask DisposeAsync()
