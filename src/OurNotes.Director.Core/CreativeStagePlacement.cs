@@ -15,6 +15,8 @@ public static class CreativeStagePlacement
         int frame = Story.Frames(time);
         var existing = scene.Clips.OfType<JsonObject>().LastOrDefault(c =>
             c["placementGesture"]?.GetValue<bool>() == true && c["enabled"]?.GetValue<bool>() != false &&
+            c["sourcePerformance"]?.GetValue<bool>() != true && c["data"]?["cmd"]?.ToString() == "MoveToDirection" &&
+            CreativeScene.Number(c["data"]!.AsObject(), "Duration") == 0 &&
             c["actor"]?.ToString() == actor && Story.Frames(CreativeScene.Number(c, "start")) == frame);
         if (existing is not null)
         {

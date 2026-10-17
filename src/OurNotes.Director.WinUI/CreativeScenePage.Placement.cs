@@ -51,6 +51,7 @@ internal sealed partial class CreativeScenePage
     async Task CommitPlacementAsync(PlacementGesture gesture, Vector3 delta)
     {
         if (delta.LengthSquared() < 1e-12f) return;
+        string before = document.ToJson();
         try
         {
             await EditAsync(() => selectedClip = CreativeStagePlacement.MoveHere(document,
@@ -60,7 +61,7 @@ internal sealed partial class CreativeScenePage
         catch
         {
             // An invalid document edit must not leave a transient pose masquerading as saved.
-            if (ReferenceEquals(gesture.Document, document)) await ReloadAsync();
+            if (ReferenceEquals(gesture.Document, document) || document.ToJson() == before) await ReloadAsync();
             throw;
         }
     }
