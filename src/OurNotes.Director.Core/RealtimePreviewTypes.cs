@@ -1,7 +1,7 @@
 namespace OurNotes.Director.Core;
 
 /// <summary>Bounds of the current native drawable geometry, normalized to the output canvas.</summary>
-public sealed record PreviewTarget(string Id, string Label, double X, double Y, double Width, double Height);
+public sealed record PreviewTarget(string Id, string Label, double X, double Y, double Width, double Height, StageDragPlane? StagePlacement = null);
 
 /// <summary>A private project snapshot, using the same document and renderer as final scene export.</summary>
 public sealed record ScenePreviewSource(string ArchivePath, string ProjectPath, string CubismPath,

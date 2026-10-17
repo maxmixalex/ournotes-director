@@ -37,7 +37,7 @@ internal sealed partial class CreativeScenePage
         follow.Click += (_, _) => timeline.FollowSelection = follow.IsChecked; menu.Items.Add(follow);
         menu.Items.Add(StudioMenus.Item("画布设置",()=>{selectedActor=selectedClip=null;BuildInspector();},"\uE740"));
         menu.Items.Add(StudioMenus.Async("场景 JSON…",()=>Safe(ShowJsonAsync),"\uE943"));
-        menu.Items.Add(StudioMenus.Async("查看原生指令…",()=>Safe(ShowNativeAsync),"\uE8A5"));return menu;
+        menu.Items.Add(StudioMenus.Async("查看原生指令…",()=>Safe(ShowNativeAsync),"\uE8A5"));AddPlacementModeMenu(menu);return menu;
     }
     MenuFlyout ActorMenu()
     {

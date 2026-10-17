@@ -27,23 +27,12 @@ internal sealed partial class CreativeScenePage
         viewport.Pause();
         if (!Directory.Exists(window.Settings.ArchivePath)) { window.ShowResourceManager(); return; }
         await EnsureStageOptionsAsync();
-        var find = new TextBox { PlaceholderText = "筛选舞台…" };
-        var list = new ListView { Height = 300, MinWidth = 370, SelectionMode = ListViewSelectionMode.Single };
-        var dialog = new ContentDialog { XamlRoot = window.RootXaml, Title = "舞台与原作站位", PrimaryButtonText = "使用舞台", CloseButtonText = "取消",
-            IsPrimaryButtonEnabled = false, Content = Ui.Stack(12, find, list) };
-        void Populate()
-        {
-            list.Items.Clear();
-            foreach (var stage in stageOptions.Where(s => (s.Label + " " + s.Key).Contains(find.Text.Trim(), StringComparison.OrdinalIgnoreCase)))
-            {
-                var item = new ListViewItem { Tag = stage, Content = Ui.Row(10, new FontIcon { Glyph = "\uE91B", FontSize = 18 },
-                    new TextBlock { Text = stage.Label, IsTextSelectionEnabled = false }), HorizontalContentAlignment = HorizontalAlignment.Stretch };
-                ToolTipService.SetToolTip(item, stage.Key); list.Items.Add(item);
-            }
-        }
-        Populate(); find.TextChanged += (_, _) => Populate();
-        list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not ListViewItem { Tag: NativeStageOption chosen }) return;
+        var owner = document;
+        await using var picker = new StagePickerDialog(window.RootXaml, new Archive(window.Settings.ArchivePath),
+            document.Site, DirectorProject.SourceId(document.Source), document.Language, stageOptions,
+            CreativeFocusEditing.StageAt(document, playhead));
+        var chosen = await picker.ShowAsync();
+        if (chosen is null || !ReferenceEquals(owner, document)) return;
         await UseStageAsync(chosen);
     }
     async Task UseStageAsync(NativeStageOption stage)
@@ -121,7 +110,9 @@ internal sealed partial class CreativeScenePage
         string id = S(actor, "id");
         StageChoice("初始站位", CreativeStaging.Slots.Select(p => (p.ToString(), CreativeStaging.SlotName(p))), actor["stageSlot"]!.ToString(),
             key => EditAsync(() => CreativeStaging.AssignSlot(document, id, int.Parse(key))));
-        StageNumber("初始前后距离", N(actor, "depth"), -20, 20, value => EditAsync(() => document.Actor(id)["depth"] = value));
+        inspector.Children.Add(Ui.Row(6, Button("靠近镜头", () => MoveStageDepthAsync(id, -.25f), "\uE74A"),
+            Button("远离镜头", () => MoveStageDepthAsync(id, .25f), "\uE74B")));
+        ToolTipService.SetToolTip(inspector.Children[^1], "在播放头记录原作空间位移；不改变遮挡顺序。Ctrl+滚轮可连续调整。 ");
         inspector.Children.Add(Button("对焦此人", () => FocusActorAsync(id), "\uE722", true));
         inspector.Children.Add(Button("添加前后移动", () => EditAsync(() => selectedClip = CreativeStaging.AddDepth(document, id, playhead, -.5, .5)), "\uE7C2"));
         StageChoice("同深度遮挡顺序", new[] { ("", "沿用原作"), ("Forward", "置于前面"), ("Back", "置于后面") }, S(actor, "layer"),
@@ -141,6 +132,16 @@ internal sealed partial class CreativeScenePage
                     var c = document.Clip(id); c["data"]!["cmd"] = value;
                     c["label"] = value == "Forward" ? "置于前面" : "置于后面";
                 }));
+            return true;
+        }
+        if (kind == "placement")
+        {
+            int start = inspector.Children.Count;
+            StageNumber("水平位移", N(row, "Parameter1"), -1000, 1000, v => EditAsync(() => document.Clip(id)["data"]!["Parameter1"] = v));
+            StageNumber("垂直位移", N(row, "Parameter2"), -1000, 1000, v => EditAsync(() => document.Clip(id)["data"]!["Parameter2"] = v));
+            StageNumber("前后位移", N(row, "Parameter3"), -1000, 1000, v => EditAsync(() => document.Clip(id)["data"]!["Parameter3"] = v));
+            FoldStagingFields(start, "精确位移", false);
+            inspector.Children.Add(new TextBlock { Text = "在画布上拖动人物继续摆放；Ctrl+滚轮调整前后距离。", FontSize = 12, TextWrapping = TextWrapping.Wrap });
             return true;
         }
         if (kind == "depth")
@@ -170,6 +171,7 @@ internal sealed partial class CreativeScenePage
         { var c = document.Clip(id); c["actor"] = target; c["actorSlot"] = true; c["data"]!["TargetName"] = target; }));
         StageChoice("镜头方式", new[] { ("rack", "保持构图，只转移焦点"), ("native", "原作镜头对焦"), ("layer", "单独调整虚化层") }, mode,
             value => ChangeFocusModeAsync(id, value));
+        int advancedStart = inspector.Children.Count;
         if (mode == "rack")
         {
             StageNumber("其他人物虚化（%）", N(clip["rackFocus"]!.AsObject(), "others") * 100, 0, 100,
@@ -192,8 +194,17 @@ internal sealed partial class CreativeScenePage
         }
         StageChoice("过渡", new[] { ("Linear", "匀速"), ("InOutQuad", "柔和进出"), ("OutQuad", "逐渐减速") }, CreativeScene.Text(row, "Parameter2", "InOutQuad"),
             value => EditAsync(() => document.Clip(id)["data"]!["Parameter2"] = value));
+        if (mode == "rack") FoldStagingFields(advancedStart, "虚化与过渡", false);
         return true;
     }
+    void FoldStagingFields(int start, string title, bool expanded)
+    {
+        var fields = Ui.Stack(10);
+        while (inspector.Children.Count > start)
+        { var child = inspector.Children[start]; inspector.Children.RemoveAt(start); fields.Children.Add(child); }
+        inspector.Children.Add(new Expander { Header = title, Content = fields, IsExpanded = expanded, HorizontalAlignment = HorizontalAlignment.Stretch });
+    }
+
     async Task ChangeFocusModeAsync(string id, string mode)
     {
         // Awaiting resource discovery must not apply to a different project after Open/New.
@@ -217,7 +228,12 @@ internal sealed partial class CreativeScenePage
         // pasted/imported here; the only fixture inputs are real asset choices.
         savedText=document.ToJson();await NewAsync();
         _ = new Archive(fixture).Manifest("intl", "stories", DirectorProject.LibrarySource);
-        await EnsureStageOptionsAsync();await UseStageAsync(stageOptions.First());
+        await EnsureStageOptionsAsync();
+        string emptyBefore = document.ToJson();
+        await using (var picker = new StagePickerDialog(window.RootXaml, new Archive(fixture), document.Site,
+            DirectorProject.LibrarySource, document.Language, stageOptions, "")) await picker.VerifyAndCancelAsync(check);
+        check(document.ToJson() == emptyBefore, "浏览和取消舞台选择不创建场景指令，也不改写空白项目");
+        await UseStageAsync(stageOptions.First());
         var archive=new Archive(fixture);var manifest=archive.Manifest("intl","stories","10462");
         var definition=JsonNode.Parse(archive.Logical("intl",manifest,"story.json"))!;
         var modelIds=definition["models"]!.AsObject().Select(p=>p.Value!.ToString()).Distinct().Take(2).ToArray();
@@ -264,6 +280,23 @@ internal sealed partial class CreativeScenePage
         await ChooseControlAsync("镜头方式", "rack");
         check(CreativeFocusEditing.Mode(document.Clip(focused)) == "rack" && !notice.IsOpen,
             "镜头方式经实际控件切换后可返回焦点片段，原生预览没有报错");
+        var originalPlane = viewport.LastFrame!.Targets.Single(t => t.Id == first).StagePlacement!;
+        var sourceFrame = viewport.LastFrame.Frame;
+        await viewport.SendDragSmokeAsync(window, first, .04, -.015);
+        var deadline = DateTime.UtcNow.AddSeconds(8);
+        while ((stageGesture is not null || selectedClip is null || document.Clip(selectedClip)["placementGesture"]?.GetValue<bool>() != true)
+            && DateTime.UtcNow < deadline) await Task.Delay(30);
+        await loadGate.WaitAsync(); loadGate.Release();
+        check(document.Clips.OfType<JsonObject>().Any(c => c["placementGesture"]?.GetValue<bool>() == true)
+            && !document.Compile()["commands"]!.AsArray().Any(c => c?["cmd"]?.ToString() == "Director.Actor"),
+            "系统鼠标拖动实际画布，写入原作 MoveToDirection，不写入画面偏移扩展");
+        var dragged = viewport.LastFrame!.Targets.Single(t => t.Id == first).StagePlacement!;
+        check(dragged.Position != originalPlane.Position && dragged.Position.Z == originalPlane.Position.Z
+            && viewport.LastFrame.Frame == sourceFrame, "拖动不改变源深度或声音与动作时间");
+        var savedPixels = viewport.LastFrame.Pixels.Rgba.ToArray();
+        await SeekAsync(sourceFrame / 30d);
+        check(viewport.LastFrame!.Pixels.Rgba.SequenceEqual(savedPixels), "鼠标拖动后的图像与保存指令重放一致");
+        await App.CaptureCheckpointAsync("native-space-drag");
 
     }
 

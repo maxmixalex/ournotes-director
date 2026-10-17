@@ -151,6 +151,13 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await session.SeekAsync(seconds,cancellationToken);
         await AwaitPresentationAsync();
     }
+    public async Task PauseForEditingAsync()
+    { session.Pause(); await session.SynchronizeAsync(); await AwaitPresentationAsync(); }
+    public async Task PreviewStagePositionAsync(string actor,int slot,System.Numerics.Vector3 position,long expectedSession,int expectedFrame)
+    {
+        await session.PreviewStagePositionAsync(actor,slot,position,expectedSession,expectedFrame);
+        await AwaitPresentationAsync();
+    }
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
     {
         await session.ApplySceneEditsAsync(rows);

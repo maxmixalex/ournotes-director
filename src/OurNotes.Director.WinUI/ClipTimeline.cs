@@ -256,7 +256,7 @@ internal sealed partial class ClipTimeline : UserControl
         }
     }
     public static string KindName(string kind) => kind switch
-    { "motion" => "动作", "expression" => "表情", "voice" => "对白与语音", "transform" => "位置", "camera" => "镜头", "grade" => "画面", "setup" => "加载", "focus" => "焦点", "depth" => "前后移动", "stage" => "舞台", "hold" => "停留", _ => "原有演出" };
+    { "motion" => "动作", "expression" => "表情", "voice" => "对白与语音", "transform" => "位置", "camera" => "镜头", "grade" => "画面", "setup" => "加载", "focus" => "焦点", "placement" => "人物摆位", "depth" => "前后移动", "stage" => "舞台", "hold" => "停留", _ => "原有演出" };
     public void Fit()
     {
         if (scroll.ActualWidth <= 20) { fitPending = true; return; }

@@ -95,7 +95,7 @@ public sealed class AdvStoryRenderer : IDisposable
     public IReadOnlyList<PreviewTarget> PreviewTargets()
     {
         double top=viewportY/(double)outputHeight,height=gl.Height/(double)supersample/outputHeight;
-        return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height}).ToArray();
+        return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height,StagePlacement=target.StagePlacement is {} plane?plane with{ViewportHeight=height}:null}).ToArray();
     }
     void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
     {

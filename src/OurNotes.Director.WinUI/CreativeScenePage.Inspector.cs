@@ -165,7 +165,7 @@ internal sealed partial class CreativeScenePage
             var a=document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==id);
             if(a is not null&&!IsSourceActor(id)&&(playhead<1d/30||recordTransform.IsChecked!=true)){a["x"]=x;a["y"]=y;a["height"]=height;return;}
             double at=recordTransform.IsChecked==true?playhead:0;
-            var existing=document.Clips.OfType<JsonObject>().LastOrDefault(c=>S(c,"actor")==id&&S(c,"kind")=="transform"&&c["sourcePerformance"]?.GetValue<bool>()!=true&&Math.Abs(N(c,"start")-at)<.5/30);
+            var existing=document.Clips.OfType<JsonObject>().LastOrDefault(c=>S(c,"actor")==id&&S(c,"kind")=="transform"&&c["sourcePerformance"]?.GetValue<bool>()!=true&&c["data"]?["cmd"]?.ToString()=="Director.Actor"&&Math.Abs(N(c,"start")-at)<.5/30);
             if(existing is not null){existing["data"]=row;selectedClip=S(existing,"id");}else selectedClip=document.AddClip(id,"transform",at,1d/30,row,"位置");
         },false);
         await CommitLiveAsync();
@@ -183,12 +183,13 @@ internal sealed partial class CreativeScenePage
     }
     async Task DragAsync(PreviewDrag drag)
     {
+        if(nativePlacement && IsSourceActor(drag.TargetId)) { await DragStageAsync(drag); return; }
         if(dragActor!=drag.TargetId){dragActor=drag.TargetId;var pose=ActorTransform(drag.TargetId);dragX=pose.X;dragY=pose.Y;dragHeight=pose.Height;}
         var d=DragDelta(drag.TargetId,drag.DeltaX,drag.DeltaY);double x=dragX+d.X,y=dragY+d.Y;
         if(drag.IsCompleted){dragActor=null;await AddTransformAsync(drag.TargetId,x,y,dragHeight);}
         else if(viewport.HasCurrentSource)await viewport.ApplySceneEditsAsync([TransformRow(drag.TargetId,x,y,dragHeight)]);
     }
-    async Task ScaleAsync(PreviewScale scale){var p=ActorTransform(scale.TargetId);await AddTransformAsync(scale.TargetId,p.X,p.Y,Math.Clamp(p.Height*scale.Factor,.01,20));}
+    async Task ScaleAsync(PreviewScale scale){if(nativePlacement&&IsSourceActor(scale.TargetId)){await MoveStageDepthAsync(scale.TargetId,(float)(-Math.Log(scale.Factor)*2));return;}var p=ActorTransform(scale.TargetId);await AddTransformAsync(scale.TargetId,p.X,p.Y,Math.Clamp(p.Height*scale.Factor,.01,20));}
     async Task<string?> EditJsonDialogAsync(string heading,string text,Action<string> validate)
     {
         var input=new TextBox{Text=text,AcceptsReturn=true,FontFamily=new FontFamily("Consolas"),FontSize=12,MinWidth=460,Height=400,TextWrapping=TextWrapping.NoWrap};

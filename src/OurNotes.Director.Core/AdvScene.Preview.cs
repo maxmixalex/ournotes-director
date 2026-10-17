@@ -31,8 +31,8 @@ public sealed partial class AdvScene
         loop.VerifyThread();
         var result=new List<PreviewTarget>();
         var world=Camera.ViewProjection(gl.Width/(float)gl.Height);
-        foreach(var actor in shown.Values.Distinct())
-            if(actor.PreviewBounds(world) is {} bounds)result.Add(bounds);
+        foreach(var actor in shown.OrderByDescending(p=>p.Value.Prefab.Root.WorldPosition.Z).ThenBy(p=>priority[(p.Key-1)/2]).Select(p=>p.Value).Distinct())
+            if(actor.PreviewBounds(world) is {} bounds)result.Add(bounds with { StagePlacement = StageDragGeometry(actor.Spec.Name) });
         foreach(var (actor,state) in directorActors.OrderBy(pair=>pair.Value.Order))
             if(state.Visible&&actor.PreviewBounds(state.Space=="screen"?DirectorProjection():world) is {} bounds)result.Add(bounds);
         return result;

@@ -20,6 +20,15 @@ static class CreativeStagingNativeTests
             var models = definition["models"]!.AsObject().Select(p => p.Value!.ToString()).Distinct().Take(2).ToArray();
             string core = NativeDependencies.CoreLibrary(baseDirectory: NativeTestGraphics.PackageDirectory), ffmpeg = NativeDependencies.MediaTool("ffmpeg", baseDirectory: NativeTestGraphics.PackageDirectory);
             var stage = NativeStageCatalog.Read(archive, "intl").First();
+            await using (var previews = new StagePreviewSession(archive, "intl", "10462", "zh-Hans"))
+            {
+                var first = await previews.GetAsync(stage.Key);
+                var cached = await previews.GetAsync(stage.Key);
+                var thumbnail = Png.Decode(first);
+                Check(ReferenceEquals(first, cached) && thumbnail.Width == 320 && thumbnail.Height == 180,
+                    "Stage browser caches actual small native images without loading the source performance");
+                File.WriteAllBytes(Path.Combine(output, "stage-thumbnail.png"), first);
+            }
             var scene = CreativeScene.Blank("intl", "zh-Hans"); scene.Canvas["width"] = 640; scene.Canvas["height"] = 360;
             CreativeStaging.SetStage(scene, stage.Key, stage.Label);
             string a = scene.AddActor(models[0], "前景人物"), b = scene.AddActor(models[1], "后景人物");
@@ -75,6 +84,7 @@ static class CreativeStagingNativeTests
             Check(scene.Source["adv"] is null, "The authored scene does not require importing an original story");
             report["mouthRange"] = mouth.Max() - mouth.Min(); report["modelA"] = models[0]; report["modelB"] = models[1]; report["stage"] = stage.Key;
             report["comparisonScope"] = "native interpreter equivalence; not a pixel comparison against a recording of the original game";
+            StagePlacementNativeTests.Run(archive, core, ffmpeg, project, output, a, Check);
             CreativeStagingExports.Run(archive, core, ffmpeg, project, output, a, Check);
             report["ok"] = true; Console.WriteLine($"Passed {checks.Count} real native staging checks."); return 0;
         }

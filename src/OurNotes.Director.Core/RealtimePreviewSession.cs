@@ -114,6 +114,14 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         });
     }
 
+    public Task PreviewStagePositionAsync(string actor, int slot, System.Numerics.Vector3 position, long expectedSession, int expectedFrame)
+    {
+        StageDragPlane.CheckVector(position);
+        return UpdateState(update=>update.StagePositions[actor]=new(actor,slot,position,expectedSession,expectedFrame));
+    }
+
+    public Task SynchronizeAsync()=>Enqueue(()=>{});
+
     public Task SetHomeEditStateAsync(HomeEditState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -210,6 +218,16 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             }
             if(update.SceneEdits.Count>0&&renderer is not SceneState)throw new InvalidOperationException("Load a scene project before applying scene edits.");
             if(update.Time.HasValue)resumeAudio=false;
+            if(update.StagePositions.Count>0)
+            {
+                if(update.Time.HasValue)throw new InvalidOperationException("定位过程中不能同时拖动人物。");
+                if(renderer is not SceneState stage)throw new InvalidOperationException("当前不是原作舞台。");
+                foreach(var move in update.StagePositions.Values)
+                {
+                    if(move.Session!=sessionId||move.Frame!=frame)throw new InvalidOperationException("画面已改变，请重新拖动。");
+                    stage.PreviewStagePosition(move.Actor,move.Slot,move.Position);
+                }
+            }
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
             Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation);
             if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
@@ -429,11 +447,14 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public TaskCompletionSource? Completion{get;}=update is null?new(TaskCreationOptions.RunContinuationsAsynchronously):null;
     }
 
+    sealed record StagePosition(string Actor,int Slot,System.Numerics.Vector3 Position,long Session,int Frame);
+
     sealed class Update
     {
         public double? Time;
         public CancellationToken SeekCancellation;
         public HomeEditState? HomeEdits;
+        public Dictionary<string,StagePosition> StagePositions{get;}=new(StringComparer.Ordinal);
         public Dictionary<string,JsonObject> SceneEdits{get;}=new(StringComparer.Ordinal);
         public List<TaskCompletionSource> Waiters{get;}=[];
     }
@@ -515,6 +536,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         }
         public NativePlaybackTiming FinishedTiming()=>new(ProjectHash,true,native.Player.CompletionFrame,
             (native.Player.CompletionFrame!.Value+1)/30d,native.Player.CommandTimings(),native.Loop.Frame);
+        public void PreviewStagePosition(string actor,int slot,System.Numerics.Vector3 position)=>native.Scene.PreviewStagePosition(actor,slot,position);
         public override IReadOnlyList<PreviewTarget> Targets()=>native.PreviewTargets();
         public override IReadOnlyList<PreviewLipSync> LipSync()=>native.Scene.PreviewLipSyncState();
         public override IReadOnlyList<PreviewActorAnimation> Animations()=>native.Scene.PreviewAnimationState();
