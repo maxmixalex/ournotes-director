@@ -1,6 +1,7 @@
 using System.Numerics;
 using Microsoft.UI.Xaml.Controls;
 using OurNotes.Director.Core;
+using OurNotes.Director.Desktop.Core;
 
 namespace OurNotes.Director.WinUI;
 
@@ -18,7 +19,6 @@ internal sealed partial class CreativeScenePage
         overlay.Click += (_, _) => { nativePlacement = false; stageGesture = null; BuildInspector(); };
         menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(native); menu.Items.Add(overlay);
     }
-
     PlacementGesture StartPlacement(string actor)
     {
         if (!viewport.HasCurrentSource || viewport.LastFrame is not { } frame ||
@@ -26,8 +26,22 @@ internal sealed partial class CreativeScenePage
             throw new InvalidOperationException("此人物没有可拖动的原作空间位置。已有画面偏移的项目，请在视图中选择“拖动画面偏移（扩展）”。");
         return new(document, actor, plane, frame.SessionId, frame.Frame);
     }
-
-    async Task DragStageAsync(PreviewDrag drag)
+    sealed record PlacementInput(CreativeScene Owner, PreviewDrag? Drag, string Actor, float Depth);
+    LatestEditQueue<PlacementInput>? placementEdits;
+    Task QueuePlacement(PlacementInput input, bool terminal)
+        => (placementEdits ??= new(ApplyPlacementAsync)).Post(input, terminal);
+    Task DragStageAsync(PreviewDrag drag) => QueuePlacement(new(document, drag, drag.TargetId, 0), drag.IsCompleted);
+    async Task ApplyPlacementAsync(PlacementInput input)
+    {
+        if (disposed || !ReferenceEquals(input.Owner, document)) { stageGesture = null; return; }
+        try
+        {
+            if (input.Drag is not null) await ApplyStageDragAsync(input.Drag);
+            else await ApplyStageDepthAsync(input.Actor, input.Depth);
+        }
+        catch { stageGesture = null; throw; }
+    }
+    async Task ApplyStageDragAsync(PreviewDrag drag)
     {
         var gesture = stageGesture;
         if (gesture is null || gesture.Actor != drag.TargetId)
@@ -47,7 +61,6 @@ internal sealed partial class CreativeScenePage
         if (!ReferenceEquals(gesture.Document, document)) return;
         await CommitPlacementAsync(gesture, delta);
     }
-
     async Task CommitPlacementAsync(PlacementGesture gesture, Vector3 delta)
     {
         if (delta.LengthSquared() < 1e-12f) return;
@@ -60,13 +73,12 @@ internal sealed partial class CreativeScenePage
         }
         catch
         {
-            // An invalid document edit must not leave a transient pose masquerading as saved.
             if (ReferenceEquals(gesture.Document, document) || document.ToJson() == before) await ReloadAsync();
             throw;
         }
     }
-
-    async Task MoveStageDepthAsync(string actor, float delta)
+    Task MoveStageDepthAsync(string actor, float delta) => QueuePlacement(new(document, null, actor, delta), true);
+    async Task ApplyStageDepthAsync(string actor, float delta)
     {
         await viewport.PauseForEditingAsync(); var gesture = StartPlacement(actor);
         var move = new Vector3(0, 0, delta);

@@ -24,7 +24,6 @@ public sealed partial class NativeViewport
         int x = origin.X + (int)Math.Round(rootPoint.X * raster), y = origin.Y + (int)Math.Round(rootPoint.Y * raster);
         _ = SetForegroundWindow(hwnd); await Task.Delay(80);
         if (GetForegroundWindow() != hwnd) throw new InvalidOperationException("The actual editor window did not receive input focus.");
-        // Feed position and button changes through the same Windows input queue.
         void Move(int px, int py)
         {
             int left = GetSystemMetrics(76), top = GetSystemMetrics(77);
@@ -44,7 +43,7 @@ public sealed partial class NativeViewport
         PointerEventHandler observe = (_, args) =>
         {
             var point = args.GetCurrentPoint(surface);
-            TracePointer($"id={args.Pointer.PointerId} xy={point.Position} left={point.Properties.IsLeftButtonPressed} captured={surface.PointerCaptures.Count} drag={dragTarget} moved={dragMoved} handled={args.Handled}");
+            TracePointer($"id={args.Pointer.PointerId} xy={point.Position} left={point.Properties.IsLeftButtonPressed} captured={surface.PointerCaptures?.Count ?? 0} drag={dragTarget} moved={dragMoved} handled={args.Handled}");
         };
         var events = new[] { UIElement.PointerPressedEvent, UIElement.PointerMovedEvent,
             UIElement.PointerReleasedEvent, UIElement.PointerCanceledEvent, UIElement.PointerCaptureLostEvent };

@@ -8,11 +8,11 @@ static class StagePlacementTests
 {
     public static void Run(Action<bool, string> check)
     {
+        LatestEditQueueTests.Run(check);
         var random = new Random(722);
         double maximum = 0;
         for (int i = 0; i < 200; i++)
         {
-            // Exercise perspective, parent rotation/scale, camera roll and vertical letterboxing.
             var parent = AdvMatrix.Trs(new(.2f, -.5f, -8), new(5, 12, (float)random.NextDouble() * 30), new(1.1f, .8f, 1));
             var projection = AdvMatrix.Multiply(AdvMatrix.Perspective(37, 16f / 9, .1f, 100), parent);
             var anchor = new Vector3((float)random.NextDouble(), (float)random.NextDouble(), .4f);

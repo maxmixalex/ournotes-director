@@ -344,10 +344,12 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(args.Pointer.PointerDeviceType==Microsoft.UI.Input.PointerDeviceType.Mouse&&!point.Properties.IsLeftButtonPressed)return;
         if(!InCanvas(point.Position))return;
         var normalized=Normalize(point.Position);var target=HitTest(normalized.X,normalized.Y);
-        SelectedTargetId=target?.Id;
-        if(target is null)return;
+        TracePointer($"pressed id={args.Pointer.PointerId} point={point.Position} normalized={normalized} target={target?.Id} source={args.OriginalSource?.GetType().Name}");
+        if(target is null){SelectedTargetId=null;return;}
+        // Keep pointer ownership before selection rebuilds inspectors and scrolls tracks.
         Pause();dragTarget=target.Id;dragPointer=args.Pointer.PointerId;dragStart=dragLast=normalized;dragMoved=false;
-        surface.CapturePointer(args.Pointer);args.Handled=true;
+        if(!surface.CapturePointer(args.Pointer)){dragTarget=null;TracePointer("capture failed");return;}
+        args.Handled=true;SelectedTargetId=target.Id;
     }
     void OnPointerMoved(object sender,PointerRoutedEventArgs args)
     {
@@ -355,15 +357,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         dragLast=Normalize(args.GetCurrentPoint(surface).Position);
         if(Math.Abs(dragLast.X-dragStart.X)+Math.Abs(dragLast.Y-dragStart.Y)<.001&&!dragMoved)return;
         dragMoved=true;
+        TracePointer($"move id={args.Pointer.PointerId} actor={dragTarget} delta=({dragLast.X-dragStart.X},{dragLast.Y-dragStart.Y})");
         ObjectDragged?.Invoke(this,new(dragTarget,dragLast.X-dragStart.X,dragLast.Y-dragStart.Y,false));args.Handled=true;
     }
     void OnPointerReleased(object sender,PointerRoutedEventArgs args)
     {
+        TracePointer($"released id={args.Pointer.PointerId} actor={dragTarget} moved={dragMoved}");
         if(dragTarget is null||args.Pointer.PointerId!=dragPointer)return;
         dragLast=Normalize(args.GetCurrentPoint(surface).Position);FinishDrag();surface.ReleasePointerCapture(args.Pointer);args.Handled=true;
     }
     void OnPointerCanceled(object sender,PointerRoutedEventArgs args)
     {
+        TracePointer($"capture-ended id={args.Pointer.PointerId} actor={dragTarget} moved={dragMoved}");
         if(dragTarget is not null&&args.Pointer.PointerId==dragPointer)FinishDrag();
     }
     void FinishDrag()
