@@ -16,6 +16,7 @@ StudioWorkflowTests.Run(Check);
 CreativeExportTests.Run(Check);
 CreativeStagingTests.Run(Check);
 CreativeMaterialTests.Run(Check);
+CreativeMaterialFrameTests.Run(Check);
 StagePlacementTests.Run(Check);
 await TimelineEditingTests.RunAsync(Check);
 ResultRowTests.Run(Check);

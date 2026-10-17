@@ -10,6 +10,7 @@ public static class CreativeMaterialEditing
     public static bool KeepsExpression(JsonObject clip) => clip[ExpressionMode]?.ToString() == "timeline";
     static string S(JsonObject node, string key) => CreativeScene.Text(node, key);
     static double N(JsonObject node, string key) => CreativeScene.Number(node, key);
+    static int FrameAt(double seconds) => checked((int)Math.Round(seconds * 30));
 
     public static string Insert(CreativeScene scene, string actor, string kind, string asset,
         string label, double start, double duration)
@@ -66,7 +67,7 @@ public static class CreativeMaterialEditing
         var inherited = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         var rows = scene.Clips.OfType<JsonObject>().Select((clip, index) => (clip, index))
             .Where(p => p.clip["enabled"]?.GetValue<bool>() != false)
-            .OrderBy(p => Story.Frames(N(p.clip, "start"))).ThenBy(p => p.index)
+            .OrderBy(p => FrameAt(N(p.clip, "start"))).ThenBy(p => p.index)
             .Select(p =>
             {
                 var row = (JsonObject)p.clip["data"]!.DeepClone();
@@ -122,7 +123,7 @@ public static class CreativeMaterialEditing
         int ownIndex = scene.Clips.IndexOf(clip);
         if (ownIndex < 0) return scene.Duration;
         double start = N(clip, "start"), end = scene.Duration;
-        int startFrame = Story.Frames(start), endFrame = int.MaxValue, endIndex = int.MaxValue;
+        int startFrame = FrameAt(start), endFrame = int.MaxValue, endIndex = int.MaxValue;
         // Match the compiler's stable (frame, insertion order) ordering with one scan.
         // Re-sorting every row separately for each expression made long timelines costly.
         for (int index = 0; index < scene.Clips.Count; index++)
@@ -134,7 +135,7 @@ public static class CreativeMaterialEditing
             if (command is not ("Expression" or "In" or "Out" or "Costume")
                 && !(command == "Motion" && !KeepsExpression(node) && N(row, "MotionWait") <= 0)) continue;
             double at = N(node, "start");
-            int frame = Story.Frames(at);
+            int frame = FrameAt(at);
             if (frame < startFrame || frame == startFrame && index < ownIndex
                 || AdvProgram.Row(row, "expression span").Ignored) continue;
             if (frame < endFrame || frame == endFrame && index < endIndex)
