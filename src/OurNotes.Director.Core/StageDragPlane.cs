@@ -7,9 +7,23 @@ namespace OurNotes.Director.Core;
 public sealed record StageDragPlane(int Slot, Vector3 Position, Vector3 Anchor, float[] LocalToClip,
     double ViewportHeight = 1)
 {
+    // Geometry snapshots are value objects. The same projection is reconstructed into a
+    // fresh array after a seek; allocation identity must not change target/selection equality.
+    public bool Equals(StageDragPlane? other) => ReferenceEquals(this, other) || other is not null
+        && Slot == other.Slot && Position == other.Position && Anchor == other.Anchor
+        && ViewportHeight.Equals(other.ViewportHeight)
+        && LocalToClip.AsSpan().SequenceEqual(other.LocalToClip);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode(); hash.Add(Slot); hash.Add(Position); hash.Add(Anchor); hash.Add(ViewportHeight);
+        if (LocalToClip is not null) foreach (float value in LocalToClip) hash.Add(value);
+        return hash.ToHashCode();
+    }
+
     public Vector3 Displacement(double dx, double dy)
     {
-        if (!double.IsFinite(dx) || !double.IsFinite(dy) || LocalToClip.Length != 16 ||
+        if (!double.IsFinite(dx) || !double.IsFinite(dy) || LocalToClip is not { Length: 16 } ||
             !double.IsFinite(ViewportHeight) || ViewportHeight <= 0)
             throw new ArgumentException("无效的舞台拖动坐标。");
         var m = LocalToClip;

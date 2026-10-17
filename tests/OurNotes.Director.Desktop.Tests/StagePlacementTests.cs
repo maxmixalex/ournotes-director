@@ -30,6 +30,18 @@ static class StagePlacementTests
         try { new StageDragPlane(3, Vector3.Zero, Vector3.Zero, new float[16]).Displacement(.1, .1); }
         catch (InvalidOperationException) { invalid = true; }
         check(invalid, "Degenerate or behind-camera drag geometry is rejected instead of fabricating movement");
+        var projectionSnapshot = new StageDragPlane(3, new(.2f, .3f, .4f), new(0, 1, 0), AdvMatrix.Identity());
+        var sameProjection = projectionSnapshot with { LocalToClip = (float[])projectionSnapshot.LocalToClip.Clone() };
+        var changedProjection = projectionSnapshot with { LocalToClip = (float[])projectionSnapshot.LocalToClip.Clone() };
+        changedProjection.LocalToClip[12] = .1f;
+        check(projectionSnapshot == sameProjection && projectionSnapshot.GetHashCode() == sameProjection.GetHashCode(),
+            "Reconstructed stage snapshots compare by actual geometry rather than projection-array identity");
+        check(projectionSnapshot != changedProjection && projectionSnapshot != (sameProjection with { Position = Vector3.One }),
+            "Target equality still detects a changed camera matrix or native slot position");
+        var hitTarget = new PreviewTarget("actor", "actor", .2, .3, .1, .5, projectionSnapshot);
+        check(hitTarget == hitTarget with { StagePlacement = sameProjection }
+            && hitTarget != hitTarget with { StagePlacement = changedProjection },
+            "Same-frame target comparisons retain semantic geometry validation across background-only changes");
         var scene = CreativeScene.Blank("intl", "zh-Hans"); CreativeStaging.SetStage(scene, "stage");
         string actor = scene.AddActor("model", "actor");
         string first = CreativeStagePlacement.MoveHere(scene, actor, 0, new(.2f, .1f, 0));
