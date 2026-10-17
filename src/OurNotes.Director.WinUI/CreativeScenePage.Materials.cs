@@ -26,6 +26,8 @@ internal sealed partial class CreativeScenePage
         selectedActor = actor; selectedClip = null; replaceAssetClip = null;
         await InsertAssetAsync(new OurNotes.Director.Desktop.Core.ResultRow(motion, "动作切换", "", new JsonObject { ["duration"] = 1 }), "motion", 1);
         string id = selectedClip!;
+        await Task.Delay(40);
+        check(timeline.IsSelectedLaneVisible, "插入动作后，选中的新动作轨道自动滚入视野，不需要手动寻找");
         await SeekAsync(2.5); BuildInspector();
         check(viewport.LastFrame?.ActorAnimations?.Any(a => a.TargetId == actor && a.Motion == motion && a.Expression == expression) == true,
             "从素材栏在已有表情后插入动作，实际原生人物继续保持表情轨道，而不是恢复默认脸");

@@ -141,8 +141,11 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     }
     async Task EditAsync(Action action,bool reload=true)
     {
-        viewport.Pause();string before=document.ToJson();try{action();document.Validate();}catch{document=CreativeScene.Parse(before);Refresh();throw;}
-        if(document.ToJson()==before)return;undo.Push(before);redo.Clear();previewDirty=true;SaveDraft();Refresh();if(reload)await ReloadAsync();
+        viewport.Pause();string before=document.ToJson();string? previousSelection=selectedClip;
+        try{action();document.Validate();}catch{document=CreativeScene.Parse(before);selectedClip=previousSelection;Refresh();throw;}
+        if(document.ToJson()==before)return;undo.Push(before);redo.Clear();previewDirty=true;SaveDraft();Refresh();
+        if(selectedClip is not null&&selectedClip!=previousSelection)timeline.RevealSelection();
+        if(reload)await ReloadAsync();
     }
     async Task UndoAsync(bool forward)
     {
