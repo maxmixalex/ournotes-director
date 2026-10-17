@@ -138,6 +138,7 @@ public sealed class CreativeScene
             DirectorValidation.Check(AdvProgram.Row(data,"clip "+Text(c,"id")));
         }
         CreativeStaging.Validate(this);
+        CreativeMaterialEditing.Validate(this);
     }
     public JsonObject Compile()
     {
@@ -146,6 +147,7 @@ public sealed class CreativeScene
         output["width"]=(int)Number(Canvas,"width",1920);output["height"]=(int)Number(Canvas,"height",1080);
         if(Canvas["content"] is not null)output["content"]=SceneContent.Read(Canvas["content"]);
         var rows=new List<(int At,int Priority,int Order,JsonObject Row)>();int order=0;
+        var expressionInherit=new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         void Add(JsonObject row,int at,int priority=0){row["AtFrame"]=at;rows.Add((at,priority,order++,row));}
         if(Root["imported"]?.GetValue<bool>()!=true&&Root["staging"] is null)
         {
@@ -176,7 +178,11 @@ public sealed class CreativeScene
             int start=(int)Math.Round(Number(c,"start")*30),end=(int)Math.Round((Number(c,"start")+Number(c,"duration"))*30);
             bool authoredMotion=kind=="motion"&&c["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(this,actor);
             if(authoredMotion)Add(new(){["cmd"]="Director.Actor",["TargetName"]=actor,["Values"]=new JsonObject{["speed"]=1}},start);
-            foreach(var expanded in CreativeStaging.Expand(this,c))Add(expanded,start);
+            foreach(var expanded in CreativeStaging.Expand(this,c))
+            {
+                Add(expanded,start);
+                if(CreativeMaterialEditing.KeepsExpression(c)&&expanded["cmd"]?.ToString()=="Motion")expressionInherit.Add(expanded);
+            }
             if(authoredMotion)
             {
                 bool replaced=Clips.OfType<JsonObject>().Any(other=>!ReferenceEquals(other,c)&&Enabled(other)&&Text(other,"kind")=="motion"&&Text(other,"actor")==actor&&Number(other,"start")>=Number(c,"start")&&Number(other,"start")<end/30d);
@@ -184,8 +190,10 @@ public sealed class CreativeScene
             }
         }
         Add(new(){["cmd"]="Delay",["Frames"]=0},Math.Max(1,Story.Frames(Duration)),1);
+        var ordered=rows.OrderBy(r=>r.At).ThenBy(r=>r.Priority).ThenBy(r=>r.Order).Select(r=>r.Row).ToArray();
+        CreativeMaterialEditing.ApplyExpressionPolicy(ordered,expressionInherit);
         return new JsonObject { ["format"]=DirectorProject.Format,["version"]=1,["source"]=Source.DeepClone(),["output"]=output,
-            ["initialize"]=new JsonArray(),["finalize"]=new JsonArray(),["commands"]=new JsonArray(rows.OrderBy(r=>r.At).ThenBy(r=>r.Priority).ThenBy(r=>r.Order).Select(r=>(JsonNode)r.Row).ToArray()),
+            ["initialize"]=new JsonArray(),["finalize"]=new JsonArray(),["commands"]=new JsonArray(ordered.Select(r=>(JsonNode)r).ToArray()),
             ["text"]=Root["text"]?.DeepClone()??new JsonObject() };
     }
     public static JsonObject Materialize(Archive archive,JsonObject project)

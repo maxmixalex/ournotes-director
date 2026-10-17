@@ -70,6 +70,7 @@ internal sealed partial class CreativeScenePage
                 Help("素材："+data[kind=="motion"?"MotionName":"ExpressionName"]);
                 inspector.Children.Add(Button("替换素材…",()=>ChooseReplacementAsync(id),"\uE8D2"));
                 BuildMaterialFadeInspector(clip);
+                if(kind=="motion")BuildMotionExpressionInspector(clip);
                 if(kind=="motion"&&CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("沿用素材的循环与结束规则。");
                 if(kind=="motion"&&clip["sourcePerformance"]?.GetValue<bool>()!=true&&!CreativeStaging.IsNativeActor(document,S(clip,"actor")))Help("片段结束时保持动作姿态；下一段动作开始时继续。声音和口型不受影响。");
             }

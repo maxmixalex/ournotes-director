@@ -51,6 +51,7 @@ public static class CreativeClipEditing
     {
         double end = N(clip, "start") + N(clip, "duration");
         string kind = S(clip, "kind");
+        if (kind == "expression") return CreativeMaterialEditing.ExpressionEnd(source, clip);
         if (kind != "expression" && !(kind == "motion" && CreativeStaging.IsNativeActor(source,S(clip,"actor")))) return end;
         double start = N(clip, "start"); string actor = S(clip, "actor");
         return source.Clips.OfType<JsonObject>().Where(other => !ReferenceEquals(other, clip)

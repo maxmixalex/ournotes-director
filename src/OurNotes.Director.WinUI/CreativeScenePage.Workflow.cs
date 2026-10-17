@@ -163,10 +163,13 @@ internal sealed partial class CreativeScenePage
         string? replacement=replaceAssetClip;replaceAssetClip=null;
         await EditAsync(()=>
         {
-            var data=new JsonObject{["cmd"]=kind=="expression"?"Expression":"Motion",["TargetName"]=actor,[kind=="expression"?"ExpressionName":"MotionName"]=row.Id,["MotionFadeIn"]=-1};
             var target=document.Clips.OfType<JsonObject>().FirstOrDefault(c=>S(c,"id")==replacement&&S(c,"kind")==kind&&S(c,"actor")==actor);
-            if(target is not null){target["data"]=data;target["label"]=row.Title;target["sourcePerformance"]=false;target["duration"]=Math.Max(1d/30,Math.Round(duration*30)/30);selectedClip=S(target,"id");}
-            else selectedClip=document.AddClip(actor,kind,at,Math.Max(1d/30,duration),data,row.Title);
+            if(target is not null)
+            {
+                selectedClip=S(target,"id");
+                CreativeMaterialEditing.Replace(document,selectedClip,kind,row.Id,row.Title);
+            }
+            else selectedClip=CreativeMaterialEditing.Insert(document,actor,kind,row.Id,row.Title,at,Math.Max(1d/30,duration));
         });
     }
     async Task DropAssetAsync(string json,double at,string? target=null)

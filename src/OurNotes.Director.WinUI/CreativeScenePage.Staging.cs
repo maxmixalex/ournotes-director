@@ -297,6 +297,7 @@ internal sealed partial class CreativeScenePage
         await SeekAsync(sourceFrame / 30d);
         check(viewport.LastFrame!.Pixels.Rgba.SequenceEqual(savedPixels), "鼠标拖动后的图像与保存指令重放一致");
         await App.CaptureCheckpointAsync("native-space-drag");
+        await VerifyMaterialAuthoringAsync(check, first, motion, expression, metadata["defaultExpression"]!.ToString());
 
     }
 

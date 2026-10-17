@@ -39,7 +39,8 @@ static class CreativeStagingNativeTests
             var speech = episode["commands"]!.AsArray().First(r => r?["VoiceIDs"] is JsonArray { Count: > 0 })!;
             var cue = AdvAudio.Decode(archive, "intl", manifest, episode, speech["VoiceIDs"]![0]!.GetValue<long>(), ffmpeg);
             string wav = Path.Combine(output, "original-voice.wav"); WriteWave(wav, cue);
-            scene.AddClip(a, "motion", 1, 2, new JsonObject { ["cmd"] = "Motion", ["MotionName"] = motion, ["MotionFadeIn"] = -1, ["ExpressionName"] = expression }, "原动作");
+            string authoredMotion = scene.AddClip(a, "motion", 1, 2, new JsonObject { ["cmd"] = "Motion", ["MotionName"] = motion, ["MotionFadeIn"] = -1 }, "原动作");
+            CreativeMaterialEditing.SetKeepsExpression(scene, authoredMotion, true);
             scene.AddClip(a, "expression", .2, 2.8, new JsonObject { ["cmd"] = "Expression", ["ExpressionName"] = expression, ["MotionFadeIn"] = -1 }, "表情");
             var voice = new JsonObject { ["cmd"] = "Voice", ["TargetName"] = a, ["AudioPath"] = wav, ["AudioIn"] = 0, ["AudioDuration"] = Math.Min(3, cue.Samples / (double)AdvAudio.SampleRate), ["IgnoreLipSync"] = false };
             scene.AddClip(a, "voice", 0, Math.Min(3, cue.Samples / (double)AdvAudio.SampleRate), voice, "原语音");
@@ -75,6 +76,8 @@ static class CreativeStagingNativeTests
                     Check(states.Count == 2 && states.Single(s => s.Id == a).Slot == 3 && states.Single(s => s.Id == b).Slot == 7, $"Frame {frame}: both characters retain native slots, including after a motion change");
                     Check(states.Single(s => s.Id == a).WorldZ < states.Single(s => s.Id == b).WorldZ, $"Frame {frame}: foreground/background are actual spatial depth");
                     if (frame == 15) Check(states.Single(s => s.Id == a).Blur == 0 && states.Single(s => s.Id == b).Blur == 1, "First focus makes the rear actor defocused");
+                    if (frame >= 35) Check(states.Single(s => s.Id == a).Expression == expression && states.Single(s => s.Id == a).Motion == motion,
+                        $"Frame {frame}: inserted Motion preserves the earlier expression through existing native command parameters");
                     if (frame == 75) Check(states.Single(s => s.Id == a).Blur == 1 && states.Single(s => s.Id == b).Blur == 0, "Focus transfer swaps the native blur layers without moving either actor");
                 }
             }
