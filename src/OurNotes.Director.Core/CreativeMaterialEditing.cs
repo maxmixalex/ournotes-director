@@ -119,19 +119,28 @@ public static class CreativeMaterialEditing
     public static double ExpressionEnd(CreativeScene scene, JsonObject clip)
     {
         string actor = S(clip, "actor");
-        var ordered = scene.Clips.OfType<JsonObject>().Select((node, index) => (node, index))
-            .Where(pair => pair.node["enabled"]?.GetValue<bool>() != false)
-            .OrderBy(pair => Story.Frames(N(pair.node, "start"))).ThenBy(pair => pair.index);
-        bool found = false;
-        foreach (var (node, _) in ordered)
+        int ownIndex = scene.Clips.IndexOf(clip);
+        if (ownIndex < 0) return scene.Duration;
+        double start = N(clip, "start"), end = scene.Duration;
+        int startFrame = Story.Frames(start), endFrame = int.MaxValue, endIndex = int.MaxValue;
+        // Match the compiler's stable (frame, insertion order) ordering with one scan.
+        // Re-sorting every row separately for each expression made long timelines costly.
+        for (int index = 0; index < scene.Clips.Count; index++)
         {
-            if (ReferenceEquals(node, clip)) { found = true; continue; }
-            if (!found || S(node, "actor") != actor || node["data"] is not JsonObject row || AdvProgram.Row(row, "expression span").Ignored) continue;
-            if (S(row, "cmd") is "Expression" or "In" or "Out" or "Costume"
-                || S(row, "cmd") == "Motion" && !KeepsExpression(node) && N(row, "MotionWait") <= 0)
-                return Math.Max(N(clip, "start"), N(node, "start"));
+            if (index == ownIndex || scene.Clips[index] is not JsonObject node
+                || node["enabled"]?.GetValue<bool>() == false || S(node, "actor") != actor
+                || node["data"] is not JsonObject row) continue;
+            string command = S(row, "cmd");
+            if (command is not ("Expression" or "In" or "Out" or "Costume")
+                && !(command == "Motion" && !KeepsExpression(node) && N(row, "MotionWait") <= 0)) continue;
+            double at = N(node, "start");
+            int frame = Story.Frames(at);
+            if (frame < startFrame || frame == startFrame && index < ownIndex
+                || AdvProgram.Row(row, "expression span").Ignored) continue;
+            if (frame < endFrame || frame == endFrame && index < endIndex)
+            { end = at; endFrame = frame; endIndex = index; }
         }
-        return scene.Duration;
+        return Math.Max(start, end);
     }
 
     static void RequireMaterial(string kind, string asset)
