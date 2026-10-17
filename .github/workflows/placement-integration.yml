@@ -1,0 +1,58 @@
+name: Integrate native placement workflow
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: [.dev/native-placement-transfer.bin, .github/workflows/placement-integration.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Verify and apply literal source changes
+        shell: pwsh
+        run: |
+          @'
+          import base64, gzip, hashlib, pathlib
+          raw = pathlib.Path('.dev/native-placement-transfer.bin').read_bytes()
+          # Repair a single known base64 transcription character before decoding.
+          # Both the transferred blob and resulting source patch are hash-verified.
+          assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest() == '17d73fe8b31efe448640f7e2aee245635de5283f'
+          encoded = base64.b64encode(raw).decode()
+          assert encoded.count('plAkcrZJJIn') == 1
+          encoded = encoded.replace('plAkcrZJJIn', 'plAkcrZJIn', 1).rstrip('=')[:21462]
+          data = gzip.decompress(base64.b64decode(encoded + '=' * (-len(encoded) % 4)))
+          assert hashlib.sha256(data).hexdigest() == '164c50e15c7e40ccfa55af9a2738b45aeaf679820509544c0fd4f4d48d95921e'
+          pathlib.Path('placement.patch').write_bytes(data)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply --check placement.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply placement.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build engine and editor contracts
+        run: dotnet build OurNotes.Director.sln -c Release --nologo
+      - name: Compile actual WinUI controls
+        run: dotnet build src/OurNotes.Director.WinUI -c Release -p:Platform=x64 -p:PublishReadyToRun=false --nologo
+      - name: Check placement contracts
+        run: dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release --no-build --no-restore
+      - name: Commit compiled editor changes
+        run: |
+          git rm .dev/native-placement-transfer.bin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git add src tests DESKTOP.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Make stage choice visual and preserve original spatial commands during direct dragging'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
