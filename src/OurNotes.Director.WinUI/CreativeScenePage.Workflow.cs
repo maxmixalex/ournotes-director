@@ -45,10 +45,9 @@ internal sealed partial class CreativeScenePage
         if(selectedActor is {Length:>0})
         {
             AddStageMenuItems(menu,selectedActor);
-            menu.Items.Add(StudioMenus.Async("导出当前姿态图片…",()=>Safe(()=>ExportAsync("frame",true)),"\uEB9F"));
-            menu.Items.Add(StudioMenus.Async("导出角色演出…",()=>Safe(()=>ExportAsync("clip",true)),"\uE714"));menu.Items.Add(new MenuFlyoutSeparator());
-            menu.Items.Add(StudioMenus.Item("选择动作",()=>{assetKind.SelectedIndex=0;_=Safe(LoadAssetsAsync);}));
-            menu.Items.Add(StudioMenus.Item("选择表情",()=>{assetKind.SelectedIndex=1;_=Safe(LoadAssetsAsync);}));
+            menu.Items.Add(StudioMenus.Async("在 Live2D 工作台中打开…",()=>Safe(()=>OpenActorInLive2DAsync()),"\uE8A7"));menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(StudioMenus.Item("选择动作",()=>{assetKind.SelectedIndex=0;ShowProjectAssets();_=Safe(LoadAssetsAsync);}));
+            menu.Items.Add(StudioMenus.Item("选择表情",()=>{assetKind.SelectedIndex=1;ShowProjectAssets();_=Safe(LoadAssetsAsync);}));
             menu.Items.Add(StudioMenus.Async("添加声音…",()=>Safe(ImportVoiceAsync),"\uE8D6"));
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(StudioMenus.Async("移除角色和所属片段",()=>Safe(async()=>
@@ -65,10 +64,10 @@ internal sealed partial class CreativeScenePage
     {
         string id=S(clip,"id");var menu=new MenuFlyout();
         TimelineRange ClipRange()=>RangeForClip(document.Clip(id));
-        menu.Items.Add(StudioMenus.Async("导出这一段…",()=>Safe(()=>ExportAsync("clip",false,ClipRange())),"\uE898"));
-        if(S(clip,"actor").Length>0)menu.Items.Add(StudioMenus.Async("仅导出这个角色的这一段…",()=>Safe(()=>ExportAsync("clip",true,ClipRange())),"\uE77B"));
+        menu.Items.Add(StudioMenus.Async("导出这一段…",()=>Safe(()=>ExportAsync("clip",ClipRange())),"\uE898"));
+        if(S(clip,"actor").Length>0)menu.Items.Add(StudioMenus.Async("在 Live2D 中打开角色区间…",()=>Safe(()=>OpenActorInLive2DAsync(ClipRange())),"\uE8A7"));
         menu.Items.Add(StudioMenus.Async("播放此处",()=>Safe(async()=>{await SeekAsync(N(document.Clip(id),"start"));viewport.Play();}),"\uE768"));
-        menu.Items.Add(StudioMenus.Async("在播放头分割",()=>Safe(()=>EditAsync(()=>{var result=CreativeClipEditing.Split(document,id,playhead);document=result.Scene;selectedClip=result.Selection;})),"\uE8C6",CreativeClipEditing.CanSplit(clip,playhead)));
+        menu.Items.Add(StudioMenus.Async("在播放头分割",()=>Safe(()=>EditAsync(()=>{var result=CreativeClipEditing.Split(document,id,playhead);document=result.Scene;selectedClip=result.Selection;})),"\uE8C6",CreativeClipEditing.CanSplit(clip,playhead),"Ctrl+K"));
         menu.Items.Add(StudioMenus.Async("复制片段",()=>Safe(()=>EditAsync(()=>selectedClip=document.DuplicateClip(id))),"\uE8C8"));
         if(S(clip,"kind") is "motion" or "expression")menu.Items.Add(StudioMenus.Async("替换素材…",()=>Safe(()=>ChooseReplacementAsync(id)),"\uE8D2"));
         menu.Items.Add(StudioMenus.Async(clip["enabled"]?.GetValue<bool>()==false?"启用":"停用",()=>Safe(()=>EditAsync(()=>document.Clip(id)["enabled"]=document.Clip(id)["enabled"]?.GetValue<bool>()==false))));
@@ -80,7 +79,7 @@ internal sealed partial class CreativeScenePage
     internal async Task NewAsync(bool original=false)
     {
         if(original){await OpenStoryAsync();return;}if(!await ConfirmReplaceAsync())return;scrubber.Cancel();SaveDraft();viewport.InvalidateSource();previewDirty=true;loadedSourceKey=null;
-        document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);timeline.ResetProjectView();savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
+        document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);timeline.ResetProjectView();ResetProjectLibrary();savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
         directory=Environment.CurrentDirectory;playhead=0;undo.Clear();redo.Clear();Refresh();viewport.SetEmptyCanvas(1920,1080);notice.IsOpen=false;
     }
     internal async Task OpenAsync(string? filename=null)
@@ -88,7 +87,7 @@ internal sealed partial class CreativeScenePage
         filename??=await window.PickFileAsync(extensions:[".json"]);if(filename is null)return;
         string text=await File.ReadAllTextAsync(filename);var node=JsonNode.Parse(text) as JsonObject??throw new ArgumentException("文件不是场景 JSON。");SaveDraft();
         if(S(node,"format")!=CreativeScene.Format){await ImportNativeAsync(text,Path.GetDirectoryName(Path.GetFullPath(filename))!);return;}
-        var next=new CreativeScene(node);if(!await ConfirmReplaceAsync())return;scrubber.Cancel();viewport.InvalidateSource();document=next;timeline.ResetProjectView();path=filename;directory=Path.GetDirectoryName(Path.GetFullPath(filename))!;savedText=next.ToJson();
+        var next=new CreativeScene(node);if(!await ConfirmReplaceAsync())return;scrubber.Cancel();viewport.InvalidateSource();document=next;timeline.ResetProjectView();ResetProjectLibrary();path=filename;directory=Path.GetDirectoryName(Path.GetFullPath(filename))!;savedText=next.ToJson();
         selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;Refresh();await ReloadAsync();
     }
     async Task OpenStoryAsync()
@@ -112,7 +111,7 @@ internal sealed partial class CreativeScenePage
             foreach(var a in expanded.Actors)
                 if(!string.IsNullOrWhiteSpace(a.Model)&&!imported.Actors.OfType<JsonObject>().Any(actor=>S(actor,"id")==a.Id))
                     imported.Actors.Add((JsonNode)new JsonObject{["id"]=a.Id,["name"]=a.Id,["model"]=a.Model,["fromSource"]=true});
-            document=imported;timeline.ResetProjectView();path=null;directory=baseDirectory;savedText="";selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
+            document=imported;timeline.ResetProjectView();ResetProjectLibrary();path=null;directory=baseDirectory;savedText="";selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
             Refresh();SaveDraft();notice.IsOpen=false;
         }
         finally{input.Dispose();}
@@ -144,7 +143,7 @@ internal sealed partial class CreativeScenePage
     async Task AddActorResourceAsync(string model,string name)
     {
         await EditAsync(()=>{selectedActor=document.AddActor(model,name);selectedClip=null;});
-        viewport.SelectedTargetId=selectedActor;await LoadAssetsAsync();
+        viewport.SelectedTargetId=selectedActor;ShowProjectAssets();await LoadAssetsAsync();
     }
     async Task ImportVoiceAsync()
     {string? file=await window.PickFileAsync(extensions:[".wav",".ogg",".mp3",".m4a",".flac",".aac"]);if(file is not null)await InsertVoiceFileAsync(file,Path.GetFileNameWithoutExtension(file),playhead);}
@@ -161,7 +160,7 @@ internal sealed partial class CreativeScenePage
     async Task ChooseReplacementAsync(string id)
     {
         var clip=document.Clip(id);replaceAssetClip=id;selectedActor=S(clip,"actor");selectedClip=id;
-        assetKind.SelectedIndex=S(clip,"kind")=="motion"?0:1;await LoadAssetsAsync();assetHint.Text="双击一个素材，直接替换所选片段；开始位置不变。";
+        assetKind.SelectedIndex=S(clip,"kind")=="motion"?0:1;ShowProjectAssets();await LoadAssetsAsync();assetHint.Text="选素材后按 Enter 替换；双击在 Live2D 中预览。";
     }
     async Task InsertAssetAsync(ResultRow row,string kind,double at)
     {
@@ -195,7 +194,7 @@ internal sealed partial class CreativeScenePage
     async Task AddToTrackAsync(string actor,string kind,double at)
     {
         selectedActor=actor.Length==0?null:actor;selectedClip=replaceAssetClip=null;playhead=at;
-        if(kind is "motion" or "expression" or "voice"){assetKind.SelectedIndex=kind=="motion"?0:kind=="expression"?1:2;RefreshActors();BuildInspector();await LoadAssetsAsync();return;}
+        if(kind is "motion" or "expression" or "voice"){assetKind.SelectedIndex=kind=="motion"?0:kind=="expression"?1:2;ShowProjectAssets();RefreshActors();BuildInspector();await LoadAssetsAsync();return;}
         if(kind=="focus"){await FocusActorAsync(actor);return;}
         if(kind=="depth"){await EditAsync(()=>selectedClip=CreativeStaging.AddDepth(document,actor,at,-.5,.5));return;}
         if(kind=="transform"){var state=ActorTransform(actor);await AddTransformAsync(actor,state.X,state.Y,state.Height);return;}
@@ -252,7 +251,7 @@ internal sealed partial class CreativeScenePage
         if(viewport.IsPlaying){viewport.Pause();timeline.IsPlaying=false;return;}if(previewDirty||!viewport.HasCurrentSource)await ReloadAsync();if(!viewport.HasCurrentSource)return;
         if(playhead<timeline.PlaybackStart||playhead>=timeline.PlaybackLastTime-1d/60)await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);timeline.IsPlaying=true;
     }
-    async Task ExportAsync(string kind,bool actorOnly=false,TimelineRange? rangeOverride=null)
+    async Task ExportAsync(string kind,TimelineRange? rangeOverride=null)
     {
         await scrubber.FlushAsync();
         viewport.Pause();
@@ -260,13 +259,7 @@ internal sealed partial class CreativeScenePage
         // This read-only view supplies shared export settings without invoking the old
         // sparse-keyframe compiler. AtFrame rows must reach the renderer unchanged.
         var editor=StudioSceneDocument.CreateExportView(native,document.Duration+1d/30);
-        string? actor=actorOnly?selectedActor:null;JsonNode? metadata=null;
-        if(actor is not null)
-        {
-            string? model=viewport.LastFrame?.ActorAnimations?.FirstOrDefault(a=>a.TargetId==actor)?.Model??document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==actor)?["model"]?.ToString();
-            if(model is null)throw new InvalidOperationException("请先载入所选角色。");metadata=await Task.Run(()=>new Archive(window.Settings.ArchivePath).Model(document.Site,model));
-        }
-        await StudioExportDialog.ShowSceneAsync(window,editor,playhead,initialKind:kind,actorId:actor,actorMetadata:metadata,
+        await StudioExportDialog.ShowSceneAsync(window,editor,playhead,initialKind:kind,
             preserveTransparency:document.Root["imported"]?.GetValue<bool>()!=true&&document.Canvas["transparent"]?.GetValue<bool>()!=false, initialRange:rangeOverride??timeline.WorkRange);
     }
 }

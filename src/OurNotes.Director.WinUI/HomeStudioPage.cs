@@ -51,6 +51,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     internal HomeStudioPage(MainWindow window)
     {
         this.window = window; scrubber = new((time, token) => SeekAsync(time, token), error => Notice(error.Message));
+        title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis; title.FontSize = 13;
         ToolTipService.SetToolTip(autoKey, "开启时只编辑当前时刻；关闭时整体调整已有轨道，保留原有运动和关键帧。");
         HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch;
         var file = StudioLayout.Tool("文件", () => { }, "\uE8B7");
@@ -65,19 +66,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         var finalTools = Ui.Row(8, StudioLayout.AsyncTool("保存", () => SafeAsync(() => SaveAsync()), "\uE74E"), StudioLayout.AsyncTool("导出…", () => SafeAsync(ExportAsync), "\uE898", true));
         toolbar.Children.Add(finalTools); Grid.SetColumn(finalTools, 2);
 
-        var left = new Grid { RowSpacing = 8 };
-        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        left.RowDefinitions.Add(new() { Height = new(160), MinHeight = 80 });
-        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        left.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
-        left.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        left.Children.Add(Ui.Row(8, StudioLayout.Section("主页角色"), StudioLayout.AsyncTool("选择…", () => SafeAsync(ChooseHomeAsync), "\uE8E5")));
-        left.Children.Add(objects); Grid.SetRow(objects, 1);
-        left.Children.Add(StudioLayout.Section("动作素材")); Grid.SetRow((FrameworkElement)left.Children[^1], 2);
-        left.Children.Add(animationSearch); Grid.SetRow(animationSearch, 3);
-        left.Children.Add(animationLibrary); Grid.SetRow(animationLibrary, 4);
-        left.Children.Add(animationHint); Grid.SetRow(animationHint, 5);
+        var left = BuildHomeProjectLibrary();
         welcome = Ui.Stack(13, new TextBlock { Text = "让主页动起来", FontSize = 21, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center },
             Ui.Text("选择主页，在画布中摆放角色，用时间轴编排动作。", 13, true),
             Ui.Row(8, StudioLayout.AsyncTool("选择主页", ChooseHomeAsync, "\uE8E5", true), StudioLayout.AsyncTool("打开项目", () => OpenAsync(), "\uE8E5")),
@@ -87,8 +76,8 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         var center = new Grid(); center.Children.Add(viewport); center.Children.Add(welcome);
         notice.VerticalAlignment = VerticalAlignment.Top; notice.Margin = new(8); center.Children.Add(notice);
         var right = Ui.Scroll(Ui.Stack(6, StudioLayout.Section("检查器"), autoKey, properties));
-        Content = new StudioLayout(left, center, right, timeline, toolbar);
-        properties.Children.Add(Ui.Text("在左侧或画布中选择角色，调整其动作与位置。", 13, true));
+        Content = new StudioLayout(left, center, right, timeline, toolbar, workspaceKey: "home");
+        properties.Children.Add(Ui.Text("在项目面板或画布中选择角色，调整其动作与位置。", 13, true));
 
         objects.SelectionChanged += (_, _) => { if (!refreshing) Select((objects.SelectedItem as ListViewItem)?.Tag?.ToString()); };
         previewOnly.Checked += (_, _) => { if (!refreshing) _ = SafeAsync(ReloadPreviewAsync); };
@@ -106,21 +95,30 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         draftTimer = DispatcherQueue.CreateTimer(); draftTimer.Interval = TimeSpan.FromMilliseconds(800); draftTimer.IsRepeating = false; draftTimer.Tick += (_, _) => SaveDraft();
         Loaded += (_, _) => { active = true; _ = SafeAsync(ActivateAsync); };
         Unloaded += (_, _) => Deactivate();
-        KeyDown += (_, args) =>
-        {
-            bool ctrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
-            if (!ctrl) return;
-            switch (args.Key)
-            {
-                case VirtualKey.S: args.Handled = true; _ = SafeAsync(() => SaveAsync()); break;
-                case VirtualKey.O: args.Handled = true; _ = SafeAsync(() => OpenAsync()); break;
-                case VirtualKey.Z: if (args.OriginalSource is not TextBox) { args.Handled = true; Edit(() => document?.Undo()); } break;
-                case VirtualKey.Y: if (args.OriginalSource is not TextBox) { args.Handled = true; Edit(() => document?.Redo()); } break;
-            }
-        };
+        KeyDown += (_, args) => HandleWorkspaceKey(args);
         AllowDrop = true;
         DragOver += (_, args) => { if (args.DataView.Contains(StandardDataFormats.StorageItems)) args.AcceptedOperation = DataPackageOperation.Copy; };
         Drop += (_, args) => _ = SafeAsync(async () => { if (args.DataView.Contains(StandardDataFormats.StorageItems)) { var files = await args.DataView.GetStorageItemsAsync(); if (files.FirstOrDefault()?.Path is { } path) await OpenAsync(path); } });
+    }
+
+    internal void HandleWorkspaceKey(KeyRoutedEventArgs args)
+    {
+        if (args.Handled) return;
+        bool ctrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+        bool shift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+        if (ctrl && args.Key == VirtualKey.S) { args.Handled = true; _ = SafeAsync(() => SaveAsync(shift)); return; }
+        if (ctrl && args.Key == VirtualKey.O) { args.Handled = true; _ = SafeAsync(() => OpenAsync()); return; }
+        if (ctrl && args.Key == VirtualKey.N) { args.Handled = true; _ = SafeAsync(ChooseHomeAsync); return; }
+        if (HomeTextInput(args.OriginalSource as DependencyObject)) return;
+        if (ctrl)
+        {
+            if (args.Key == VirtualKey.Z) { args.Handled = true; Edit(() => { if (shift) document?.Redo(); else document?.Undo(); }); }
+            else if (args.Key == VirtualKey.Y) { args.Handled = true; Edit(() => document?.Redo()); }
+        }
+        else if (args.Key == VirtualKey.Space) { _ = SafeAsync(TogglePlaybackAsync); args.Handled = true; }
+        else if (args.Key == VirtualKey.I) { timeline.MarkIn(); args.Handled = true; }
+        else if (args.Key == VirtualKey.O) { timeline.MarkOut(); args.Handled = true; }
+        else if (args.Key == VirtualKey.F) { viewport.FitCanvas(); args.Handled = true; }
     }
 
     async Task SafeAsync(Func<Task> action)
@@ -364,9 +362,9 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
             AddNumber("speed", "动作速度", .05, 8, .1, AnimationChanged);
             AddNumber("sourceTime", "动作内起点（秒）", 0, 36000, .1, AnimationChanged);
 
-                properties.Children.Add(Ui.Text("在左侧双击动作可替换这个片段；拖动时间轴片段改变开始位置。", 11, true));
+                properties.Children.Add(Ui.Text("在项目面板双击动作可替换这个片段；拖动时间轴片段改变开始位置。", 11, true));
             }
-            else properties.Children.Add(Ui.Text("从左侧添加动作；在画布中拖动摆放。", 11, true));
+            else properties.Children.Add(Ui.Text("从项目面板添加动作；在画布中拖动摆放。", 11, true));
             int placementStart = properties.Children.Count;
             visibleBox = new CheckBox { Content = "显示角色" }; visibleBox.Checked += (_, _) => TransformChanged(); visibleBox.Unchecked += (_, _) => TransformChanged(); properties.Children.Add(visibleBox);
             AddNumber("x", "水平位移（%）", -1000, 1000, 1, TransformChanged);

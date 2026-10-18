@@ -11,6 +11,10 @@ public sealed unsafe partial class Actor
     // Screen-space corrections sit above the original performance, so dragging a source
     // actor never detaches its game slot, restarts its animation or discards camera motion.
     internal float EditorOffsetX,EditorOffsetY,EditorScale=1;
+    // A null override preserves the game's default-motion restart rule. Only explicit
+    // workbench commands change it; captured performances keep their original mixer.
+    internal bool? AuthoredMotionLoop;
+    internal void SetMotionLoop(bool loop){Spec.Loop=loop;AuthoredMotionLoop=loop;}
     public void DirectorAnimation(bool enabled){gameAnimation=!enabled;}
     public void WarmupDirector(int frames){if(frames<0||frames>300)throw new ArgumentException("warmupFrames must be 0..300");for(int i=0;i<frames;i++)Step(new Shot(),0,1f/30);Motion(current?.Name??DefaultMotion,0);Expression(expression==""?DefaultExpression:expression,0);}
     public float ParameterValue(string id)=>ids.TryGetValue(id,out int index)?Values[index]:throw new ArgumentException("Unknown model parameter: "+id);
@@ -39,6 +43,13 @@ public sealed unsafe partial class Actor
     public bool GameLighting{get=>gameDrawing?.LightingEnabled??false;set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
     public void SetDirectorTint(float[] tint,float brightness){if(gameDrawing is null)throw new InvalidOperationException("Game drawing not initialized");gameDrawing.DirectorTint=tint;gameDrawing.DirectorBrightness=brightness;}
     public PreviewTarget? PreviewBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,OverlayProjection(viewProjection));
+    internal PreviewTarget? PreviewIsolatedBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,viewProjection);
+    float[]? previewAutomaticValues;
     internal void RefreshPreviewParameters()
-    {foreach(var(id,value)in DirectorParameters)Values[ids[id]]=Math.Clamp(value,Core.Min[ids[id]],Core.Max[ids[id]]);Core.Update(Values);}
+    {
+        previewAutomaticValues??=Core.Floats("ParameterValues",Core.ParameterIds.Length);
+        var displayed=(float[])previewAutomaticValues.Clone();
+        foreach(var(id,value)in DirectorParameters)displayed[ids[id]]=Math.Clamp(value,Core.Min[ids[id]],Core.Max[ids[id]]);
+        Core.Update(displayed);
+    }
 }

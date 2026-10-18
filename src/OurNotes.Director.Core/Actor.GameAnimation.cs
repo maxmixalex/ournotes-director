@@ -89,7 +89,7 @@ public sealed unsafe partial class Actor
     }
     public void ResetGameAnimation()
     {
-        if(!gameAnimation)return;gameMotions.Clear();gameDisplay.Clear();gameExpression="";gameExpressions.Clear();gamePendingMotion=gamePendingExpression=null;animationPaused=false;ParameterLoop.Stop(0);
+        if(!gameAnimation)return;gameMotions.Clear();gameDisplay.Clear();previewAutomaticValues=null;gameExpression="";gameExpressions.Clear();gamePendingMotion=gamePendingExpression=null;animationPaused=false;ParameterLoop.Stop(0);
         foreach(int i in gameExpressionParameters)gameStore[i]=Core.Defaults[i];
     }
 }

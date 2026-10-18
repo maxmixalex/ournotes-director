@@ -110,8 +110,8 @@ try {
     if ($report.checks -isnot [Array] -or $report.pages -isnot [Array] -or $checkCount -eq 0 -or @($report.pages).Count -eq 0) {
         throw 'No actual page and command checks were reported.'
     }
-    if (@($report.pages).Count -ne 2 -or $report.pages -notcontains 'scenes' -or $report.pages -notcontains 'home') {
-        throw 'The application must expose exactly the scene and home studios as primary pages.'
+    if (@($report.pages).Count -ne 3 -or $report.pages -notcontains 'scenes' -or $report.pages -notcontains 'home' -or $report.pages -notcontains 'live2d') {
+        throw 'The application must expose the scene, Live2D and home studios as three primary pages.'
     }
     if (@($report.captures).Count -lt 2) { throw 'The smoke test did not capture its initial and final WinUI surfaces.' }
     foreach ($capture in $report.captures) {

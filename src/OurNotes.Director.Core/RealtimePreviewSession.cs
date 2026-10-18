@@ -122,6 +122,29 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
 
     public Task SynchronizeAsync()=>Enqueue(()=>{});
 
+    public Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+        _=ActorIsolation.ReadTransform(ActorIsolation.TransformJson(transform),"preview");
+        return UpdateState(update=>update.IsolationTransform=transform);
+    }
+
+    /// <summary>Reads actual model ranges/defaults and displayed values on the native
+    /// renderer thread; callers never touch Cubism memory from the UI thread.</summary>
+    public async Task<IReadOnlyList<PreviewParameter>> ReadActorParametersAsync(string actorId,CancellationToken cancellationToken=default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<PreviewParameter>? result=null;
+        await Enqueue(()=>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if(renderer is not SceneState scene)throw new InvalidOperationException("Load a scene before reading model parameters.");
+            result=scene.Parameters(actorId);
+        }).ConfigureAwait(false);
+        return result!;
+    }
+
     public Task SetHomeEditStateAsync(HomeEditState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -217,6 +240,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 state.SetEdits(home);
             }
             if(update.SceneEdits.Count>0&&renderer is not SceneState)throw new InvalidOperationException("Load a scene project before applying scene edits.");
+            if(update.IsolationTransform is {} transform)
+            {
+                if(update.Time.HasValue)throw new InvalidOperationException("定位过程中不能同时变换模型。");
+                if(renderer is not SceneState isolated)throw new InvalidOperationException("Load an isolated actor before editing its presentation.");
+                isolated.SetIsolatedTransform(transform);
+            }
             if(update.Time.HasValue)resumeAudio=false;
             if(update.StagePositions.Count>0)
             {
@@ -454,6 +483,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public double? Time;
         public CancellationToken SeekCancellation;
         public HomeEditState? HomeEdits;
+        public IsolatedActorTransform? IsolationTransform;
         public Dictionary<string,StagePosition> StagePositions{get;}=new(StringComparer.Ordinal);
         public Dictionary<string,JsonObject> SceneEdits{get;}=new(StringComparer.Ordinal);
         public List<TaskCompletionSource> Waiters{get;}=[];
@@ -519,6 +549,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 ||source.ArchivePath!=Source.ArchivePath||source.CubismPath!=Source.CubismPath||source.FfmpegPath!=Source.FfmpegPath
                 ||(next.Output["clean"]?.GetValue<bool>()??false)!=clean||Archive.S(next.Output,"letterbox")!=Archive.S(project.Output,"letterbox")
                 ||Archive.S(next.Output,"isolateActor")!=Archive.S(project.Output,"isolateActor")
+                ||ActorIsolation.ReadTransform(next.Output["isolateTransform"],next.Output["isolateActor"]?.ToString())!=native.IsolationTransform
                 ||SceneContent.Read(next.Output["content"])!=SceneContent.Read(project.Output["content"])
                 ||!JsonNode.DeepEquals(next.Output["playbackViewport"],project.Output["playbackViewport"]))
                 throw new ArgumentException("Changing source, viewport or presentation requires reloading the scene.");
@@ -537,6 +568,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public NativePlaybackTiming FinishedTiming()=>new(ProjectHash,true,native.Player.CompletionFrame,
             (native.Player.CompletionFrame!.Value+1)/30d,native.Player.CommandTimings(),native.Loop.Frame);
         public void PreviewStagePosition(string actor,int slot,System.Numerics.Vector3 position)=>native.Scene.PreviewStagePosition(actor,slot,position);
+        public void SetIsolatedTransform(IsolatedActorTransform transform)=>native.SetIsolatedTransform(transform);
+        public IReadOnlyList<PreviewParameter> Parameters(string actor)=>(native.Scene.Character(actor)
+            ??throw new ArgumentException("Unknown actor: "+actor)).PreviewParameters();
         public override IReadOnlyList<PreviewTarget> Targets()=>native.PreviewTargets();
         public override IReadOnlyList<PreviewLipSync> LipSync()=>native.Scene.PreviewLipSyncState();
         public override IReadOnlyList<PreviewActorAnimation> Animations()=>native.Scene.PreviewAnimationState();

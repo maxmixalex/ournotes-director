@@ -9,7 +9,7 @@ namespace OurNotes.Director.WinUI;
 
 internal sealed partial class ClipTimeline
 {
-    readonly DropDownButton rangeButton = new() { Content = "全部区间", Padding = new(8, 5, 8, 5) };
+    readonly DropDownButton rangeButton = new() { Content = "全部区间", FontSize = 11, MinWidth = 0, MinHeight = 26, Padding = new(6, 2, 6, 2) };
     TimelineRange? workRange;
     public TimelineRange? WorkRange => workRange;
     public double PlaybackStart => workRange?.Start ?? 0;

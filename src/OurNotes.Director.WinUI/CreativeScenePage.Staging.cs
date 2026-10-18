@@ -118,7 +118,7 @@ internal sealed partial class CreativeScenePage
         StageChoice("同深度遮挡顺序", new[] { ("", "沿用原作"), ("Forward", "置于前面"), ("Back", "置于后面") }, S(actor, "layer"),
             value => EditAsync(() => document.Actor(id)["layer"] = value));
         inspector.Children.Add(new TextBlock { Text = "负值靠近镜头，正值远离。直接拖动可微调构图，不改变原作站位。", TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = .7 });
-        inspector.Children.Add(Ui.Row(6, Button("姿态图片", () => ExportAsync("frame", true), "\uEB9F"), Button("角色动画", () => ExportAsync("clip", true), "\uE714")));
+        inspector.Children.Add(Button("在 Live2D 工作台中打开", () => OpenActorInLive2DAsync(), "\uE8A7"));
         return true;
     }
     bool BuildStagingClipInspector(JsonObject clip)

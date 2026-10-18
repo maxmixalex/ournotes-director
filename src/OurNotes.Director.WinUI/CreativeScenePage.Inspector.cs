@@ -121,7 +121,7 @@ internal sealed partial class CreativeScenePage
             var y=Field(original?"垂直偏移（像素）":"垂直位置（像素）",pose.Y*h,-100000,100000,v=>AddTransformAsync(id,pose.X,v/h,pose.Height));StudioLayout.PairFields(inspector,x,y);
             Field(original?"缩放（百分比）":"角色高度（百分比）",pose.Height*100,1,2000,v=>AddTransformAsync(id,pose.X,pose.Y,v/100));inspector.Children.Add(recordTransform);
             Help(original?"偏移叠加在原有演出之上，不重置原剧情位置、动作或镜头。":"直接拖动角色摆放。开启记录后，在播放头创建位置片段。");
-            inspector.Children.Add(Ui.Row(6,Button("当前姿态图片",()=>ExportAsync("frame",true),"\uEB9F"),Button("角色动画",()=>ExportAsync("clip",true),"\uE714")));
+            inspector.Children.Add(Button("在 Live2D 工作台中打开",()=>OpenActorInLive2DAsync(),"\uE8A7"));
             return;
         }
         Heading("场景");inspector.Children.Add(Button(document.Root["staging"] is null?"选择舞台…":"更换舞台…",ChooseStageAsync,"\uE91B"));Help("添加角色，把动作、表情或语音拖到时间轴。场景长度随片段延伸。");
@@ -204,7 +204,7 @@ internal sealed partial class CreativeScenePage
         dialog.PrimaryButtonClick+=(_,args)=>{try{validate(input.Text);}catch(Exception failure){error.Message=failure.Message;error.IsOpen=true;args.Cancel=true;}};
         return await dialog.ShowAsync()==ContentDialogResult.Primary?input.Text:null;
     }
-    async Task ShowJsonAsync(){var result=await EditJsonDialogAsync("场景 JSON",document.ToJson(),text=>CreativeScene.Parse(text));if(result is not null)await EditAsync(()=>{document=CreativeScene.Parse(result);selectedActor=selectedClip=null;});}
+    async Task ShowJsonAsync(){var result=await EditJsonDialogAsync("场景 JSON",document.ToJson(),text=>CreativeScene.Parse(text));if(result is not null)await EditAsync(()=>{document=CreativeScene.Parse(result);selectedActor=selectedClip=replaceAssetClip=null;ResetProjectLibrary();});}
     async Task PasteAsync()
     {
         var clipboard=Clipboard.GetContent();if(!clipboard.Contains(StandardDataFormats.Text))throw new ArgumentException("剪贴板没有 JSON。");string text=CreativeScene.UnwrapJson(await clipboard.GetTextAsync());
@@ -214,7 +214,7 @@ internal sealed partial class CreativeScenePage
         if(creative)
         {
             var next=CreativeScene.Parse(result);if(next.ToJson()==document.ToJson())return;
-            await EditAsync(()=>{document=next;selectedActor=selectedClip=replaceAssetClip=null;playhead=0;timeline.ResetProjectView();});
+            await EditAsync(()=>{document=next;selectedActor=selectedClip=replaceAssetClip=null;playhead=0;timeline.ResetProjectView();ResetProjectLibrary();});
         }
         else await ImportNativeAsync(result,directory);
     }

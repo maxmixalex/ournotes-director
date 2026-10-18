@@ -85,6 +85,17 @@ public sealed partial class NativeViewport
         finally { SendSmokeKey(key, true); RemoveHandler(KeyDownEvent, observe); }
     }
 
+    internal async Task SendControlKeySmokeAsync(Window window, Microsoft.UI.Xaml.Controls.Control control, VirtualKey key)
+    {
+        await PrepareSmokeInputAsync(window);
+        if (!control.Focus(FocusState.Keyboard)) throw new InvalidOperationException("The requested editor control did not receive keyboard focus.");
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        KeyEventHandler observe = (_, args) => { if (args.Key == key) completed.TrySetResult(); };
+        control.AddHandler(KeyDownEvent, observe, true);
+        try { SendSmokeKey(key, false); await completed.Task.WaitAsync(TimeSpan.FromSeconds(3)); }
+        finally { SendSmokeKey(key, true); control.RemoveHandler(KeyDownEvent, observe); }
+    }
+
     internal async Task SendBlankClickSmokeAsync(Window window, bool outsideCanvas = false)
     {
         nint hwnd = await PrepareSmokeInputAsync(window);

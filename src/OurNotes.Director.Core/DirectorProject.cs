@@ -22,7 +22,7 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
             throw new ArgumentException("A blank/library project requires explicit initialize, commands and finalize arrays; no story is inherited.");
         var output=root["output"] as JsonObject??new JsonObject();
         if(root["output"] is not null&&root["output"] is not JsonObject)throw new ArgumentException("Project output must be an object");
-        CheckKeys(output,["width","height","supersample","codec","cineformQuality","clean","letterbox","isolateActor","playbackViewport","content"],"output");
+        CheckKeys(output,["width","height","supersample","codec","cineformQuality","clean","letterbox","isolateActor","isolateTransform","playbackViewport","content"],"output");
         foreach(string key in new[]{"width","height","supersample"})if(output[key] is {} value){
             if(!int.TryParse(value.ToString(),out int n)||n<(key=="supersample"?1:16)||n>(key=="supersample"?4:RenderDimensions.MaxSide))throw new ArgumentException("Invalid project output."+key);
         }
@@ -35,6 +35,7 @@ public sealed record DirectorProject(string Adv,string Site,string Language,Json
         if(output["isolateActor"] is {} isolated && (isolated is not JsonValue iv || !iv.TryGetValue<string>(out var actor) || string.IsNullOrWhiteSpace(actor)))
             throw new ArgumentException("Project output.isolateActor must be a non-empty actor ID");
         ActorIsolation.ValidateViewport(output["playbackViewport"]);
+        _=ActorIsolation.ReadTransform(output["isolateTransform"],output["isolateActor"]?.ToString());
         _=SceneContent.Read(output["content"]);
         foreach(string section in new[]{"initialize","commands","finalize"}){
             if(root[section] is null)continue;

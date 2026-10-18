@@ -45,14 +45,30 @@ public sealed partial class AdvScene
             }
             yield return loop.All(waits.ToArray());yield break;
         }
+        if(row.Command=="Director.Actor"&&row.Data["Values"]?["controls"] is JsonObject controls)
+        {
+            // Controller edits must not detach a source actor from its native slot,
+            // reset its motion history or replace the original animation sampler.
+            var actor=Character(target)??throw new ArgumentException("Unknown actor: "+target);
+            foreach(var(key,value)in controls)switch(key)
+            {
+                case "physics":actor.Spec.Physics=value!.GetValue<bool>();break;
+                case "breath":actor.Spec.Breath=value!.GetValue<bool>();break;
+                case "blink":actor.Spec.Blink=value!.GetValue<bool>();actor.SetEyeBlinkStopped(!actor.Spec.Blink,0);break;
+                case "loop":actor.SetMotionLoop(value!.GetValue<bool>());break;
+                default:throw new ArgumentException("Unknown controller: "+key);
+            }
+            yield break;
+        }
         if(row.Command=="Director.Parameter")
         {
             var actor=Character(target)??throw new ArgumentException("Unknown actor: "+target);string parameter=row.Text("Parameter");
             float current=actor.ParameterValue(parameter);string key=prefix+parameter;
-            if(row.Text("Operation")=="release"){if(running.Remove(key,out var active))active.Kill();actor.DirectorParameters.Remove(parameter);yield break;}
+            if(row.Text("Operation")=="release"){if(running.Remove(key,out var active))active.Kill();actor.DirectorParameters.Remove(parameter);actor.RefreshPreviewParameters();yield break;}
             if(row.Text("Operation") is not ("" or "set"))throw new ArgumentException("Parameter operation must be set or release");
             if(row.Data["Value"] is null)throw new ArgumentException("Director.Parameter requires Value");
             actor.DirectorParameters.TryAdd(parameter,current);Scalar(parameter,()=>actor.DirectorParameters[parameter],v=>actor.DirectorParameters[parameter]=v,row.Number("Value"));
+            if(duration==0)actor.RefreshPreviewParameters();
         }
         else
         {

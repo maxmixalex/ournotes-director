@@ -11,7 +11,7 @@ public sealed class DesktopSettings
     public string OutputDirectory { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "OurNotes Director");
     public string Site { get; set; } = "intl";
     public string Language { get; set; } = "zh-Hans";
-    public string Theme { get; set; } = "Default";
+    public string Theme { get; set; } = "Dark";
     public string EnginePath { get; set; } = "";
     public string FFmpegPath { get; set; } = "";
     public string FFprobePath { get; set; } = "";
@@ -19,6 +19,7 @@ public sealed class DesktopSettings
     public string NativeLibraryPath { get; set; } = "";
     public List<string> RecentProjects { get; } = [];
     public Dictionary<string, Dictionary<string, string?>> Forms { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, WorkspaceLayoutSettings> WorkspaceLayouts { get; } = new(StringComparer.Ordinal);
     public string? LoadWarning { get; private set; }
 
     public static string DataDirectory => Environment.GetEnvironmentVariable("OURNOTES_DIRECTOR_DATA") is { Length: > 0 } custom
@@ -64,7 +65,7 @@ public sealed class DesktopSettings
             var root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? throw new InvalidDataException("设置不是 JSON 对象。");
             string Read(string key, string fallback) => root[key] is JsonValue value && value.TryGetValue<string>(out var text) ? text : fallback;
             settings.ArchivePath = Read("archive", ""); settings.OutputDirectory = Read("output", settings.OutputDirectory);
-            settings.Site = Read("site", "intl"); settings.Language = Read("language", "zh-Hans"); settings.Theme = Read("theme", "Default");
+            settings.Site = Read("site", "intl"); settings.Language = Read("language", "zh-Hans"); settings.Theme = Read("theme", settings.Theme);
             settings.EnginePath = Read("engine", ""); settings.FFmpegPath = Read("ffmpeg", ""); settings.FFprobePath = Read("ffprobe", "");
             settings.CubismSdkPath = Read("cubismSdk", ""); settings.NativeLibraryPath = Read("nativeLibrary", "");
             if (root["recentProjects"] is JsonArray recent)
@@ -73,6 +74,15 @@ public sealed class DesktopSettings
                 foreach (var pair in forms)
                     if (pair.Value is JsonObject form)
                         settings.Forms[pair.Key] = form.ToDictionary(v => v.Key, v => v.Value?.ToString(), StringComparer.Ordinal);
+            if (root["workspaceLayouts"] is JsonObject layouts)
+                foreach (var pair in layouts)
+                    if (pair.Value is JsonObject layout)
+                    {
+                        var defaults = WorkspaceLayoutSettings.DefaultFor(pair.Key);
+                        double Fraction(string key, double fallback) => layout[key] is JsonValue value && value.TryGetValue<double>(out var number) ? number : fallback;
+                        settings.WorkspaceLayouts[pair.Key] = new WorkspaceLayoutSettings(Fraction("topLeft", defaults.TopLeft),
+                            Fraction("bottomLeft", defaults.BottomLeft), Fraction("topHeight", defaults.TopHeight)).Normalize(pair.Key);
+                    }
         }
         catch (Exception error) when (error is IOException or JsonException or InvalidDataException or InvalidOperationException)
         { settings.LoadWarning = "无法读取上次设置，已使用默认值。原设置文件仍保留：" + error.Message; }
@@ -97,12 +107,19 @@ public sealed class DesktopSettings
             foreach (var field in entry.Value) form[field.Key] = field.Value;
             forms[entry.Key] = form;
         }
+        var layouts = new JsonObject();
+        foreach (var entry in WorkspaceLayouts)
+        {
+            var layout = entry.Value.Normalize(entry.Key);
+            layouts[entry.Key] = new JsonObject { ["topLeft"] = layout.TopLeft, ["bottomLeft"] = layout.BottomLeft, ["topHeight"] = layout.TopHeight };
+        }
         var root = new JsonObject
         {
             ["version"] = 1, ["archive"] = ArchivePath, ["output"] = OutputDirectory, ["site"] = Site,
             ["language"] = Language, ["theme"] = Theme, ["engine"] = EnginePath, ["ffmpeg"] = FFmpegPath,
             ["ffprobe"] = FFprobePath, ["cubismSdk"] = CubismSdkPath, ["nativeLibrary"] = NativeLibraryPath,
-            ["recentProjects"] = new JsonArray(RecentProjects.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()), ["forms"] = forms
+            ["recentProjects"] = new JsonArray(RecentProjects.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()), ["forms"] = forms,
+            ["workspaceLayouts"] = layouts
         };
         AtomicWrite(path, root.ToJsonString(JsonOptions));
     }

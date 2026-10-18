@@ -171,6 +171,12 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     }
     public async Task CommitSceneProjectAsync(ScenePreviewSource source){await session.CommitSceneProjectAsync(source with{GpuPresentation=true});ConfigureAudio(source);}
     public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
+    public Task<IReadOnlyList<PreviewParameter>> ReadActorParametersAsync(string actorId,CancellationToken cancellationToken=default)=>session.ReadActorParametersAsync(actorId,cancellationToken);
+    public async Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
+    {
+        await session.SetIsolatedTransformAsync(transform);
+        await AwaitPresentationAsync();
+    }
     async Task AwaitPresentationAsync()
     {
         if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);

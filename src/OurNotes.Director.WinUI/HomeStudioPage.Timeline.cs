@@ -44,7 +44,7 @@ internal sealed partial class HomeStudioPage
             _ = SafeAsync(async () =>
             {
                 await SeekAsync(time);
-                if (kind == "motion") { animationLibrary.Focus(FocusState.Programmatic); animationHint.Text = "双击一个动作，从播放头开始。"; }
+                if (kind == "motion") { ShowHomeAnimations(); animationHint.Text = "双击一个动作，从播放头开始。"; }
                 else AddKey();
             });
         };
@@ -55,7 +55,7 @@ internal sealed partial class HomeStudioPage
             menu.Items.Add(StudioMenus.Async(kind == "motion" ? "在这里开始动作…" : "在这里记录变化", async () =>
             {
                 selectedMarker = null; Select(actor.Length == 0 ? SceneId : actor); await SeekAsync(time);
-                if (kind == "motion") animationLibrary.Focus(FocusState.Programmatic); else AddKey();
+                if (kind == "motion") ShowHomeAnimations(); else AddKey();
             }, "\uE710", document is not null));
             return menu;
         };
@@ -82,17 +82,19 @@ internal sealed partial class HomeStudioPage
             item.ContextRequested += (_, args) =>
             {
                 var menu = new MenuFlyout();
-                menu.Items.Add(StudioMenus.Item(selectedMarker is null ? "从播放头开始" : "替换所选动作", () => ApplyLibraryAnimation(name), "\uE768"));
+                menu.Items.Add(StudioMenus.Item(SelectedMotionClip is null ? "从播放头开始" : "替换所选动作", () => ApplyLibraryAnimation(name), "\uE768"));
                 menu.ShowAt(item); args.Handled = true;
             };
             animationLibrary.Items.Add(item);
         }
         animationHint.Text = "双击插入；选中时间轴的动作后，双击可直接替换。";
     }
+    TimelineItem? SelectedMotionClip => selectedMarker is { } id && timelineItems.TryGetValue(id, out var item)
+        && item.Kind == "motion" && item.Actor == document?.SelectedCharacterKey ? item : null;
     void ApplyLibraryAnimation(string name)
     {
         if (document?.SelectedCharacterKey is not { } key) return;
-        double at = PropertyTime; var cue = document.Track(key).AnimationAt(at);
+        double at = SelectedMotionClip?.Start ?? document.Playhead; var cue = document.Track(key).AnimationAt(at);
         Edit(() => document.SetAnimation(key, at, name.Length == 0 ? null : name, cue?.Loop, cue?.Speed ?? 1, cue?.SourceTime ?? 0));
         selectedMarker = document.TimelineKeys().FirstOrDefault(k => k.CharacterKey == key && k.Kind == "clip" && Math.Abs(k.Time - document.Snap(at)) < 1e-8)?.Id;
         RefreshTimeline(); BuildProperties();
@@ -101,7 +103,7 @@ internal sealed partial class HomeStudioPage
     {
         var menu = new MenuFlyout(); if (!timelineItems.TryGetValue(id, out var item)) return menu;
         menu.Items.Add(StudioMenus.Async("播放此处", async () => { await SeekAsync(item.Start); playbackRequested = true; viewport.Play(); }, "\uE768"));
-        if (item.Kind == "motion") menu.Items.Add(StudioMenus.Item("替换动作…", () => animationLibrary.Focus(FocusState.Programmatic), "\uE8D2"));
+        if (item.Kind == "motion") menu.Items.Add(StudioMenus.Item("替换动作…", () => ShowHomeAnimations(), "\uE8D2"));
         if (item.Actor.Length > 0)
         {
             menu.Items.Add(new MenuFlyoutSeparator());

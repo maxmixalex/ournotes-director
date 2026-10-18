@@ -97,7 +97,7 @@ public sealed unsafe partial class Actor : IDisposable
         if(AnimationPaused&&!gameAnimation)return;
         if(motionQueue.Count>0){queueWait-=dt*Spec.Speed; if(queueWait<=0){var next=motionQueue.Dequeue();Motion(next.Motion,next.Fade);Expression(next.Expression==""?DefaultExpression:next.Expression,next.Fade);if(motionQueue.TryPeek(out var queued))queueWait=queued.Wait;}}
         if(AnimationPaused)return;
-        if(gameAnimation&&current?.Name==DefaultMotion&&gameMotions.Count>0&&gameMotions.All(m=>elapsed>m.End))GameStartMotion(current,0);
+        if(gameAnimation&&current is not null&&(AuthoredMotionLoop??current.Name==DefaultMotion)&&gameMotions.Count>0&&gameMotions.All(m=>elapsed>m.End))GameStartMotion(current,0);
         Values=(float[])(gameAnimation?gameStore:Core.Defaults).Clone();float eye=gameAnimation?eyeOpening:AutoBlink(dt);renderOpacity=1;
         if(gameAnimation&&current is not null)motionTime=Math.Min(motionTime+dt*Spec.Speed,Math.Max(0,current.Length-.0001f));
         current?.Sample(motionTime,!gameAnimation&&Spec.Loop,Values,ref eye,ref renderOpacity);
@@ -118,9 +118,20 @@ public sealed unsafe partial class Actor : IDisposable
         ApplyPseudoLipSync(dt);
         if(OverrideAngle){if(ids.TryGetValue("ParamAngleX",out int ax))Values[ax]+=AngleX;if(ids.TryGetValue("ParamBodyAngleXAdd",out int add))Values[add]=BodyAngleX;else if(ids.TryGetValue("ParamBodyAngleX",out int bx))Values[bx]+=BodyAngleX;}
         if(LookEnabled){if(ids.TryGetValue("ParamEyeBallX",out int x))Values[x]=LookX;if(ids.TryGetValue("ParamEyeBallY",out int y))Values[y]=LookY;}
+        var automatic=DirectorParameters.Count>0?(float[])Values.Clone():null;
         foreach(var (id,value) in DirectorParameters)Values[ids[id]]=value;
         for(int i=0;i<Values.Length;i++)Values[i]=Math.Clamp(Values[i],Core.Min[i],Core.Max[i]);
-        if(gameAnimation){gameDisplay.Enqueue((float[])Values.Clone());Core.Update(gameDisplay.Count>2?gameDisplay.Dequeue():gameDisplay.Peek());eyeOpening=AutoBlink(dt);}else Core.Update(Values);
+        if(automatic is not null)for(int i=0;i<automatic.Length;i++)automatic[i]=Math.Clamp(automatic[i],Core.Min[i],Core.Max[i]);
+        if(gameAnimation)
+        {
+            // Keep the native two-frame animation buffer. Authored parameter pins sit
+            // over that displayed pose, so paused set/release and replay agree exactly.
+            gameDisplay.Enqueue(automatic??(float[])Values.Clone());
+            previewAutomaticValues=gameDisplay.Count>2?gameDisplay.Dequeue():gameDisplay.Peek();
+            if(DirectorParameters.Count>0)RefreshPreviewParameters();else Core.Update(previewAutomaticValues);
+            eyeOpening=AutoBlink(dt);
+        }
+        else{previewAutomaticValues=automatic??Values;Core.Update(Values);}
         if(!gameAnimation)motionTime+=dt*Spec.Speed;fadeTime+=dt;expressionTime+=dt;elapsed+=dt;
     }
     public void Draw(OffscreenGl gl,Shot shot,double time,float[]? worldToClip=null)

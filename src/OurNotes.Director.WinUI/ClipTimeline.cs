@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -23,19 +24,19 @@ internal sealed record TimelineLane(string Actor, string Kind, string Label, IRe
 /// this control holds only read-only display data, never a second editable scene.</summary>
 internal sealed partial class ClipTimeline : UserControl
 {
-    const double RowHeight = 42;
+    const double RowHeight = 36;
     readonly Canvas canvas = new() { Background = Brush(0, 0, 0, 0) };
     readonly Canvas labels = new(), ruler = new();
     readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     readonly Line playhead = new() { Stroke = Brush(255, 103, 178, 250), StrokeThickness = 2, IsHitTestVisible = false };
     readonly Dictionary<string, Border> bars = [];
-    readonly TextBlock time = new() { FontSize = 12, FontFamily = new("Consolas"), VerticalAlignment = VerticalAlignment.Center, MinWidth = 155 };
-    readonly Button play = new() { Content = "播放", Padding = new(12, 5, 12, 5) };
-    readonly Slider zoom = new() { Minimum = .025, Maximum = 300, Value = 80, Width = 80 };
-    readonly CheckBox repeat = new() { Content = "循环", MinWidth = 58 };
-    readonly CheckBox snapping = new() { Content = "吸附", IsChecked = true, MinWidth = 58 };
+    readonly TextBlock time = new() { FontSize = 11, FontFamily = new("Consolas"), VerticalAlignment = VerticalAlignment.Center, MinWidth = 139 };
+    readonly Button play = new() { Content = new FontIcon { Glyph = "\uE768", FontSize = 13 }, Padding = new(7, 3, 7, 3), MinWidth = 0 };
+    readonly Slider zoom = new() { Minimum = .025, Maximum = 300, Value = 80, Width = 60, MinWidth = 0 };
+    readonly ToggleButton repeat = new() { Content = new FontIcon { Glyph = "\uE8EE", FontSize = 12 }, Padding = new(6, 3, 6, 3), MinWidth = 0 };
+    readonly ToggleButton snapping = new() { Content = new FontIcon { Glyph = "\uE7C6", FontSize = 12 }, IsChecked = true, Padding = new(6, 3, 6, 3), MinWidth = 0 };
     IReadOnlyList<TimelineLane> lanes = [], allLanes = [];
-    readonly DropDownButton trackFilter = new(){Content="全部轨道",Padding=new(8,2,8,2),HorizontalAlignment=HorizontalAlignment.Stretch};
+    readonly DropDownButton trackFilter = new(){Content="全部轨道",FontSize=11,MinWidth=0,MinHeight=26,Padding=new(6,2,6,2),HorizontalAlignment=HorizontalAlignment.Stretch};
     string? filteredActor;
     TimelineItem[] items = [];
     string? selected, sourceKey;
@@ -61,18 +62,25 @@ internal sealed partial class ClipTimeline : UserControl
         {
             if (!double.IsFinite(value)) return;
             position = Math.Max(0, value); playhead.X1 = playhead.X2 = position * scale;
-            time.Text = $"{TimeSpan.FromSeconds(position):mm\\:ss\\.ff} / {TimeSpan.FromSeconds(length):mm\\:ss\\.ff}";
+            time.Text = $"{Timecode(position)} / {Timecode(length)}";
         }
     }
     public bool IsPlaying
     {
         get => playing;
-        set { if (playing == value) return; playing = value; play.Content = value ? "暂停" : "播放"; }
+        set { if (playing == value) return; playing = value; play.Content = new FontIcon { Glyph = value ? "\uE769" : "\uE768", FontSize = 13 }; ToolTipService.SetToolTip(play, value ? "暂停 · Space" : "播放 · Space"); }
     }
     internal int VisibleClipCount => bars.Count;
     static SolidColorBrush Brush(byte a, byte r, byte g, byte b) => new(Color.FromArgb(a, r, g, b));
     static string S(JsonObject value, string key) => CreativeScene.Text(value, key);
     static double N(JsonObject value, string key, double fallback = 0) => CreativeScene.Number(value, key, fallback);
+    string Timecode(double seconds)
+    {
+        long frame = (long)Math.Round(Math.Max(0, seconds) * framesPerSecond);
+        long whole = frame / framesPerSecond;
+        return whole >= 3600 ? $"{whole / 3600:00}:{whole / 60 % 60:00}:{whole % 60:00}:{frame % framesPerSecond:00}"
+            : $"{whole / 60:00}:{whole % 60:00}:{frame % framesPerSecond:00}";
+    }
 
     internal ClipTimeline()
     {
@@ -80,13 +88,17 @@ internal sealed partial class ClipTimeline : UserControl
         root.RowDefinitions.Add(new() { Height = GridLength.Auto }); root.RowDefinitions.Add(new() { Height = new(26) });
         root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star), MinHeight = 80 });
         root.ColumnDefinitions.Add(new() { Width = new(164) }); root.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        var transport = new Grid { Padding = new(12, 7, 12, 7), ColumnSpacing = 12 };
+        var transport = new Grid { Padding = new(6, 3, 6, 3), ColumnSpacing = 6 };
         transport.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); transport.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var beginning = StudioLayout.Tool("", () => SeekRequested?.Invoke(0), "\uE892"); ToolTipService.SetToolTip(beginning, "回到开头 · Home");
-        var controls = Ui.Row(7, beginning, play, time, repeat, snapping); play.Click += (_, _) => PlayRequested?.Invoke();
+        ToolTipService.SetToolTip(play, "播放 / 暂停 · Space"); ToolTipService.SetToolTip(repeat, "循环播放区间"); ToolTipService.SetToolTip(snapping, "吸附 · S");
+        var controls = Ui.Row(3, beginning, play, time, repeat, snapping); play.Click += (_, _) => PlayRequested?.Invoke();
         InitializeRange();
-        var navigation = Ui.Row(6, rangeButton, StudioLayout.Tool("整段", Fit, "\uE9A6"), StudioLayout.Tool("所选", FitSelection, "\uE8A3"), zoom); ToolTipService.SetToolTip(zoom, "时间轴缩放 · Ctrl+滚轮");
+        var fit = StudioLayout.Tool("", Fit, "\uE9A6"); ToolTipService.SetToolTip(fit, "显示完整序列 · 反斜杠");
+        var fitSelected = StudioLayout.Tool("", FitSelection, "\uE8A3"); ToolTipService.SetToolTip(fitSelected, "显示所选片段");
+        var navigation = Ui.Row(3, rangeButton, fit, fitSelected, zoom); ToolTipService.SetToolTip(zoom, "时间轴缩放 · + / − 或 Ctrl+滚轮");
         transport.Children.Add(controls); transport.Children.Add(navigation); Grid.SetColumn(navigation, 1);
+        transport.SizeChanged += (_, _) => { bool narrow = transport.ActualWidth < 580; time.MinWidth = narrow ? 64 : 139; time.MaxWidth = narrow ? 72 : double.PositiveInfinity; time.TextTrimming = TextTrimming.CharacterEllipsis; zoom.Visibility = transport.ActualWidth < 500 ? Visibility.Collapsed : Visibility.Visible; };
         root.Children.Add(transport); Grid.SetColumnSpan(transport, 2);
         root.Children.Add(trackFilter);Grid.SetRow(trackFilter,1);
         ToolTipService.SetToolTip(trackFilter,"只看某个角色的轨道，不改变场景内容");
@@ -148,19 +160,33 @@ internal sealed partial class ClipTimeline : UserControl
         {
             if (args.Handled || TextInput(args.OriginalSource as DependencyObject)) return;
             if (HandleRangeKey(args.Key)) { args.Handled = true; return; }
+            bool control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            if (control) return;
             if (args.Key == Windows.System.VirtualKey.Space) PlayRequested?.Invoke();
             else if (args.Key == Windows.System.VirtualKey.Home) SeekRequested?.Invoke(0);
             else if (args.Key == Windows.System.VirtualKey.End) SeekRequested?.Invoke(length);
             else if (args.Key is Windows.System.VirtualKey.Left or Windows.System.VirtualKey.Right)
                 SeekRequested?.Invoke(Math.Clamp(position + (args.Key == Windows.System.VirtualKey.Left ? -1 : 1) / (double)framesPerSecond, 0, length));
+            else if (args.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down)
+            {
+                var edges = items.SelectMany(c => new[] { c.Start, c.End }).Append(0).Append(length).Distinct().OrderBy(t => t).ToArray();
+                double next = args.Key == Windows.System.VirtualKey.Up ? edges.LastOrDefault(t => t < position - .5 / framesPerSecond, 0)
+                    : edges.FirstOrDefault(t => t > position + .5 / framesPerSecond, length);
+                SeekRequested?.Invoke(next);
+            }
+            else if (args.Key == Windows.System.VirtualKey.S) snapping.IsChecked = snapping.IsChecked != true;
+            else if ((int)args.Key is 187 or 107) zoom.Value = Math.Clamp(scale * 1.25, zoom.Minimum, zoom.Maximum);
+            else if ((int)args.Key is 189 or 109) zoom.Value = Math.Clamp(scale / 1.25, zoom.Minimum, zoom.Maximum);
+            else if ((int)args.Key == 220) Fit();
             else return;
             args.Handled = true;
         };
         PointerWheelChanged += (_, args) =>
         {
             if ((Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) == 0) return;
-            double anchor = scroll.HorizontalOffset / scale; zoom.Value = Math.Clamp(scale * Math.Pow(1.15, args.GetCurrentPoint(this).Properties.MouseWheelDelta / 120d), zoom.Minimum, zoom.Maximum);
-            scroll.ChangeView(anchor * scale, null, null); args.Handled = true;
+            var pointer = args.GetCurrentPoint(scroll); double x = Math.Clamp(pointer.Position.X, 0, scroll.ActualWidth);
+            double anchor = (scroll.HorizontalOffset + x) / scale; zoom.Value = Math.Clamp(scale * Math.Pow(1.15, pointer.Properties.MouseWheelDelta / 120d), zoom.Minimum, zoom.Maximum);
+            scroll.UpdateLayout(); scroll.ChangeView(Math.Max(0, anchor * scale - x), null, null, true); args.Handled = true;
         };
     }
     static bool TextInput(DependencyObject? node)
@@ -301,7 +327,7 @@ internal sealed partial class ClipTimeline : UserControl
         double visibleStart = clip.IsKey ? fullStart - 5 : Math.Max(fullStart, left - 8), visibleEnd = clip.IsKey ? fullStart + 5 : Math.Min(fullEnd, right + 8);
         double width = clip.IsKey ? 10 : Math.Max(5, visibleEnd - visibleStart);
         var color = clip.Kind switch { "voice" => Brush(255, 48, 103, 88), "expression" => Brush(255, 103, 76, 117), "motion" => Brush(255, 60, 88, 133), "camera" => Brush(255, 125, 96, 52), _ => Brush(255, 70, 78, 92) };
-        var bar = new Border { Width = width, Height = clip.IsKey ? 10 : RowHeight - 8, CornerRadius = new(clip.IsKey ? 1 : 4), Background = color,
+        var bar = new Border { Width = width, Height = clip.IsKey ? 10 : RowHeight - 6, CornerRadius = new(1), Background = color,
             BorderThickness = new(clip.Id == selected ? 2 : 1), BorderBrush = clip.Id == selected ? Brush(255, 166, 214, 255) : Brush(90, 210, 220, 235), Opacity = clip.Enabled ? 1 : .35, Padding = new(clip.IsKey ? 0 : 5, 2, 3, 2) };
         if (clip.IsKey) bar.RenderTransform = new RotateTransform { Angle = 45, CenterX = 5, CenterY = 5 };
         else

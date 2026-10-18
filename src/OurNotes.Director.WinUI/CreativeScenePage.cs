@@ -50,14 +50,9 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         var toolbar=new Grid{ColumnSpacing=16};toolbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});toolbar.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});toolbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         toolbar.Children.Add(Ui.Row(4,StudioMenus.Button("文件",FileMenu),StudioMenus.Button("编辑",EditMenu),StudioMenus.Button("视图",ViewMenu)));
         toolbar.Children.Add(title);Grid.SetColumn(title,1);var publish=Ui.Row(8,Button("保存",()=>SaveAsync(),"\uE74E"),Button("导出…",()=>ExportAsync("clip"),"\uE898",true));toolbar.Children.Add(publish);Grid.SetColumn(publish,2);
-        var library=new Grid{RowSpacing=8};
-        library.RowDefinitions.Add(new(){Height=GridLength.Auto});library.RowDefinitions.Add(new(){Height=new(130),MinHeight=70});library.RowDefinitions.Add(new(){Height=GridLength.Auto});
-        library.RowDefinitions.Add(new(){Height=GridLength.Auto});library.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});library.RowDefinitions.Add(new(){Height=GridLength.Auto});
-        library.Children.Add(Ui.Row(8,StudioLayout.Section("角色"),Button("添加…",AddActorAsync,"\uE710")));library.Children.Add(actors);Grid.SetRow(actors,1);
         foreach(var(key,label)in new[]{("motion","动作"),("expression","表情"),("voice","语音台词")})assetKind.Items.Add(new ComboBoxItem{Content=label,Tag=key});
-        assetKind.SelectedIndex=0;library.Children.Add(assetKind);Grid.SetRow(assetKind,2);library.Children.Add(search);Grid.SetRow(search,3);library.Children.Add(assets);Grid.SetRow(assets,4);
-        var footer=Ui.Stack(8,assetHint,Button("导入声音…",ImportVoiceAsync,"\uE8D6"));library.Children.Add(footer);Grid.SetRow(footer,5);
-        var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar);
+        assetKind.SelectedIndex=0;var library=BuildProjectLibrary();
+        var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar,workspaceKey:"scenes");
         actors.SelectionChanged+=(_,_)=>
         {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);timeline.RevealActor(selectedActor);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
         viewport.SelectionChanged+=(_,id)=>
@@ -88,28 +83,39 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         timeline.AddRequested+=(actor,kind,at)=>_=Safe(()=>AddToTrackAsync(actor,kind,at));timeline.ContextMenuFactory=id=>ClipMenu(document.Clip(id));timeline.AssetDropped+=(data,at,target)=>_=Safe(()=>DropAssetAsync(data,at,target));
         timeline.TrackMenuFactory=TrackMenu;
         timeline.ClipTrimmed+=(id,time)=>_=Safe(()=>EditAsync(()=>{var edit=CreativeClipEditing.TrimStart(document,id,time);document=edit.Scene;selectedClip=edit.Selection;}));
-        assetKind.SelectionChanged+=(_,_)=>{search.PlaceholderText=AssetKind=="voice"?"输入台词后按 Enter 搜索…":"筛选名称…";_=Safe(LoadAssetsAsync);};
+        assetKind.SelectionChanged+=(_,_)=>{search.PlaceholderText=AssetKind=="voice"?"输入台词后按 Enter 搜索…":"筛选名称…";ShowProjectAssets();_=Safe(LoadAssetsAsync);};
         search.TextChanged+=(_,_)=>{if(AssetKind!="voice")FilterAssets();};search.KeyDown+=(_,args)=>{if(args.Key==VirtualKey.Enter){_=Safe(LoadAssetsAsync);args.Handled=true;}};
-        assets.DoubleTapped+=(_,_)=>{if((assets.SelectedItem as ListViewItem)?.Tag is ResultRow row)_=Safe(()=>InsertAssetAsync(row,AssetKind,playhead));};
+        assets.DoubleTapped+=(_,_)=>_=Safe(PreviewSelectedAssetAsync);
+        assets.KeyDown+=(_,args)=>{if(args.Key==VirtualKey.Enter){_=Safe(InsertSelectedAssetAsync);args.Handled=true;}};
+        actors.DoubleTapped+=(_,_)=>_=Safe(()=>OpenActorInLive2DAsync());
         assets.DragItemsStarting+=(_,args)=>
         {
             if(args.Items.FirstOrDefault() is not ListViewItem{Tag:ResultRow row}){args.Cancel=true;return;}
             var data=new JsonObject{["kind"]=AssetKind,["actor"]=selectedActor,["resource"]=row.Id,["label"]=row.Title,["data"]=row.Data.DeepClone(),["adv"]=row.Context.GetValueOrDefault("adv")};
             args.Data.SetData("OurNotes.SceneAsset",data.ToJsonString());args.Data.RequestedOperation=DataPackageOperation.Copy;
         };
-        KeyDown+=(_,args)=>
-        {
-            if(args.Handled)return;bool ctrl=(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
-            if(ctrl&&args.Key==VirtualKey.S){_=Safe(()=>SaveAsync());args.Handled=true;return;}if(IsTextInput(args.OriginalSource as DependencyObject))return;
-            if(ctrl&&args.Key==VirtualKey.Z){_=Safe(()=>UndoAsync(false));args.Handled=true;}
-            else if(ctrl&&args.Key==VirtualKey.Y){_=Safe(()=>UndoAsync(true));args.Handled=true;}
-            else if(ctrl&&args.Key==VirtualKey.D&&selectedClip is {} id){_=Safe(()=>EditAsync(()=>selectedClip=document.DuplicateClip(id)));args.Handled=true;}
-            else if(args.Key==VirtualKey.Delete&&selectedClip is not null){_=Safe(DeleteClipAsync);args.Handled=true;}
-            else if(args.Key==VirtualKey.Space){_=Safe(TogglePlayAsync);args.Handled=true;}
-            else if(args.Key==VirtualKey.F){viewport.FitCanvas();args.Handled=true;}
-        };
+        KeyDown+=(_,args)=>HandleWorkspaceKey(args);
         Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);};
         Unloaded+=(_,_)=>Deactivate();Refresh();
+    }
+    internal void HandleWorkspaceKey(KeyRoutedEventArgs args)
+    {
+        if(args.Handled)return;bool ctrl=(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
+        bool shift=(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
+        if(ctrl&&args.Key==VirtualKey.S){_=Safe(()=>SaveAsync(shift));args.Handled=true;return;}
+        if(ctrl&&args.Key==VirtualKey.O){_=Safe(()=>OpenAsync());args.Handled=true;return;}
+        if(ctrl&&args.Key==VirtualKey.N){_=Safe(()=>NewAsync());args.Handled=true;return;}
+        if(IsTextInput(args.OriginalSource as DependencyObject))return;
+        if(ctrl&&args.Key==VirtualKey.Z){_=Safe(()=>UndoAsync(shift));args.Handled=true;}
+        else if(ctrl&&args.Key==VirtualKey.Y){_=Safe(()=>UndoAsync(true));args.Handled=true;}
+        else if(ctrl&&args.Key==VirtualKey.D&&selectedClip is {} id){_=Safe(()=>EditAsync(()=>selectedClip=document.DuplicateClip(id)));args.Handled=true;}
+        else if(ctrl&&args.Key==VirtualKey.K&&selectedClip is {} split&&CreativeClipEditing.CanSplit(document.Clip(split),playhead))
+        {_=Safe(()=>EditAsync(()=>{var result=CreativeClipEditing.Split(document,split,playhead);document=result.Scene;selectedClip=result.Selection;}));args.Handled=true;}
+        else if(args.Key==VirtualKey.Delete&&selectedClip is not null){_=Safe(DeleteClipAsync);args.Handled=true;}
+        else if(!ctrl&&args.Key==VirtualKey.Space){_=Safe(TogglePlayAsync);args.Handled=true;}
+        else if(!ctrl&&args.Key==VirtualKey.I){timeline.MarkIn();args.Handled=true;}
+        else if(!ctrl&&args.Key==VirtualKey.O){timeline.MarkOut();args.Handled=true;}
+        else if(!ctrl&&args.Key==VirtualKey.F){viewport.FitCanvas();args.Handled=true;}
     }
     static bool IsTextInput(DependencyObject? item)
     {for(var current=item;current is not null;current=VisualTreeHelper.GetParent(current))if(current is TextBox or NumberBox or PasswordBox)return true;return false;}
@@ -123,7 +129,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         refreshing=true;try{viewport.SelectedTargetId=null;}finally{refreshing=false;}
         timeline.Select(null);RefreshActors();BuildInspector();_=Safe(LoadAssetsAsync);
     }
-    void Refresh(){RefreshActors();timeline.Refresh(document,selectedClip);timeline.Position=playhead;BuildInspector();title.Text=(path is null?"未命名场景":Path.GetFileNameWithoutExtension(path))+(HasUnsavedChanges?" ●":"");}
+    void Refresh(){RefreshActors();timeline.Refresh(document,selectedClip);timeline.Position=playhead;BuildInspector();UpdateProjectContext();title.Text=(path is null?"未命名场景":Path.GetFileNameWithoutExtension(path))+(HasUnsavedChanges?" ●":"");}
     void RefreshActors()
     {
         refreshing=true;
@@ -141,11 +147,11 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
                     item.ContextRequested+=(_,args)=>{selectedActor=id;selectedClip=null;actors.SelectedItem=item;BuildInspector();ActorMenu().ShowAt(item);args.Handled=true;};actors.Items.Add(item);
                 }
                 if(item.Content is not TextBlock block||block.Text!=name)item.Content=new TextBlock{Text=name,TextTrimming=TextTrimming.CharacterEllipsis,IsTextSelectionEnabled=false};
-                if(id==selectedActor)actors.SelectedItem=item;
             }
-            if(selectedActor is null)actors.SelectedItem=null;
+            actors.SelectedItem=string.IsNullOrEmpty(selectedActor)?null:actors.Items.OfType<ListViewItem>().FirstOrDefault(item=>item.Tag?.ToString()==selectedActor);
         }
         finally{refreshing=false;}
+        UpdateProjectContext();
     }
     async Task EditAsync(Action action,bool reload=true)
     {
@@ -170,7 +176,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         string command=kind=="voice"?"voice.search":kind+".list";var allowed=CommandCatalog.Get(command).Fields.Select(field=>field.Key).ToHashSet(StringComparer.Ordinal);
         foreach(var key in request.Keys.Where(key=>!allowed.Contains(key)).ToArray())request.Remove(key);
         assetHint.Text="正在读取素材…";var result=await window.QueryAsync(command,request,token);if(version!=assetVersion||disposed)return;if(!result.Success)throw new IOException(result.Error??"读取素材失败。");
-        assetRows.AddRange(ResultRow.ForPicker(result.Json,command,kind=="voice"?"voiceId":kind,request));FilterAssets();assetHint.Text=assetRows.Count==0?"没有匹配素材。":replaceAssetClip is not null?"双击直接替换所选片段。":"双击添加，或拖至时间轴安排时间。";
+        assetRows.AddRange(ResultRow.ForPicker(result.Json,command,kind=="voice"?"voiceId":kind,request));FilterAssets();UpdateProjectContext();assetHint.Text=projectShowsActors?"双击角色在 Live2D 中打开":assetRows.Count==0?"没有匹配素材。":replaceAssetClip is not null?"Enter 替换；双击在 Live2D 中预览。":kind=="voice"?"Enter 插入；拖到轨道安排时间。":"双击预览；Enter 插入；拖到时间轴编排。";
     }
     void FilterAssets()
     {

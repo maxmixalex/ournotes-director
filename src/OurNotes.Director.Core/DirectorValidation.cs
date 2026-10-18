@@ -30,6 +30,18 @@ public static class DirectorValidation
             {if(key is not ("x" or "y" or "scale"))Error("Unsupported overlay value "+key);Number(value,"overlay."+key,key=="scale"?.0001f:float.NegativeInfinity);}
             return;
         }
+        if(row.Command=="Director.Actor"&&values.ContainsKey("controls"))
+        {
+            if(values.Count!=1||row.Text("Space").Length>0||values["controls"] is not JsonObject controls)
+            {Error("controls cannot be mixed with actor placement");return;}
+            if(row.Number("Duration")!=0)Error("Controller changes require Duration 0");
+            foreach(var(key,value)in controls)
+            {
+                if(key is not ("physics" or "breath" or "blink" or "loop"))Error("Unsupported controller "+key);
+                if(value is not JsonValue boolean||!boolean.TryGetValue<bool>(out _))Error(key+" must be boolean");
+            }
+            return;
+        }
         string[] keys=row.Command switch
         {
             "Director.Actor"=>["position","rotation","scale","positionX","positionY","rotationZ","height","opacity","brightness","tint","physics","breath","blink","speed","loop","animation","warmupFrames","visible","order"],

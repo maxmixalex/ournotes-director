@@ -40,8 +40,10 @@ internal sealed partial class CreativeScenePage
         timeline.SetRange(workRange);
         string beforeExport = document.ToJson();
 
-        await VerifyMenuExportRangeAsync(check, ActorMenu, "导出角色演出…", workRange,
-            "export-actor-range-dialog", "角色右键导出沿用时间轴31帧区间");
+        var actorMenu = ActorMenu();
+        check(actorMenu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "在 Live2D 工作台中打开…")
+            && !actorMenu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text.StartsWith("导出", StringComparison.Ordinal)),
+            "场景角色菜单只提供独立Live2D入口，单模型输出已迁出场景编排");
 
         var clip = document.Clips.OfType<JsonObject>().First(c => S(c, "actor") == actor && S(c, "kind") == "motion");
         selectedClip = S(clip, "id"); selectedActor = actor;
@@ -53,16 +55,20 @@ internal sealed partial class CreativeScenePage
         await VerifyMenuExportRangeAsync(check, () => ClipMenu(clip), "导出这一段…", clipRange,
             "export-clip-range-dialog", "片段右键导出按所选片段范围填写实际对话框");
         check(timeline.WorkRange == workRange && document.ToJson() == beforeExport,
-            "打开并取消角色和片段导出，不覆盖工作区间，也不修改项目内容");
+            "打开并取消片段导出，不覆盖工作区间，也不修改项目内容");
 
         selectedActor = actor; selectedClip = null; Refresh(); viewport.SelectedTargetId = actor;
         await SeekAsync(poseTime);
         var oldTasks = window.Jobs.Tasks.Select(job => job.Id).ToHashSet(StringComparer.Ordinal);
-        Task exporting = ExportAsync("clip", true);
+        Task exporting = ExportAsync("clip");
         ContentDialog? dialog = null;
         try
         {
             dialog = await WaitForExportSmokeDialogAsync(exporting);
+            check(Ui.Selected(ExportSmokeControl<ComboBox>(dialog, "时间范围")) == "work"
+                && Math.Abs(ExportSmokeControl<NumberBox>(dialog, "开始（秒）").Value - workRange.Start) < 1e-9
+                && Math.Abs(ExportSmokeControl<NumberBox>(dialog, "时长（秒）").Value - workRange.Duration) < 1e-9,
+                "场景总导出沿用当前31帧工作区间");
             ExportSmokeChoice(dialog, "导出内容", "frame");
             ExportSmokeChoice(dialog, "画面尺寸", "custom");
             ExportSmokeControl<NumberBox>(dialog, "宽度").Value = 256;
@@ -92,8 +98,8 @@ internal sealed partial class CreativeScenePage
         string queuedProject = job.Request.Arguments[2];
         var input = SceneDocument.Open(queuedProject);
         check(input.Source.IsLibrary && input.Root["source"]?["adv"] is null
-            && input.Root["output"]?["isolateActor"]?.ToString() == actor && !input.Validate().HasErrors,
-            "实际队列持久化有效的无source.adv项目，并保留所选角色隔离设置");
+            && input.Root["output"]?["isolateActor"] is null && !input.Validate().HasErrors,
+            "场景导出队列持久化有效的无source.adv完整场景，不偷偷隔离当前所选人物");
         File.Copy(queuedProject, App.SmokeEvidencePath("export-queued-input.project.json"), true);
         EngineResult result;
         try { result = await job.Completion.WaitAsync(TimeSpan.FromSeconds(60)); }
@@ -118,13 +124,37 @@ internal sealed partial class CreativeScenePage
             if (png.Rgba[i] == 0) transparent++;
             if (png.Rgba[i] > 128) visible++;
         }
-        check(png.Width == 256 && png.Height == 384 && transparent > 0 && visible > 0,
-            "解码实际导出PNG，确认尺寸正确、含透明区域且人物并非空白");
+        check(png.Width == 256 && png.Height == 384 && visible > 0,
+            "解码实际场景PNG，确认尺寸正确且完整场景并非空白");
         check(timeline.WorkRange == workRange && document.ToJson() == beforeExport,
             "真实导出完成后，原场景与时间轴工作区间仍保持不变");
         report["width"] = png.Width; report["height"] = png.Height;
         report["transparentPixels"] = transparent; report["visiblePixels"] = visible;
         DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
+        await VerifyLive2DHandoffAsync(check, actor, poseTime, workRange);
+    }
+
+    async Task VerifyLive2DHandoffAsync(Action<bool,string> check, string actor, double time, TimelineRange range)
+    {
+        selectedActor = actor; selectedClip = null; Refresh(); await SeekAsync(time); timeline.SetRange(range);
+        string original = document.ToJson();
+        var menu = ActorMenu(); menu.ShowAt(viewport);
+        try
+        {
+            var item = menu.Items.OfType<MenuFlyoutItem>().Single(entry => entry.Text == "在 Live2D 工作台中打开…");
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!item.IsLoaded && DateTime.UtcNow < deadline) await Task.Delay(20);
+            new MenuFlyoutItemAutomationPeer(item).Invoke();
+            deadline = DateTime.UtcNow.AddSeconds(30);
+            while (window.ActivePage != "live2d" && DateTime.UtcNow < deadline) await Task.Delay(30);
+            check(window.ActivePage == "live2d", "实际角色右键菜单导航到独立Live2D工作台");
+            await window.Live2D.WaitForReadyAsync();
+            check(document.ToJson() == original && timeline.WorkRange == range,
+                "场景送到Live2D工作台后，原项目与入出点保持不变");
+            await window.Live2D.VerifySceneHandoffAsync(check, actor, time, range);
+            await App.CaptureCheckpointAsync("live2d-from-scene");
+        }
+        finally { menu.Hide(); }
     }
 
     private async Task VerifyMenuExportRangeAsync(Action<bool, string> check, Func<MenuFlyout> create,

@@ -24,7 +24,18 @@ internal sealed partial class CreativeScenePage
     async Task VerifyMaterialAuthoringAsync(Action<bool, string> check, string actor, string motion, string expression, string defaultExpression)
     {
         selectedActor = actor; selectedClip = null; replaceAssetClip = null;
-        await InsertAssetAsync(new OurNotes.Director.Desktop.Core.ResultRow(motion, "动作切换", "", new JsonObject { ["duration"] = 1 }), "motion", 1);
+        assetKind.SelectedIndex = 0; ShowProjectAssets(); await LoadAssetsAsync();
+        assets.SelectedItem = assets.Items.OfType<ListViewItem>().First(item => item.Tag is OurNotes.Director.Desktop.Core.ResultRow row && row.Id == motion);
+        await SeekAsync(1); UpdateLayout();
+        check(ReferenceEquals(projectItems.Content, assets) && assets.ActualHeight >= 45,
+            "项目素材的动作分页显示真实资源列表，四面板布局下仍有可操作高度");
+        string beforeInsert = document.ToJson();
+        await viewport.SendControlKeySmokeAsync(window, assets, Windows.System.VirtualKey.Enter);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while ((document.ToJson() == beforeInsert || previewDirty) && DateTime.UtcNow < deadline) await Task.Delay(30);
+        await loadGate.WaitAsync(); loadGate.Release();
+        check(selectedClip is not null && document.ToJson() != beforeInsert && !previewDirty,
+            "素材列表实际Enter键将选定动作插入播放头，通过普通编辑流程提交到原生预览");
         string id = selectedClip!;
         await Task.Delay(40);
         check(timeline.IsSelectedLaneVisible, "插入动作后，选中的新动作轨道自动滚入视野，不需要手动寻找");

@@ -5,6 +5,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using OurNotes.Director.Desktop.Core;
 using Windows.ApplicationModel.DataTransfer;
@@ -21,8 +22,10 @@ public sealed class MainWindow : Window
     readonly Grid root = new();
     readonly ContentControl content = new() { HorizontalContentAlignment=HorizontalAlignment.Stretch, VerticalContentAlignment=VerticalAlignment.Stretch };
     readonly Dictionary<string,FrameworkElement> tools = new(StringComparer.Ordinal);
-    readonly ToggleButton sceneTab = new() { Content="场景工作台", Padding=new(18,7,18,7) };
-    readonly ToggleButton homeTab = new() { Content="主页工作台", Padding=new(18,7,18,7) };
+    readonly Button sceneTab = new() { Content="场景" };
+    readonly Button live2dTab = new() { Content="Live2D" };
+    readonly Button homeTab = new() { Content="主页" };
+    readonly ContentControl commands = new() { HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch };
     readonly TextBlock status = Ui.Text("准备就绪",12,true);
     readonly TextBlock archiveStatus = Ui.Text("",12,true);
     readonly ProgressBar progress = new() { Width=100,Height=4,Minimum=0,Maximum=1,Visibility=Visibility.Collapsed };
@@ -32,10 +35,12 @@ public sealed class MainWindow : Window
     string? drawerKey;
     CreativeScenePage? scene;
     HomeStudioPage? home;
+    Live2DStudioPage? live2d;
     bool closing,closeApproved,dialogOpen;
     internal string ActivePage { get; private set; }="scenes";
     internal CreativeScenePage Scene => scene ??= new(this);
     internal HomeStudioPage Home => home ??= new(this);
+    internal Live2DStudioPage Live2D => live2d ??= new(this);
     internal XamlRoot RootXaml => root.XamlRoot;
 
     public MainWindow()
@@ -52,40 +57,44 @@ public sealed class MainWindow : Window
         }
         catch(Exception error)when(error is COMException or InvalidOperationException or NotSupportedException or InvalidCastException)
         { App.TraceStartup("Placement: "+error.Message);AppWindow.Resize(new(1100,740)); }
-        root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});root.RowDefinitions.Add(new(){Height=GridLength.Auto});
-        var header=new Grid{Padding=new(14,7,14,7),ColumnSpacing=16};
+        root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});root.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        root.Children.Add(StudioLayout.Panel(commands,3));
+        var header=new Grid{Padding=new(8,0,8,0),ColumnSpacing=12};
         header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});header.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-        header.Children.Add(new TextBlock{Text="OURNOTES",FontSize=14,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,VerticalAlignment=VerticalAlignment.Center});
-        var tabs=Ui.Row(4,sceneTab,homeTab);tabs.HorizontalAlignment=HorizontalAlignment.Center;header.Children.Add(tabs);Grid.SetColumn(tabs,1);
-        sceneTab.Click+=(_,_)=>Navigate("scenes");homeTab.Click+=(_,_)=>Navigate("home");
-        var actions=Ui.Row(6,StudioLayout.Tool("素材库",ShowResourceManager,"\uE8B7"),StudioLayout.Tool("",()=>Navigate("tasks"),"\uE9F9"),StudioLayout.Tool("",()=>Navigate("settings"),"\uE713"));
-        ToolTipService.SetToolTip(actions.Children[1],"导出任务");ToolTipService.SetToolTip(actions.Children[2],"设置");header.Children.Add(actions);Grid.SetColumn(actions,2);root.Children.Add(header);
-        root.Children.Add(content);Grid.SetRow(content,1);
-        var footer=new Grid{Padding=new(14,5,14,6),ColumnSpacing=10};footer.ColumnDefinitions.Add(new(){Width=GridLength.Auto});footer.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});footer.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-        footer.Children.Add(progress);footer.Children.Add(status);Grid.SetColumn(status,1);footer.Children.Add(archiveStatus);Grid.SetColumn(archiveStatus,2);root.Children.Add(footer);Grid.SetRow(footer,2);
+        header.Children.Add(new TextBlock{Text="OURNOTES DIRECTOR",FontSize=11,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,VerticalAlignment=VerticalAlignment.Center,Opacity=.8});
+        var tabs=Ui.Row(0,sceneTab,live2dTab,homeTab);tabs.HorizontalAlignment=HorizontalAlignment.Center;header.Children.Add(tabs);Grid.SetColumn(tabs,1);
+        sceneTab.Click+=(_,_)=>Navigate("scenes");live2dTab.Click+=(_,_)=>Navigate("live2d");homeTab.Click+=(_,_)=>Navigate("home");
+        var actions=Ui.Row(2,StudioLayout.Tool("素材库",ShowResourceManager,"\uE8B7"),StudioLayout.Tool("",()=>Navigate("tasks"),"\uE9F9"),StudioLayout.Tool("",()=>Navigate("settings"),"\uE713"));
+        ToolTipService.SetToolTip(actions.Children[1],"导出任务");ToolTipService.SetToolTip(actions.Children[2],"设置");header.Children.Add(actions);Grid.SetColumn(actions,2);root.Children.Add(header);Grid.SetRow(header,1);
+        root.Children.Add(content);Grid.SetRow(content,2);
+        var footer=new Grid{Padding=new(8,3,8,3),ColumnSpacing=10};footer.ColumnDefinitions.Add(new(){Width=GridLength.Auto});footer.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});footer.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        status.FontSize=archiveStatus.FontSize=11;
+        status.TextWrapping=archiveStatus.TextWrapping=TextWrapping.NoWrap;status.TextTrimming=archiveStatus.TextTrimming=TextTrimming.CharacterEllipsis;archiveStatus.MaxWidth=240;
+        footer.Children.Add(progress);footer.Children.Add(status);Grid.SetColumn(status,1);footer.Children.Add(archiveStatus);Grid.SetColumn(archiveStatus,2);root.Children.Add(footer);Grid.SetRow(footer,3);
         var panel=new Grid{RowSpacing=14};panel.RowDefinitions.Add(new(){Height=GridLength.Auto});panel.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
         var panelHeader=new Grid();panelHeader.Children.Add(drawerTitle);var close=StudioLayout.Tool("关闭",CloseDrawer,"\uE711");close.HorizontalAlignment=HorizontalAlignment.Right;panelHeader.Children.Add(close);
-        panel.Children.Add(panelHeader);panel.Children.Add(drawerContent);Grid.SetRow(drawerContent,1);drawer.Child=panel;root.Children.Add(drawer);Grid.SetRow(drawer,1);
+        panel.Children.Add(panelHeader);panel.Children.Add(drawerContent);Grid.SetRow(drawerContent,1);drawer.Child=panel;root.Children.Add(drawer);Grid.SetRow(drawer,2);
         root.SizeChanged+=(_,_)=>drawer.Width=Math.Min(820,Math.Max(320,root.ActualWidth-90));
         root.ActualThemeChanged+=(_,_)=>StyleDrawer();
+        root.KeyDown+=(_,args)=>HandleShellShortcut(args);
         Content=root;ApplySettings();Navigate("scenes");
         AppWindow.Closing+=async(_,args)=>
         {
             if(closeApproved)return;args.Cancel=true;if(closing)return;closing=true;
             try
             {
-                bool dirty=scene?.HasUnsavedChanges==true||home?.HasUnsavedChanges==true;
-                if((Jobs.IsBusy||dirty)&&!await ConfirmAsync("关闭工作台？",Jobs.IsBusy?"还有导出任务。关闭会停止任务并保存场景草稿。":"未保存的修改会保留为草稿。","关闭"))return;
-                scene?.SaveDraft();home?.SaveDraft();scene?.Deactivate();home?.Deactivate();
+                bool dirty=scene?.HasUnsavedChanges==true||home?.HasUnsavedChanges==true||live2d?.HasUnsavedChanges==true;
+                if((Jobs.IsBusy||dirty)&&!await ConfirmAsync("关闭工作台？",Jobs.IsBusy?"还有导出任务。关闭会停止任务并保存各工作台草稿。":"未保存的修改会保留为草稿。","关闭"))return;
+                scene?.SaveDraft();home?.SaveDraft();live2d?.SaveDraft();scene?.Deactivate();home?.Deactivate();live2d?.Deactivate();ActiveLayout?.SaveLayout();
                 foreach(var tool in tools.Values.OfType<CommandPage>())tool.SaveForm();
-                SaveSettings();await Jobs.DisposeAsync();if(scene is not null)await scene.DisposeAsync();if(home is not null)await home.DisposeAsync();
+                SaveSettings();await Jobs.DisposeAsync();if(scene is not null)await scene.DisposeAsync();if(home is not null)await home.DisposeAsync();if(live2d is not null)await live2d.DisposeAsync();
                 closeApproved=true;Close();
             }
             catch(Exception error){await ShowErrorAsync("关闭失败："+error.Message);}
             finally{closing=false;}
         };
     }
-    void StyleDrawer()=>drawer.Background=new SolidColorBrush(root.ActualTheme==ElementTheme.Dark?Color.FromArgb(255,32,34,39):Color.FromArgb(255,248,248,250));
+    void StyleDrawer()=>drawer.Background=new SolidColorBrush(root.ActualTheme==ElementTheme.Dark?Color.FromArgb(255,37,37,37):Color.FromArgb(255,240,240,240));
     internal void SetStatus(string text)=>status.Text=text;
     internal void SaveSettings(){try{Settings.Save();}catch(Exception e)when(e is IOException or UnauthorizedAccessException){status.Text="设置未保存："+e.Message;}}
     internal void ApplySettings()
@@ -100,13 +109,51 @@ public sealed class MainWindow : Window
     internal void Navigate(string key)
     {
         if(key=="start")key="scenes";
-        if(key is "scenes" or "home")
+        if(key is "scenes" or "home" or "live2d")
         {
-            if(ActivePage!=key){scene?.Deactivate();home?.Deactivate();}
-            ActivePage=key;CloseDrawer();content.Content=key=="scenes"?Scene:Home;sceneTab.IsChecked=key=="scenes";homeTab.IsChecked=key=="home";return;
+            if(ActivePage!=key){ActiveLayout?.SaveLayout();scene?.Deactivate();home?.Deactivate();live2d?.Deactivate();}
+            ActivePage=key;CloseDrawer();commands.Content=null;content.Content=key switch{"scenes"=>Scene,"home"=>Home,_=>Live2D};
+            if(ActiveLayout is {} layout)
+            {
+                commands.Content=layout.DetachCommandBar();
+                if(layout.IsLoaded)layout.FocusActivePanel();
+                else
+                {
+                    RoutedEventHandler loaded=null!;
+                    loaded=(_,_)=>{layout.Loaded-=loaded;if(ReferenceEquals(ActiveLayout,layout)&&drawer.Visibility!=Visibility.Visible)layout.FocusActivePanel();};
+                    layout.Loaded+=loaded;
+                }
+            }
+            sceneTab.Style=(Style)Application.Current.Resources[key=="scenes"?"WorkspaceSelectedTabStyle":"WorkspaceTabStyle"];
+            live2dTab.Style=(Style)Application.Current.Resources[key=="live2d"?"WorkspaceSelectedTabStyle":"WorkspaceTabStyle"];
+            homeTab.Style=(Style)Application.Current.Resources[key=="home"?"WorkspaceSelectedTabStyle":"WorkspaceTabStyle"];return;
         }
         var page=GetToolPage(key);if(page is SettingsPage settings)settings.Refresh();if(page is TasksPage tasks)tasks.Refresh();
         ShowDrawer(key,key switch{"tasks"=>"导出任务","settings"=>"设置","archive"=>"下载素材",_=>"高级素材工具"},page);
+    }
+    internal StudioLayout? ActiveLayout=>FindLayout(content.Content as DependencyObject);
+    static StudioLayout? FindLayout(DependencyObject? parent)
+    {
+        if(parent is StudioLayout layout)return layout;
+        if(parent is UserControl control&&FindLayout(control.Content as DependencyObject) is {} childLayout)return childLayout;
+        if(parent is null)return null;
+        for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++)if(FindLayout(VisualTreeHelper.GetChild(parent,i)) is {} child)return child;
+        return null;
+    }
+    internal void ResetWorkspaceLayout()=>ActiveLayout?.ResetLayout();
+    internal void ToggleWorkspacePanel()=>ActiveLayout?.ToggleMaximize();
+    void HandleShellShortcut(KeyRoutedEventArgs args)
+    {
+        if(args.Handled||drawer.Visibility==Visibility.Visible||dialogOpen)return;
+        if(ActiveLayout?.HandleShortcut(args)==true)return;
+        var focused=FocusManager.GetFocusedElement(root.XamlRoot) as DependencyObject;
+        bool shell=false;
+        for(var element=focused;element is not null;element=VisualTreeHelper.GetParent(element))
+        {
+            if(element==commands||element==sceneTab||element==homeTab||element==live2dTab){shell=true;break;}
+        }
+        if(!shell)return;
+        switch(ActivePage){case "scenes":Scene.HandleWorkspaceKey(args);break;case "home":Home.HandleWorkspaceKey(args);break;case "live2d":Live2D.HandleWorkspaceKey(args);break;}
     }
     FrameworkElement GetToolPage(string key)
     {
@@ -118,7 +165,7 @@ public sealed class MainWindow : Window
     }
     internal void ShowDrawer(string key,string title,FrameworkElement child)
     {drawerKey=key;drawerTitle.Text=title;drawerContent.Content=child;StyleDrawer();drawer.Width=Math.Min(820,Math.Max(320,root.ActualWidth-90));drawer.Visibility=Visibility.Visible;}
-    internal void CloseDrawer(){drawer.Visibility=Visibility.Collapsed;drawerContent.Content=null;drawerKey=null;}
+    internal void CloseDrawer(){bool visible=drawer.Visibility==Visibility.Visible;drawer.Visibility=Visibility.Collapsed;drawerContent.Content=null;drawerKey=null;if(visible)ActiveLayout?.FocusActivePanel();}
     internal void ShowResourceManager()
     {
         var path=Ui.Text(string.IsNullOrWhiteSpace(Settings.ArchivePath)?"选择已有素材，或下载需要的乐队。":Settings.ArchivePath,13,true);
@@ -185,11 +232,23 @@ public sealed class MainWindow : Window
         var checks=new JsonArray();var pages=new JsonArray();
         void Save(bool ok=false,string? failed=null)=>DesktopSettings.AtomicWrite(reportPath,new JsonObject{["schema"]="ournotes-director/desktop-smoke/1",["ok"]=ok,["status"]=ok?"passed":failed is null?"running":"failed",["checks"]=checks.DeepClone(),["pages"]=pages.DeepClone(),["failedCheck"]=failed,["commands"]=CommandCatalog.All.Count}.ToJsonString(DesktopSettings.JsonOptions));
         void Check(bool condition,string name){if(condition)checks.Add(name);Save(failed:condition?null:name);if(!condition)throw new InvalidOperationException(name);}
-        Save();foreach(var key in new[]{"scenes","home"}){Navigate(key);root.UpdateLayout();await Task.Delay(100);Check(content.Content is FrameworkElement{ActualWidth:>0,ActualHeight:>0},key+"工作台完成原生布局");pages.Add(key);}
+        bool real=Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE") is {Length:>0};
+        Save();foreach(var key in new[]{"scenes","live2d","home"})
+        {
+            Navigate(key);root.UpdateLayout();await Task.Delay(100);root.UpdateLayout();
+            Check(content.Content is FrameworkElement{ActualWidth:>0,ActualHeight:>0},key+"工作台完成原生布局");
+            Check(ActiveLayout is not null,key+"工作台接入可操作停靠布局");
+            await ActiveLayout!.RunLayoutSmokeAsync(this,Check,real);pages.Add(key);
+        }
         Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunSmokeTestAsync(Check);
         Navigate("home");root.UpdateLayout();await Task.Delay(100);await Home.RunSmokeTestAsync(Check);
-        if(Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE") is {Length:>0}){Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunRealSmokeTestAsync(Check);}
+        Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunSmokeTestAsync(Check);
+        if(real)
+        {
+            Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunRealSmokeTestAsync(Check);
+            Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunRealSmokeTestAsync(Check);
+        }
         var help=await Engine.RunAsync(new EngineRequest("help","引擎检查",["help"],Path.GetDirectoryName(reportPath)!));Check(help.Success&&help.Json?["commands"] is JsonArray,"原生导出执行器可用");
-        CloseDrawer();root.UpdateLayout();Save(true);
+        Navigate("scenes");ActiveLayout?.RestorePanels();CloseDrawer();root.UpdateLayout();Save(true);
     }
 }
