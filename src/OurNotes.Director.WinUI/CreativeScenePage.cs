@@ -20,7 +20,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     readonly ListView assets=new(){SelectionMode=ListViewSelectionMode.Single,CanDragItems=true};
     readonly ComboBox assetKind=new(){HorizontalAlignment=HorizontalAlignment.Stretch};
     readonly TextBox search=new(){PlaceholderText="筛选动作或表情…"};
-    readonly StackPanel inspector=new(){Spacing=12};
+    readonly StackPanel inspector=new(){Spacing=8};
     readonly TextBlock title=new(){Text="未命名场景",FontSize=13,VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis};
     readonly TextBlock assetHint=new(){Text="选择角色后添加动作、表情或声音。",FontSize=11,TextWrapping=TextWrapping.Wrap,Opacity=.7};
     readonly InfoBar notice=new(){IsOpen=false,IsClosable=true};
