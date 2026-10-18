@@ -53,7 +53,7 @@ internal sealed partial class StudioLayout
         {
             var saved = proportions; double width = top.ColumnDefinitions[0].ActualWidth;
             double otherWidth = bottom.ColumnDefinitions[0].ActualWidth;
-            await SendSplitterDragAsync(window, topSplitter, dual ? -24 : 24); UpdateLayout();
+            await SendSplitterDragAsync(window, topSplitter.Grip, dual ? -24 : 24); UpdateLayout();
             check(Math.Abs(top.ColumnDefinitions[0].ActualWidth - width) > 8
                 && (dual || Math.Abs(bottom.ColumnDefinitions[0].ActualWidth - otherWidth) < 1),
                 WorkspaceKey + " 真实鼠标拖动上分隔条只改变该组宽度");

@@ -15,14 +15,19 @@ namespace OurNotes.Director.WinUI;
 /// <summary>Docked workspaces with independent saved splitters and reversible panel maximization.</summary>
 internal sealed partial class StudioLayout : UserControl
 {
-    sealed class Splitter : Thumb
+    sealed class Splitter : UserControl
     {
+        internal Thumb Grip { get; } = new();
+        internal event DragDeltaEventHandler DragDelta { add => Grip.DragDelta += value; remove => Grip.DragDelta -= value; }
+        internal event DragCompletedEventHandler DragCompleted { add => Grip.DragCompleted += value; remove => Grip.DragCompleted -= value; }
         internal Splitter(bool horizontal, string hint)
         {
             HorizontalAlignment = HorizontalAlignment.Stretch; VerticalAlignment = VerticalAlignment.Stretch;
-            Background = new SolidColorBrush(Color.FromArgb(30, 128, 128, 128));
+            HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Stretch; IsTabStop = false;
+            Grip.HorizontalAlignment = HorizontalAlignment.Stretch; Grip.VerticalAlignment = VerticalAlignment.Stretch;
+            Grip.Background = new SolidColorBrush(Color.FromArgb(30, 128, 128, 128)); Content = Grip;
             ProtectedCursor = InputSystemCursor.Create(horizontal ? InputSystemCursorShape.SizeWestEast : InputSystemCursorShape.SizeNorthSouth);
-            ToolTipService.SetToolTip(this, hint); AutomationProperties.SetName(this, hint);
+            ToolTipService.SetToolTip(Grip, hint); AutomationProperties.SetName(Grip, hint);
         }
     }
 

@@ -104,7 +104,7 @@ internal sealed partial class Live2DStudioPage
     async Task SetDocumentAsync(Live2DDocument next)
     {
         SaveDraft(); scrubber.Cancel(); Pause(); previewTimer.Stop();
-        viewport.InvalidateSource(); loadVersion++; editVersion++;
+        viewport.InvalidateSource(); loadVersion++; editVersion++; seekVersion++; requestedSeek = null;
         document = next; presentedDocument = null; previewSessionId = 0;
         handoffSource = null; nativeDescription = null; loadedSourceKey = null; previewDirty = replayRequired = true; transformPending = false;
         dragOrigin = null; dragDocument = null; notice.IsOpen = false;
@@ -194,25 +194,33 @@ internal sealed partial class Live2DStudioPage
             if (version != loadVersion || disposed || document is null) return;
             var current = document; long edited = editVersion; double time = current.Time;
             if (!Directory.Exists(window.Settings.ArchivePath)) { Notice("请先选择项目使用的素材库。", false); return; }
-            await viewport.PauseForEditingAsync();
             var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
+            var source = PreviewSource(input, current); var transform = current.Transform;
             string key = current.ModelId + "\n" + current.Site + "\n" + current.Width + "x" + current.Height + "\n"
                 + current.ToSceneDocument().Root["source"]?.ToJsonString() + "\n" + window.Settings.ArchivePath;
             try
             {
-                var source = PreviewSource(input, current);
-                if (viewport.HasCurrentSource && loadedSourceKey == key) await viewport.CommitSceneProjectAsync(source);
+                await viewport.PauseForEditingAsync();
+                if (!ReferenceEquals(document, current) || version != loadVersion || disposed) return;
+                if (viewport.HasCurrentSource && loadedSourceKey == key)
+                {
+                    // Undo and an immediate seek after a transform edit also come
+                    // through this replay path; Commit requires the same presentation.
+                    await viewport.SetIsolatedTransformAsync(new(transform.X, transform.Y, transform.Scale, transform.Rotation, transform.Opacity));
+                    await viewport.CommitSceneProjectAsync(source);
+                }
                 else { presentedDocument = null; await viewport.LoadSceneAsync(source); }
                 previewInput?.Dispose(); previewInput = input; loadedSourceKey = key;
                 if (!ReferenceEquals(document, current) || disposed) return;
                 presentedDocument = current; previewSessionId = viewport.LastFrame?.SessionId ?? 0;
                 await viewport.SeekAsync(Math.Clamp(time, 0, current.Duration), lifetime.Token);
+                previewSessionId = viewport.LastFrame?.SessionId ?? previewSessionId;
                 viewport.SelectedTargetId = current.ActorId; previewDirty = edited != editVersion;
                 if (!previewDirty) replayRequired = transformPending = false;
                 await ReadParametersAsync(); RefreshHeader();
                 if (previewDirty && active) { previewTimer.Stop(); previewTimer.Start(); }
             }
-            catch { if (!ReferenceEquals(previewInput, input)) input.Dispose(); throw; }
+            finally { if (!ReferenceEquals(previewInput, input)) input.Dispose(); }
         }
         finally { previewGate.Release(); }
     }
@@ -229,21 +237,25 @@ internal sealed partial class Live2DStudioPage
             var current = document; long edited = editVersion;
             var transform = current.Transform;
             var rows = current.CurrentEditRows();
-            await viewport.PauseForEditingAsync();
-            if (transformPending)
-                await viewport.SetIsolatedTransformAsync(new(transform.X, transform.Y, transform.Scale, transform.Rotation, transform.Opacity));
-            if (rows.Count > 0) await viewport.ApplySceneEditsAsync(rows);
+            bool move = transformPending;
             // Keep the displayed native pose. The committed history is replayed only
             // by a later seek/play, so a slider never rebuilds the model or advances time.
+            // Freeze both rows and their matching project before yielding: another
+            // pointer event may author the next value while native rendering awaits.
             var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
+            var source = PreviewSource(input, current);
             try
             {
-                await viewport.CommitSceneProjectAsync(PreviewSource(input, current));
+                await viewport.PauseForEditingAsync();
+                if (!ReferenceEquals(document, current) || disposed) return;
+                if (move) await viewport.SetIsolatedTransformAsync(new(transform.X, transform.Y, transform.Scale, transform.Rotation, transform.Opacity));
+                if (rows.Count > 0) await viewport.ApplySceneEditsAsync(rows);
+                await viewport.CommitSceneProjectAsync(source);
                 previewInput?.Dispose(); previewInput = input;
                 previewDirty = edited != editVersion; transformPending = current.Transform != transform;
                 await ReadParametersAsync(); RefreshHeader();
             }
-            catch { if (!ReferenceEquals(previewInput, input)) input.Dispose(); throw; }
+            finally { if (!ReferenceEquals(previewInput, input)) input.Dispose(); }
             if (previewDirty && active) { previewTimer.Stop(); previewTimer.Start(); }
         }
         finally { previewGate.Release(); }
@@ -256,15 +268,47 @@ internal sealed partial class Live2DStudioPage
         await previewGate.WaitAsync(lifetime.Token); previewGate.Release();
         if (previewDirty) await ApplyPreviewEditsAsync();
     }
+    void RequestSeek(double time)
+    {
+        if (document is null) return;
+        Pause(); document.Time = Math.Clamp(time, 0, document.Duration);
+        requestedSeek = document.Time; seekVersion++; scrubber.Request(document.Time);
+    }
     async Task SeekAsync(double time, CancellationToken cancellationToken = default)
     {
         if (document is null) return;
-        Pause(); document.Time = Math.Clamp(time, 0, document.Duration); RefreshHeader();
-        if (previewDirty) replayRequired = true;
-        if (previewDirty || !viewport.HasCurrentSource) await RefreshPreviewAsync();
-        cancellationToken.ThrowIfCancellationRequested();
-        if (viewport.HasCurrentSource) await viewport.SeekAsync(document.Time, cancellationToken);
-        await ReadParametersAsync();
+        var current = document;
+        Pause(); current.Time = Math.Clamp(time, 0, current.Duration);
+        double target = current.Time; long version = ++seekVersion; requestedSeek = target; RefreshHeader();
+        try
+        {
+            if (previewDirty) replayRequired = true;
+            if (previewDirty || !viewport.HasCurrentSource) await RefreshPreviewAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            await previewGate.WaitAsync(cancellationToken);
+            try
+            {
+                if (!ReferenceEquals(document, current) || version != seekVersion) return;
+                // Serialize seek with live transform updates; the native coalescer
+                // deliberately rejects an isolation edit and seek in the same batch.
+                if (viewport.HasCurrentSource) await viewport.SeekAsync(target, cancellationToken);
+                if (!ReferenceEquals(document, current) || version != seekVersion) return;
+                previewSessionId = viewport.LastFrame?.SessionId ?? previewSessionId;
+                current.Time = Math.Clamp(viewport.LastFrame?.Time ?? target, 0, current.Duration);
+                requestedSeek = null; RefreshTransport(); RefreshTimeDependentControls();
+                await ReadParametersAsync();
+            }
+            finally { previewGate.Release(); }
+        }
+        finally
+        {
+            if (ReferenceEquals(document, current) && version == seekVersion)
+            {
+                requestedSeek = null;
+                if (viewport.HasCurrentSource && viewport.LastFrame is { } frame) current.Time = Math.Clamp(frame.Time, 0, current.Duration);
+                RefreshTransport();
+            }
+        }
     }
     async Task StepAsync(int direction)
     {
@@ -283,7 +327,11 @@ internal sealed partial class Live2DStudioPage
     }
     void OnFrame(PreviewFrame frame)
     {
-        if (disposed || document is null || !ReferenceEquals(presentedDocument, document) || frame.SessionId != previewSessionId) return;
+        if (disposed || document is null || !ReferenceEquals(presentedDocument, document) || frame.SessionId < previewSessionId) return;
+        // A real backward seek/history replay creates a newer native session.
+        // Reject only older frames, and keep a pending user cursor until seek finishes.
+        previewSessionId = frame.SessionId;
+        if (requestedSeek is not null) return;
         document.Time = Math.Clamp(frame.Time, 0, document.Duration);
         RefreshTransport(); RefreshTimeDependentControls();
         ((FontIcon)playButton.Content).Glyph = frame.IsPlaying || playbackRequested ? "\uE769" : "\uE768";
@@ -304,19 +352,20 @@ internal sealed partial class Live2DStudioPage
         });
     }
     Task parameterReadTask = Task.CompletedTask;
-    Task ReadParametersAsync()
+    async Task ReadParametersAsync()
     {
-        if (readingParameters) return parameterReadTask;
-        if (document is null || !ReferenceEquals(presentedDocument, document) || !viewport.HasCurrentSource || disposed || previewDirty) return Task.CompletedTask;
-        parameterReadTask = ReadParametersCoreAsync(document); return parameterReadTask;
+        if (readingParameters) await parameterReadTask;
+        if (readingParameters) { await parameterReadTask; return; }
+        if (document is null || !ReferenceEquals(presentedDocument, document) || !viewport.HasCurrentSource || disposed || previewDirty || requestedSeek is not null) return;
+        parameterReadTask = ReadParametersCoreAsync(document); await parameterReadTask;
     }
     async Task ReadParametersCoreAsync(Live2DDocument current)
     {
-        long edited = editVersion; readingParameters = true; lastParameterRead = DateTime.UtcNow;
+        long edited = editVersion, seek = seekVersion; readingParameters = true; lastParameterRead = DateTime.UtcNow;
         try
         {
             var values = await viewport.ReadActorParametersAsync(current.ActorId, lifetime.Token);
-            if (ReferenceEquals(document, current) && edited == editVersion && !previewDirty)
+            if (ReferenceEquals(document, current) && edited == editVersion && seek == seekVersion && !previewDirty && requestedSeek is null)
             { current.UpdateParameterValues(values); RefreshParameterValues(); }
         }
         finally { readingParameters = false; }

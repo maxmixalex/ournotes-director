@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -11,6 +10,7 @@ using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
+using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 
 namespace OurNotes.Director.WinUI;
 
@@ -37,7 +37,8 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     SceneSnapshot? previewInput;
     string? loadedSourceKey;
     string activeTab = "controls";
-    long loadVersion, editVersion, previewSessionId, pauseVersion;
+    long loadVersion, editVersion, previewSessionId, pauseVersion, seekVersion;
+    double? requestedSeek;
     bool refreshing, disposed, active, previewDirty, replayRequired, transformPending, playbackRequested, restartingLoop, readingParameters;
     DateTime lastParameterRead;
     Live2DTransform? dragOrigin;
@@ -132,7 +133,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         viewport.Failed += (_, error) => Notice(error.Message);
         viewport.ObjectDragged += (_, drag) => MoveModel(drag);
         viewport.ObjectScaled += (_, scale) => ScaleModel(scale);
-        playhead.ValueChanged += (_, args) => { if (!refreshing && document is not null) { Pause(); scrubber.Request(args.NewValue); } };
+        playhead.ValueChanged += (_, args) => { if (!refreshing && document is not null) RequestSeek(args.NewValue); };
         Loaded += (_, _) => { active = true; if (document is not null && (previewDirty || !viewport.HasCurrentSource)) _ = SafeAsync(RefreshPreviewAsync); };
         Unloaded += (_, _) => Deactivate();
         KeyDown += OnKeyDown;
