@@ -52,6 +52,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     long statusClock;
     bool statusPlaying,diagnosticFailure;
     public double PresentationMilliseconds{get;private set;}
+    internal long SceneProjectCommitCount { get; private set; }
     public event EventHandler<PreviewFrame>? FramePresented;
     public event EventHandler<Exception>? Failed;
     public event EventHandler<string?>? SelectionChanged;
@@ -101,7 +102,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         surface.PointerCanceled+=OnPointerCanceled;
         surface.PointerCaptureLost+=OnPointerCanceled;
         surface.PointerWheelChanged+=OnPointerWheelChanged;
-        InitializeWorkspaceNavigation();InitializeGpuPresentation();InitializeAudioPresentation();
+        InitializeWorkspaceNavigation();InitializeGpuPresentation();InitializeAudioPresentation();InitializePresentationResolution();
         Unloaded+=(_,_)=>{if(!disposed)session.Pause();};
         session.FrameReady+=OnFrameReady;session.Failed+=OnFailed;
     }
@@ -113,7 +114,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         long version=BeginLoad("正在载入场景…");
         try
         {
-            await session.LoadSceneAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
+            await session.LoadSceneAsync(source with{GpuPresentation=true});PreviewSupersample=source.Supersample;await AwaitPresentationAsync();
             if(version==sourceVersion)ConfigureAudio(source);
             if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
         }
@@ -169,7 +170,8 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await session.SetHomeEditStateAsync(state);
         await AwaitPresentationAsync();
     }
-    public async Task CommitSceneProjectAsync(ScenePreviewSource source){await session.CommitSceneProjectAsync(source with{GpuPresentation=true});ConfigureAudio(source);}
+    public async Task CommitSceneProjectAsync(ScenePreviewSource source)
+    {await session.CommitSceneProjectAsync(source with{GpuPresentation=true});SceneProjectCommitCount++;ConfigureAudio(source);}
     public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
     public Task<IReadOnlyList<PreviewParameter>> ReadActorParametersAsync(string actorId,CancellationToken cancellationToken=default)=>session.ReadActorParametersAsync(actorId,cancellationToken);
     public async Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
@@ -289,8 +291,8 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     void LayoutCanvas()
     {
         if(surface.ActualWidth<=0||surface.ActualHeight<=0)return;
-        int width=showingEmptyCanvas?emptyWidth:LastFrame?.Pixels.Width??emptyWidth;
-        int height=showingEmptyCanvas?emptyHeight:LastFrame?.Pixels.Height??emptyHeight;
+        int width=showingEmptyCanvas?emptyWidth:logicalCanvasWidth>0?logicalCanvasWidth:LastFrame?.Pixels.Width??emptyWidth;
+        int height=showingEmptyCanvas?emptyHeight:logicalCanvasHeight>0?logicalCanvasHeight:LastFrame?.Pixels.Height??emptyHeight;
         navigation.Resize(surface.ActualWidth,surface.ActualHeight,width,height);
         var bounds=navigation.Bounds;
         var rect=new Rect(bounds.X,bounds.Y,bounds.Width,bounds.Height);
@@ -309,6 +311,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
                 var tile=new Rectangle{Width=Math.Min(cell,rect.Width-x*cell),Height=Math.Min(cell,rect.Height-y*cell),Fill=(x+y)%2==0?light:dark};
                 Canvas.SetLeft(tile,rect.X+x*cell);Canvas.SetTop(tile,rect.Y+y*cell);checker.Children.Add(tile);
             }
+            PresentationSizeChanged?.Invoke(this,EventArgs.Empty);
         }
         var clip=new Rect(0,0,surface.ActualWidth,surface.ActualHeight);
         if(selectionClip.Rect!=clip)selectionClip.Rect=clip;

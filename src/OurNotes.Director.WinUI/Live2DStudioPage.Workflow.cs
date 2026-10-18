@@ -109,11 +109,12 @@ internal sealed partial class Live2DStudioPage
     }
     async Task SetDocumentAsync(Live2DDocument next)
     {
+        actorCanvasCancellation?.Cancel(); resolutionTimer?.Stop(); previewSizeOverride = null;
         SaveDraft(); scrubber.Cancel(); Pause(); previewTimer.Stop();
         viewport.InvalidateSource(); loadVersion++; editVersion++; seekVersion++; requestedSeek = null;
         document = next; presentedDocument = null; previewSessionId = 0;
         handoffSource = null; nativeDescription = null; loadedSourceKey = null; previewDirty = replayRequired = true; transformPending = false;
-        dragOrigin = null; dragDocument = null; notice.IsOpen = false;
+        modelDrag = null; notice.IsOpen = false;
         RefreshControls();
         if (!Directory.Exists(window.Settings.ArchivePath))
         { Notice("项目已打开。请在素材库中选择对应归档以载入模型。", false); return; }
@@ -189,12 +190,12 @@ internal sealed partial class Live2DStudioPage
     static string? Empty(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
     ScenePreviewSource PreviewSource(SceneSnapshot input, Live2DDocument current)
     {
-        double ratio = Math.Min(1, Math.Min(960d / current.Width, 720d / current.Height));
+        viewport.SetCanvasDimensions(current.Width, current.Height);
+        var size = DesiredPreviewSize(current);
         return new(window.Settings.ArchivePath, input.FilePath,
             NativeDependencies.CoreLibrary(Empty(window.Settings.NativeLibraryPath), Empty(window.Settings.CubismSdkPath)),
             NativeDependencies.MediaTool("ffmpeg", Empty(window.Settings.FFmpegPath)),
-            Math.Max(16, (int)Math.Round(current.Width * ratio)), Math.Max(16, (int)Math.Round(current.Height * ratio)),
-            TimelineRange.Full(current.Duration, 30).End);
+            size.Width, size.Height, TimelineRange.Full(current.Duration, 30).End, Supersample: size.Supersample);
     }
     async Task RefreshPreviewAsync()
     {
@@ -208,6 +209,7 @@ internal sealed partial class Live2DStudioPage
             var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
             var source = PreviewSource(input, current); var transform = current.Transform;
             string key = current.ModelId + "\n" + current.Site + "\n" + current.Width + "x" + current.Height + "\n"
+                + current.Canvas + "\n"
                 + current.ToSceneDocument().Root["source"]?.ToJsonString() + "\n" + window.Settings.ArchivePath;
             try
             {
@@ -235,9 +237,18 @@ internal sealed partial class Live2DStudioPage
         }
         finally { previewGate.Release(); }
     }
-    async Task ApplyPreviewEditsAsync()
+    Task previewEditTask = Task.CompletedTask;
+    Task ApplyPreviewEditsAsync()
     {
-        if (disposed || document is null || !previewDirty) return;
+        if (applyingPreviewEdits) return previewEditTask;
+        if (disposed || document is null || !previewDirty) return Task.CompletedTask;
+        applyingPreviewEdits = true;
+        return previewEditTask = ApplyPreviewEditsCoreAsync();
+    }
+    async Task ApplyPreviewEditsCoreAsync()
+    {
+        try
+        {
         if (replayRequired || !viewport.HasCurrentSource) { await RefreshPreviewAsync(); return; }
         previewTimer.Stop(); await previewGate.WaitAsync(lifetime.Token);
         try
@@ -259,21 +270,26 @@ internal sealed partial class Live2DStudioPage
             {
                 await viewport.PauseForEditingAsync();
                 if (!ReferenceEquals(document, current) || disposed) return;
-                if (move) await viewport.SetIsolatedTransformAsync(new(transform.X, transform.Y, transform.Scale, transform.Rotation, transform.Opacity));
-                if (rows.Count > 0) await viewport.ApplySceneEditsAsync(rows);
+                if (move || rows.Count > 0) await viewport.ApplySceneEditsAsync(rows, move
+                    ? new IsolatedActorTransform(transform.X, transform.Y, transform.Scale, transform.Rotation, transform.Opacity) : null);
                 await viewport.CommitSceneProjectAsync(source);
                 previewInput?.Dispose(); previewInput = input;
                 previewDirty = edited != editVersion; transformPending = current.Transform != transform;
                 await ReadParametersAsync(); RefreshHeader();
             }
             finally { if (!ReferenceEquals(previewInput, input)) input.Dispose(); }
-            if (previewDirty && active) { previewTimer.Stop(); previewTimer.Start(); }
         }
         finally { previewGate.Release(); }
+        }
+        finally
+        {
+            applyingPreviewEdits = false;
+            if (previewDirty && active && !presentingModelDrag && !previewTimer.IsRunning) previewTimer.Start();
+        }
     }
     async Task FlushEditsAsync()
     {
-        previewTimer.Stop(); await scrubber.FlushAsync();
+        previewTimer.Stop(); await AwaitModelDragAsync(); await scrubber.FlushAsync();
         if (document is not null && (previewDirty || !viewport.HasCurrentSource))
         { if (!viewport.HasCurrentSource) await RefreshPreviewAsync(); else await ApplyPreviewEditsAsync(); }
         await previewGate.WaitAsync(lifetime.Token); previewGate.Release();
@@ -344,9 +360,10 @@ internal sealed partial class Live2DStudioPage
         previewSessionId = frame.SessionId;
         if (requestedSeek is not null) return;
         document.Time = Math.Clamp(frame.Time, 0, document.Duration);
-        RefreshTransport(); RefreshTimeDependentControls();
-        ((FontIcon)playButton.Content).Glyph = frame.IsPlaying || playbackRequested ? "\uE769" : "\uE768";
-        if (activeTab == "parameters" && DateTime.UtcNow - lastParameterRead > TimeSpan.FromMilliseconds(200)) _ = SafeAsync(ReadParametersAsync);
+        RefreshTransport(); RefreshPlayingControls(frame.IsPlaying);
+        string glyph = frame.IsPlaying || playbackRequested ? "\uE769" : "\uE768";
+        if (((FontIcon)playButton.Content).Glyph != glyph) ((FontIcon)playButton.Content).Glyph = glyph;
+        if (activeTab == "parameters" && !readingParameters && DateTime.UtcNow - lastParameterRead > TimeSpan.FromMilliseconds(200)) _ = SafeAsync(ReadParametersAsync);
         if (!active || !playbackRequested || frame.IsPlaying || frame.Time < PlaybackRange.LastFrameTime - 1d / 60) return;
         if (!document.Loop) { Pause(); return; }
         if (restartingLoop) return; restartingLoop = true;
@@ -382,14 +399,7 @@ internal sealed partial class Live2DStudioPage
         finally { readingParameters = false; }
     }
     void MoveModel(PreviewDrag drag)
-    {
-        if (document is null || drag.TargetId != document.ActorId) return;
-        if (!ReferenceEquals(dragDocument, document) || dragOrigin is null) { dragDocument = document; dragOrigin = document.Transform; }
-        var origin = dragOrigin!;
-        EditTransform(current => current.SetTransform(origin with { X = origin.X + drag.DeltaX, Y = origin.Y + drag.DeltaY }));
-        RefreshTransformControls();
-        if (drag.IsCompleted) { dragOrigin = null; dragDocument = null; }
-    }
+        => QueueModelDrag(drag);
     void ScaleModel(PreviewScale scale)
     {
         if (document is null || scale.TargetId != document.ActorId) return;
@@ -401,9 +411,7 @@ internal sealed partial class Live2DStudioPage
         if (document is null) return;
         Pause(); await FlushEditsAsync();
         var current = document;
-        var scene = StudioSceneDocument.CreateExportView(current.ToSceneDocument(), TimelineRange.Full(current.Duration, 30).Duration);
-        await StudioExportDialog.ShowSceneAsync(window, scene, current.Time, singleActor: true, initialKind: kind,
-            preserveTransparency: true, initialRange: current.Range);
+        if (current is not null) await StudioExportDialog.ShowLive2DAsync(window, current, kind);
     }
     internal async Task WaitForReadyAsync()
     {
@@ -413,7 +421,7 @@ internal sealed partial class Live2DStudioPage
     }
     internal void Deactivate()
     {
-        active = false; scrubber.Cancel(); Pause(); previewTimer.Stop(); draftTimer.Stop(); SaveDraft();
+        active = false; scrubber.Cancel(); Pause(); previewTimer.Stop(); resolutionTimer?.Stop(); draftTimer.Stop(); SaveDraft();
     }
     public async ValueTask DisposeAsync()
     {

@@ -95,6 +95,7 @@ internal sealed partial class Live2DStudioPage
             && current.CurrentEditRows().Any(row => row["Values"]?["controls"] is JsonObject)
             && viewport.LastFrame!.SessionId == session && viewport.LastFrame.Frame == frameNumber,
             "呼吸、眨眼和模型可用的物理开关写入原生控制器指令，并即时保留当前画面");
+        await RunPreviewResponsivenessSmokeAsync(check);
 
         string? motion = await SelectSmokeAnimationAsync(false, check);
         string? expression = await SelectSmokeAnimationAsync(true, check);
@@ -107,9 +108,11 @@ internal sealed partial class Live2DStudioPage
         // directly comparable without scaling either result inside the test.
         SelectInspector("controls"); widthBox.Value = 256; heightBox.Value = 384;
         await FlushEditsAsync(); await SeekAsync(poseTime);
+        await SetPreviewSizeOverrideAsync((256, 384, 1));
         string savedPath = App.SmokeEvidencePath("live2d-workflow.live2d.json");
         SaveTo(savedPath); string saved = current.ToJson();
         await OpenAsync(savedPath); await WaitForReadyAsync(); current = document!;
+        await SetPreviewSizeOverrideAsync((256, 384, 1));
         check(!HasUnsavedChanges && current.ToJson() == saved && current.Range == workRange
             && current.ActorId == actor && Math.Abs(current.Time - poseTime) < 1e-8,
             "通过正常保存和打开入口重开 Live2D 项目，完整演出、区间、画布和播放头保持一致");
@@ -169,6 +172,7 @@ internal sealed partial class Live2DStudioPage
         check(standaloneFrame.Targets.Count == 1 && standaloneFrame.Targets[0].Id == standalone.ActorId
             && standaloneFrame.Pixels.Rgba.Where((_, index) => index % 4 == 3).Any(alpha => alpha > 128),
             "独立 Create 初始化在真实原生画布中显示一个非空人物");
+        await RunPlaybackResponsivenessSmokeAsync(check);
         SelectInspector("controls"); viewport.FitCanvas(); UpdateLayout();
         await App.CaptureCheckpointAsync("live2d-standalone");
         string standalonePicture = App.SmokeEvidencePath("live2d-standalone-" + id + ".png");
@@ -179,6 +183,7 @@ internal sealed partial class Live2DStudioPage
             ["canvasHeight"] = standalone.Height, ["picture"] = standalonePicture,
             ["transparentPixels"] = standaloneCounts.Transparent, ["visiblePixels"] = standaloneCounts.Visible };
         RecordJob(report, standaloneJob); DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
+        await RunCanvasSmokeTestAsync(check);
     }
 
     async Task<string?> SelectSmokeAnimationAsync(bool expressions, Action<bool, string> check)

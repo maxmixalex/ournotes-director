@@ -38,6 +38,9 @@ public static class Live2DDocumentTests
             check(!doc.HasUnsavedChanges && Math.Abs(doc.Time - 1.2) < 1e-9, "Moving a Live2D playhead does not dirty the saved document");
             doc.UpdateParameterValues([new("ParamAngleX", "native", -30, 30, 0, 7.25, false)]);
             check(doc.Parameters[0].Value == 7.25 && !doc.HasUnsavedChanges, "Observed Cubism values do not become saved parameter pins");
+            doc.Time = 1.201;
+            check(doc.Parameters[0].Value == 7.25 && doc.Time == 1.2 && !doc.HasUnsavedChanges,
+                "An unchanged displayed frame retains observed parameters during inspector refresh");
             doc.SetParameterMetadata(Metadata());
             check(!doc.HasUnsavedChanges, "Refreshing true model metadata is not an authored change");
             doc.SetParameter("ParamAngleX", 15);

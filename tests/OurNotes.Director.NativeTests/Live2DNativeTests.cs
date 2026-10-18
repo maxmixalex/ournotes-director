@@ -125,6 +125,8 @@ static class Live2DNativeTests
                     && actor.PreviewAnimation() == animation && !actor.Spec.Physics && !actor.Spec.Breath && !actor.Spec.Blink && !actor.Spec.Loop,
                     "Live controller edits reach the actual native actor while preserving slot ownership and animation history");
             });
+            await ActorCanvasNativeTests.RunAsync(input, parameter, pinned, Check, report, outputDirectory);
+            await PreviewQualityNativeTests.RunAsync(input, actorId, outputDirectory, Check);
             report["ok"] = true;
             Console.WriteLine($"Passed {checks.Count} real native Live2D model, parameter, release, transform and replay checks."); return 0;
         }

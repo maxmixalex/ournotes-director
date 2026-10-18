@@ -13,6 +13,8 @@ public sealed partial class Live2DDocument
         var project = root["performance"]?.DeepClone() as JsonObject ?? Standalone();
         var output = ActorIsolation.Output(project["output"] as JsonObject, ActorId, Width, Height);
         output["isolateTransform"] = root["transform"]!.DeepClone();
+        if (root["output"]?["isolateCanvas"] is { } canvas) output["isolateCanvas"] = canvas.DeepClone();
+        else output.Remove("isolateCanvas");
         project["output"] = output;
         if (OwnRows().Any())
         {
@@ -39,7 +41,7 @@ public sealed partial class Live2DDocument
     {
         ["format"] = DirectorProject.Format, ["version"] = 1,
         ["source"] = new JsonObject { ["adv"] = DirectorProject.LibrarySource, ["site"] = Site, ["language"] = Language },
-        ["output"] = new JsonObject { ["width"] = Width, ["height"] = Height, ["supersample"] = 1,
+        ["output"] = new JsonObject { ["width"] = Canvas?.ReferenceWidth ?? Width, ["height"] = Canvas?.ReferenceHeight ?? Height, ["supersample"] = 1,
             ["clean"] = true, ["letterbox"] = "none", ["codec"] = "cineform", ["cineformQuality"] = "film1" },
         ["initialize"] = new JsonArray(), ["finalize"] = new JsonArray(), ["text"] = new JsonObject(),
         ["commands"] = new JsonArray(
@@ -84,7 +86,8 @@ public sealed partial class Live2DDocument
         foreach (string field in new[] { "model", "actor", "site", "language" })
             if (string.IsNullOrWhiteSpace(Text(root, field))) throw new ArgumentException("Live2D 项目缺少 " + field + "。");
         if (root["output"] is not JsonObject output) throw new ArgumentException("Live2D 项目缺少画布尺寸。");
-        Keys(output, ["width", "height"], "Live2D 画布"); RenderDimensions.Validate(Width, Height, 1);
+        Keys(output, ["width", "height", "isolateCanvas", "canvasMultiplier"], "Live2D 画布"); RenderDimensions.Validate(Width, Height, 1);
+        ValidateCanvas();
         if (!double.IsFinite(Duration) || Duration < 0 || Duration > 36000 - 1d / 30
             || Math.Abs(Duration * 30 - Math.Round(Duration * 30)) > 1e-6)
             throw new ArgumentException("Live2D 时长必须位于 30 fps 帧边界且不超过十小时。");

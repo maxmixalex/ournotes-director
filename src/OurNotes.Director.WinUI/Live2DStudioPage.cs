@@ -41,8 +41,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     double? requestedSeek;
     bool refreshing, disposed, active, previewDirty, replayRequired, transformPending, playbackRequested, restartingLoop, readingParameters;
     DateTime lastParameterRead;
-    Live2DTransform? dragOrigin;
-    Live2DDocument? dragDocument;
+    bool applyingPreviewEdits;
 
     internal bool HasUnsavedChanges => document?.HasUnsavedChanges == true;
     static string DraftPath => Path.Combine(DesktopSettings.DataDirectory, "studio-live2d-draft.json");
@@ -58,6 +57,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         previewTimer.Tick += (_, _) => _ = SafeAsync(ApplyPreviewEditsAsync);
         draftTimer = DispatcherQueue.CreateTimer(); draftTimer.IsRepeating = false; draftTimer.Interval = TimeSpan.FromMilliseconds(800);
         draftTimer.Tick += (_, _) => SaveDraft();
+        InitializeAdaptivePreview();
 
         chooseButton = StudioLayout.AsyncTool("选择模型…", () => SafeAsync(NewAsync), "\uE77B");
         playButton = IconTool("播放 / 暂停（空格）", "\uE768", () => SafeAsync(TogglePlayAsync));
@@ -134,7 +134,12 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         viewport.ObjectDragged += (_, drag) => MoveModel(drag);
         viewport.ObjectScaled += (_, scale) => ScaleModel(scale);
         playhead.ValueChanged += (_, args) => { if (!refreshing && document is not null) RequestSeek(args.NewValue); };
-        Loaded += (_, _) => { active = true; if (document is not null && (previewDirty || !viewport.HasCurrentSource)) _ = SafeAsync(RefreshPreviewAsync); };
+        Loaded += (_, _) =>
+        {
+            active = true;
+            if (document is not null && (previewDirty || !viewport.HasCurrentSource)) _ = SafeAsync(RefreshPreviewAsync);
+            else if (document is not null) _ = SafeAsync(ApplyPreviewSizeAsync);
+        };
         Unloaded += (_, _) => Deactivate();
         KeyDown += OnKeyDown;
         AllowDrop = true;
@@ -198,8 +203,14 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     {
         if (refreshing || document is null) return;
         Pause(); change(document); editVersion++; previewDirty = true; replayRequired |= !live;
-        RefreshHeader(); RefreshParameterValues();
-        previewTimer.Stop(); if (active) previewTimer.Start(); draftTimer.Stop(); draftTimer.Start();
+        // Defer the serialized dirty comparison and full header refresh to the
+        // completed preview update, instead of cloning project history per slider tick.
+        if (!title.Text.EndsWith(" *", StringComparison.Ordinal)) title.Text += " *";
+        RefreshParameterValues();
+        // Throttle continuous input; restarting a one-shot timer on every movement
+        // starves the renderer until the user stops dragging.
+        if (active && !previewTimer.IsRunning && !applyingPreviewEdits) previewTimer.Start();
+        draftTimer.Stop(); draftTimer.Start();
     }
     void EditLive(Action<Live2DDocument> change) => Edit(change, true);
     void EditTransform(Action<Live2DDocument> change)
@@ -233,9 +244,12 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     }
     void RefreshTransport()
     {
-        frameLabel.Text = Timecode(document?.Time ?? 0);
+        string time = Timecode(document?.Time ?? 0);
+        if (frameLabel.Text != time) frameLabel.Text = time;
         bool previous = refreshing; refreshing = true;
-        playhead.Maximum = Math.Max(1d / 30, document?.Duration ?? 3); playhead.Value = document?.Time ?? 0;
+        double maximum = Math.Max(1d / 30, document?.Duration ?? 3), value = document?.Time ?? 0;
+        if (playhead.Maximum != maximum) playhead.Maximum = maximum;
+        if (playhead.Value != value) playhead.Value = value;
         refreshing = previous;
     }
     static string Timecode(double seconds)

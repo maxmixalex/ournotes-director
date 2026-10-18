@@ -10,7 +10,7 @@ public sealed record IsolatedActorTransform(double X = .5, double Y = .5, double
 
 /// <summary>Separates the source player's viewport (and its opening wait) from the
 /// output canvas. Removing visible letterbox bands must never advance the performance.</summary>
-public static class ActorIsolation
+public static partial class ActorIsolation
 {
     public static JsonObject TransformJson(IsolatedActorTransform transform) => new()
     { ["x"] = transform.X, ["y"] = transform.Y, ["scale"] = transform.Scale,

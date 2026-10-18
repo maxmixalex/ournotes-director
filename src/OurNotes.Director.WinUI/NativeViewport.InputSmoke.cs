@@ -71,7 +71,7 @@ public sealed partial class NativeViewport
         }
     }
 
-    internal async Task SendViewportKeySmokeAsync(Window window, VirtualKey key)
+    internal async Task SendViewportKeySmokeAsync(Window window, VirtualKey key, bool control = false)
     {
         await PrepareSmokeInputAsync(window);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -79,10 +79,15 @@ public sealed partial class NativeViewport
         AddHandler(KeyDownEvent, observe, true);
         try
         {
+            if (control) SendSmokeKey(VirtualKey.Control, false);
             SendSmokeKey(key, false);
             await completed.Task.WaitAsync(TimeSpan.FromSeconds(3));
         }
-        finally { SendSmokeKey(key, true); RemoveHandler(KeyDownEvent, observe); }
+        finally
+        {
+            SendSmokeKey(key, true); if (control) SendSmokeKey(VirtualKey.Control, true);
+            RemoveHandler(KeyDownEvent, observe);
+        }
     }
 
     internal async Task SendControlKeySmokeAsync(Window window, Microsoft.UI.Xaml.Controls.Control control, VirtualKey key)

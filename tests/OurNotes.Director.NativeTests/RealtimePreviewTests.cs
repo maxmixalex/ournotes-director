@@ -208,12 +208,21 @@ static class RealtimePreviewTests
         {
             home.Play();scene.Play();
             await Task.WhenAll(scenePlayed.Task,homePlayed.Task).WaitAsync(TimeSpan.FromSeconds(10));
-            check(scenePlayed.Task.Result.SessionId>restored.SessionId&&scenePlayed.Task.Result.Frame>=21,
-                "playback directly after commit replays the new scene project before advancing its animation");
+            check(scenePlayed.Task.Result.SessionId==restored.SessionId&&scenePlayed.Task.Result.Frame>=21,
+                "playback after an unchanged commit preserves the native context while advancing its animation");
             check(homePlayed.Task.Result.SessionId==homeBefore.SessionId&&homePlayed.Task.Result.Frame>=6,
                 "both persistent studios render live frames concurrently on their own native contexts");
         }
         finally{scene.Pause();home.Pause();scene.FrameReady-=ScenePlayed;home.FrameReady-=HomePlayed;}
+        await scene.SynchronizeAsync();
+        updated["finalize"]=new JsonArray((JsonNode)new JsonObject{["cmd"]="Delay",["Frames"]=1});
+        File.WriteAllText(committed,updated.ToJsonString());
+        await scene.CommitSceneProjectAsync(source with{ProjectPath=committed});
+        long beforeProgramPlay=scene.LastFrame!.SessionId;
+        scene.Play();await scene.SynchronizeAsync();
+        check(scene.LastFrame!.SessionId>beforeProgramPlay,
+            "playback after an actual native program change replays its committed command history before continuing");
+        scene.Pause();await scene.SynchronizeAsync();
         await scene.SeekAsync(0).WaitAsync(TimeSpan.FromSeconds(10));
         var beginning=scene.LastFrame!;
         await scene.SeekAsync(.5).WaitAsync(TimeSpan.FromSeconds(10));

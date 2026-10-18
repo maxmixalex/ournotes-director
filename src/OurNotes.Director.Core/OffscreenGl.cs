@@ -77,12 +77,12 @@ public sealed unsafe partial class OffscreenGl : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate void BlitFramebuffer(int sx0,int sy0,int sx1,int sy1,int dx0,int dy0,int dx1,int dy1,uint mask,uint filter);
     readonly Dictionary<string,Delegate> funcs=new();
     T Fn<T>(string name) where T:Delegate {if(!funcs.TryGetValue(name,out var f)){var ptr=OperatingSystem.IsLinux()?LinuxGlContext.Proc(name):wglGetProcAddress(name);if(ptr==0||ptr==1||ptr==2||ptr==3||ptr==-1)throw new NotSupportedException($"OpenGL function unavailable: {name}"); funcs[name]=f=Marshal.GetDelegateForFunctionPointer<T>(ptr);}return (T)f;}
-    readonly LinuxGlContext? linuxContext; readonly nint window,dc,rc; readonly uint program,main,mask,mainTexture,maskTexture; readonly List<uint> textures=[];
+    readonly LinuxGlContext? linuxContext; readonly nint window,dc,rc; readonly uint program; uint main,mask,mainTexture,maskTexture; readonly List<uint> textures=[];
     uint layer,layerTexture,drawTarget;
     GlSurface? blurHalf;readonly List<uint> framebuffers=[];
     readonly Dictionary<uint,uint> stencilBuffers=[];int stencilDepth;
     public readonly record struct GlSurface(uint Texture,uint Framebuffer,int Width,int Height);
-    public int Width{get;} public int Height{get;} public string Device{get;}
+    public int Width{get;private set;} public int Height{get;private set;} public string Device{get;}
     readonly Dictionary<string,int> uniformLocations=new(StringComparer.Ordinal);
     int Loc(string name){if(!uniformLocations.TryGetValue(name,out int location))uniformLocations[name]=location=Fn<Location>("glGetUniformLocation")(program,name);return location;}
     void Float(string name,float v)=>Fn<Uniform1>("glUniform1f")(Loc(name),v);
@@ -337,7 +337,7 @@ public sealed unsafe partial class OffscreenGl : IDisposable
             ivec2 origin=ivec2(gl_FragCoord.xy)*scale;
             ivec4 sum=ivec4(0);
             for(int y=0;y<scale;y++)for(int x=0;x<scale;x++)
-                sum+=ivec4(floor(texelFetch(sourceImage,origin+ivec2(x,y),0)*255.0+0.5));
+                sum+=ivec4(floor(clamp(texelFetch(sourceImage,origin+ivec2(x,y),0),0.0,1.0)*255.0+0.5));
             int count=scale*scale;
             ivec3 rgb=sum.a>0?min(ivec3(255),(sum.rgb*255+sum.a/2)/sum.a):ivec3(0);
             outputColor=vec4(rgb,(sum.a+count/2)/count)/255.0;
@@ -351,8 +351,8 @@ public sealed unsafe partial class OffscreenGl : IDisposable
         // Re-resolving it would perform an identical fullscreen pass and GPU round trip.
         if(!opaque||scale!=1)
         {
-            resolvedPresentation??=Surface(width,height);resolveShader??=new("Integer area resolve",ResolveSource);
-            target=resolvedPresentation.Value;
+            EnsureSurface(ref resolvedPresentation,width,height);resolveShader??=new("Integer area resolve",ResolveSource);
+            target=resolvedPresentation!.Value;
             Blit(resolveShader,target,new Dictionary<string,float[]>{{"scale",[scale]}},new Dictionary<string,uint>{{"sourceImage",source.Texture}});
         }
         Fn<Bind>("glBindFramebuffer")(0x8D40,target.Framebuffer);
@@ -368,12 +368,12 @@ public sealed unsafe partial class OffscreenGl : IDisposable
         for(int y=0;y<height;y++)Buffer.BlockCopy(pixels,(height-1-y)*stride,result,y*stride,stride);
         return new(width,height,result);
     }
-    public Pixels Present(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool transparent=false)
-        =>PresentCore(width,height,supersample,viewportY,drawBands,false,transparent)!;
-    public void QueuePresent(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool transparent=false)
+    public Pixels Present(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool transparent=false,bool fullCanvas=false)
+        =>PresentCore(width,height,supersample,viewportY,drawBands,false,transparent,fullCanvas)!;
+    public void QueuePresent(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool transparent=false,bool fullCanvas=false)
     {
         if(PendingPixels>=3)throw new InvalidOperationException("Read a queued frame before submitting another");
-        PresentCore(width,height,supersample,viewportY,drawBands,true,transparent);
+        PresentCore(width,height,supersample,viewportY,drawBands,true,transparent,fullCanvas);
     }
     public Pixels ReadQueued()
     {
@@ -388,15 +388,20 @@ public sealed unsafe partial class OffscreenGl : IDisposable
             pendingPixels.Dequeue();freePixelBuffers.Push(frame.Buffer);return new(frame.Width,frame.Height,result);
         }finally{Fn<Bind>("glBindBuffer")(PixelPackBuffer,0);}
     }
-    Pixels? PresentCore(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool queued,bool transparent)
+    public long PresentationCompositePasses { get; private set; }
+    Pixels? PresentCore(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool queued,bool transparent,bool fullCanvas)
     {
         int sw=checked(width*supersample),sh=checked(height*supersample);
-        if(presentation is null)presentation=Surface(sw,sh);
-        var target=presentation.Value;if(target.Width!=sw||target.Height!=sh)throw new ArgumentException("Presentation dimensions cannot change");
-        Fn<Bind>("glBindFramebuffer")(0x8D40,target.Framebuffer);glViewport(0,0,sw,sh);glClearColor(0,0,0,transparent?0:1);ClearTarget();
+        if(fullCanvas&&(!transparent||viewportY!=0||sw!=Width||sh!=Height))throw new ArgumentException("Direct presentation requires the complete transparent canvas.");
+        var target=new GlSurface(mainTexture,main,Width,Height);
+        if(!fullCanvas){EnsureSurface(ref presentation,sw,sh);target=presentation!.Value;}
         try {
-            glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);
-            glViewport(0,0,sw,sh);drawBands(sw,sh,Height);
+            if(!fullCanvas)
+            {
+                Fn<Bind>("glBindFramebuffer")(0x8D40,target.Framebuffer);glViewport(0,0,sw,sh);glClearColor(0,0,0,transparent?0:1);ClearTarget();
+                glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);PresentationCompositePasses++;
+                glViewport(0,0,sw,sh);drawBands(sw,sh,Height);
+            }
             if(!queued&&TryGpuPresentation(target,width,height,supersample))return new Pixels(width,height,[]);
             return ResolvePresentation(target,width,height,supersample,queued,!transparent);
         }finally{Fn<Bind>("glBindFramebuffer")(0x8D40,drawTarget);glViewport(0,0,Width,Height);}

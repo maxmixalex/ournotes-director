@@ -13,7 +13,7 @@ namespace OurNotes.Director.WinUI;
 internal sealed partial class Live2DStudioPage
 {
     sealed record NumberControl(Slider Slider, NumberBox Number);
-    sealed record ParameterControl(Slider Slider, NumberBox Number, Button Reset, TextBlock Mode);
+    sealed record ParameterControl(Slider Slider, NumberBox Number, Button Reset, TextBlock Mode, FrameworkElement Row);
     readonly Dictionary<string, NumberControl> transformControls = new(StringComparer.Ordinal);
     readonly Dictionary<string, ParameterControl> parameterControls = new(StringComparer.Ordinal);
     readonly CheckBox visibleBox = new() { Content = "显示模型", IsChecked = true };
@@ -54,7 +54,7 @@ internal sealed partial class Live2DStudioPage
         transform.Children.Add(TransformField("opacity", "不透明度（%）", 0, 100, 100, value => document!.Transform with { Opacity = value / 100 }));
         transform.Children.Add(StudioLayout.Tool("重置位置与缩放", ResetTransform, "\uE777"));
         var output = Ui.Stack(6, StudioLayout.Section("动画与画布"), durationBox,
-            StudioLayout.Tool("使用所选动作时长", MatchMotionDuration), widthBox, heightBox);
+            StudioLayout.Tool("使用所选动作时长", MatchMotionDuration), CreateActorCanvasControls(), widthBox, heightBox);
         StudioLayout.PairFields(output, widthBox, heightBox);
         durationBox.ValueChanged += (_, args) =>
         { if (!refreshing && double.IsFinite(args.NewValue)) { Edit(current => current.SetDuration(Math.Max(0, args.NewValue - 1d / 30))); RefreshHeader(); } };
@@ -182,7 +182,9 @@ internal sealed partial class Live2DStudioPage
         panel.Children.Add(parameterSearch);
         var tools = Ui.Stack(4, Ui.Row(4, StudioLayout.Tool("全部恢复自动", () => EditLive(current => current.ResetParameters()), "\uE777")), parameterSummary);
         panel.Children.Add(tools); Grid.SetRow(tools, 1);
-        var scroll = Ui.Scroll(parameterRows); panel.Children.Add(scroll); Grid.SetRow(scroll, 2);
+        var scroll = Ui.Scroll(parameterRows); parameterScroll = scroll;
+        scroll.ViewChanged += (_, _) => RefreshParameterValues();
+        panel.Children.Add(scroll); Grid.SetRow(scroll, 2);
         parameterSearch.TextChanged += (_, _) => BuildParameters();
         return panel;
     }
@@ -194,9 +196,10 @@ internal sealed partial class Live2DStudioPage
             parameterControls.Clear(); parameterRows.Children.Clear();
             if (document is null) { parameterSummary.Text = "载入模型后显示真实参数范围。"; return; }
             string search = parameterSearch.Text.Trim();
-            var shown = document.Parameters.Where(parameter => search.Length == 0 || parameter.Id.Contains(search, StringComparison.OrdinalIgnoreCase)
+            var parameters = document.Parameters;
+            var shown = parameters.Where(parameter => search.Length == 0 || parameter.Id.Contains(search, StringComparison.OrdinalIgnoreCase)
                 || parameter.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
-            parameterSummary.Text = $"{shown.Length} / {document.Parameters.Count} 个参数 · 调整数值后固定，恢复自动后由演出驱动。";
+            parameterSummary.Text = $"{shown.Length} / {parameters.Count} 个参数 · 调整数值后固定，恢复自动后由演出驱动。";
             foreach (var parameter in shown)
             {
                 string id = parameter.Id;
@@ -211,7 +214,6 @@ internal sealed partial class Live2DStudioPage
                 reset.Padding = new(6, 3, 6, 3); ToolTipService.SetToolTip(reset, "释放数值固定，恢复动作与表情驱动");
                 AutomationProperties.SetName(slider, "参数滑块 " + id); AutomationProperties.SetName(number, "参数数值 " + id);
                 AutomationProperties.SetName(reset, "参数恢复自动 " + id);
-                parameterControls.Add(id, new(slider, number, reset, mode));
                 var heading = new Grid { ColumnSpacing = 4 };
                 heading.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
                 var name = Ui.Text(string.IsNullOrWhiteSpace(parameter.Name) ? id : parameter.Name, 12); name.VerticalAlignment = VerticalAlignment.Center;
@@ -221,7 +223,8 @@ internal sealed partial class Live2DStudioPage
                 string limits = string.Create(CultureInfo.InvariantCulture, $"{parameter.Minimum:0.###} … {parameter.Maximum:0.###} · 默认 {parameter.Default:0.###}");
                 details.Children.Add(Ui.Stack(0, Ui.Text(id, 10, true), Ui.Text(limits, 10, true)));
                 var auto = Ui.Row(4, mode, reset); details.Children.Add(auto); Grid.SetColumn(auto, 1);
-                parameterRows.Children.Add(Ui.Stack(0, heading, slider, details));
+                var row = Ui.Stack(0, heading, slider, details);
+                parameterRows.Children.Add(row); parameterControls.Add(id, new(slider, number, reset, mode, row));
                 number.ValueChanged += (_, args) => { if (!refreshing && double.IsFinite(args.NewValue)) EditLive(current => current.SetParameter(id, args.NewValue)); };
                 slider.ValueChanged += (_, args) => { if (!refreshing) EditLive(current => current.SetParameter(id, args.NewValue)); };
             }
@@ -241,38 +244,45 @@ internal sealed partial class Live2DStudioPage
             durationBox.Value = TimelineRange.Full(document?.Duration ?? 3, 30).Duration;
             widthBox.Value = document?.Width ?? 512; heightBox.Value = document?.Height ?? 768;
             RefreshTransformControls(); RefreshAnimationList(false); RefreshAnimationList(true); BuildParameters();
+            RefreshActorCanvasControls();
         }
         finally { refreshing = previous; }
     }
-    void RefreshTransformControls()
+    void RefreshTransformControls(Live2DTransform? previewTransform = null)
     {
         bool previous = refreshing; refreshing = true;
         try
         {
-            var transform = document?.Transform ?? new(); visibleBox.IsChecked = transform.Opacity > 0;
+            var transform = previewTransform ?? modelDrag?.Value ?? document?.Transform ?? new();
+            if (visibleBox.IsChecked != (transform.Opacity > 0)) visibleBox.IsChecked = transform.Opacity > 0;
             foreach (var (key, value) in new[] { ("x", transform.X * 100), ("y", transform.Y * 100), ("scale", transform.Scale * 100), ("rotation", transform.Rotation), ("opacity", transform.Opacity * 100) })
             {
-                var control = transformControls[key]; control.Number.Value = value; control.Slider.Value = value;
-                control.Number.IsEnabled = control.Slider.IsEnabled = document is not null;
+                var control = transformControls[key];
+                if (control.Number.Value != value) control.Number.Value = value;
+                if (control.Slider.Value != value) control.Slider.Value = value;
+                if (control.Number.IsEnabled != (document is not null)) control.Number.IsEnabled = document is not null;
+                if (control.Slider.IsEnabled != (document is not null)) control.Slider.IsEnabled = document is not null;
             }
         }
         finally { refreshing = previous; }
     }
     void RefreshParameterValues()
     {
-        if (document is null) return;
+        if (document is null || activeTab != "parameters") return;
         bool previous = refreshing; refreshing = true;
         try
         {
+            var focus = FocusedAncestors();
             foreach (var parameter in document.Parameters)
             {
                 if (!parameterControls.TryGetValue(parameter.Id, out var controls)) continue;
-                if (!HasFocusWithin(controls.Number)) controls.Number.Value = parameter.Value;
-                if (!HasFocusWithin(controls.Slider)) controls.Slider.Value = parameter.Value;
-                controls.Mode.Text = parameter.IsOverridden ? "固定" : "自动";
-                controls.Reset.IsEnabled = parameter.IsOverridden;
+                if (!ParameterRowIsVisible(controls.Row) && !focus.Contains(controls.Number) && !focus.Contains(controls.Slider)) continue;
+                if (!focus.Contains(controls.Number) && controls.Number.Value != parameter.Value) controls.Number.Value = parameter.Value;
+                if (!focus.Contains(controls.Slider) && controls.Slider.Value != parameter.Value) controls.Slider.Value = parameter.Value;
+                string mode = parameter.IsOverridden ? "固定" : "自动";
+                if (controls.Mode.Text != mode) controls.Mode.Text = mode;
+                if (controls.Reset.IsEnabled != parameter.IsOverridden) controls.Reset.IsEnabled = parameter.IsOverridden;
             }
-            RefreshAnimationState();
         }
         finally { refreshing = previous; }
     }

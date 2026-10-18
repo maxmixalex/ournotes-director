@@ -16,6 +16,8 @@ public sealed unsafe class NativeModel : IDisposable
     readonly Dictionary<string,Delegate> functions=new();
     T Fn<T>(string name) where T:Delegate {if(!functions.TryGetValue(name,out var f))functions[name]=f=Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library,name));return (T)f;}
     public uint Version => Fn<Ver>("csmGetVersion")();
+    /// <summary>Changes only after Cubism evaluates a new displayed pose.</summary>
+    public long Revision { get; private set; }
     public string[] ParameterIds {get;private set;}=[];
     public float[] Min {get;private set;}=[]; public float[] Max {get;private set;}=[]; public float[] Defaults {get;private set;}=[];
     public int DrawableCount => Fn<Count>("csmGetDrawableCount")(model);
@@ -36,6 +38,6 @@ public sealed unsafe class NativeModel : IDisposable
             Min=Floats("ParameterMinimumValues",n);Max=Floats("ParameterMaximumValues",n);Defaults=Floats("ParameterDefaultValues",n);Update(Defaults);
         }catch{Dispose();throw;}
     }
-    public void Update(float[] values){Marshal.Copy(values,0,Pointer("ParameterValues"),values.Length);Fn<UpdateFn>("csmUpdateModel")(model);}
+    public void Update(float[] values){Marshal.Copy(values,0,Pointer("ParameterValues"),values.Length);Fn<UpdateFn>("csmUpdateModel")(model);Revision++;}
     public void Dispose(){NativeMemory.AlignedFree(modelMemory);modelMemory=null;NativeMemory.AlignedFree(mocMemory);mocMemory=null;if(library!=0&&model!=-1){NativeLibrary.Free(library);model=-1;}}
 }

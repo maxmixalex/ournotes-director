@@ -59,8 +59,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
 
     /// <summary>
     /// Commits a document whose current pose has already been applied with live edits.
-    /// Keeps its pixels, time, context and models now; replays the new document when the
-    /// next seek or playback actually needs its changed command history.
+    /// Keeps its pixels, time, context and models now; replays changed command history
+    /// at the next seek/playback. Presentation-only saves do not invalidate native state.
     /// </summary>
     public Task CommitSceneProjectAsync(ScenePreviewSource source)=>Enqueue(()=>
     {
@@ -96,12 +96,18 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         return UpdateState(update=>{update.Time=seconds;update.SeekCancellation=cancellationToken;});
     }
 
-    public Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
+    public Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)=>ApplySceneEditsAsync(rows,null);
+
+    /// <summary>Applies parameter/controller edits and an optional isolation transform
+    /// to one native pose, with a single draw and presentation.</summary>
+    public Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows,IsolatedActorTransform? transform)
     {
         ArgumentNullException.ThrowIfNull(rows);
+        if(transform is not null)_=ActorIsolation.ReadTransform(ActorIsolation.TransformJson(transform),"preview");
         var copy=rows.Select(row=>(JsonObject)row.DeepClone()).ToArray();
         return UpdateState(update=>
         {
+            if(transform is not null)update.IsolationTransform=transform;
             // Merge pending drag values by native command/target/parameter. Moving the
             // pointer faster than rendering cannot build an unbounded redraw backlog.
             foreach(var row in copy)
@@ -127,6 +133,21 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(transform);
         _=ActorIsolation.ReadTransform(ActorIsolation.TransformJson(transform),"preview");
         return UpdateState(update=>update.IsolationTransform=transform);
+    }
+
+    /// <summary>Resizes an isolated model preview without reloading its native player,
+    /// resetting physics or moving its playhead. Final export dimensions are untouched.</summary>
+    public Task ResizePreviewAsync(int width,int height,int supersample=1,CancellationToken cancellationToken=default)
+    {
+        RenderDimensions.Validate(width,height,supersample);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Enqueue(()=>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if(renderer is not SceneState scene)throw new InvalidOperationException("Load an isolated actor before resizing its preview.");
+            if(!scene.Resize(width,height,supersample))return;
+            Render(frame,[],cancellationToken:cancellationToken);
+        });
     }
 
     /// <summary>Reads actual model ranges/defaults and displayed values on the native
@@ -240,12 +261,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 state.SetEdits(home);
             }
             if(update.SceneEdits.Count>0&&renderer is not SceneState)throw new InvalidOperationException("Load a scene project before applying scene edits.");
-            if(update.IsolationTransform is {} transform)
-            {
-                if(update.Time.HasValue)throw new InvalidOperationException("定位过程中不能同时变换模型。");
-                if(renderer is not SceneState isolated)throw new InvalidOperationException("Load an isolated actor before editing its presentation.");
-                isolated.SetIsolatedTransform(transform);
-            }
+            if(update.IsolationTransform is not null&&renderer is not SceneState)throw new InvalidOperationException("Load an isolated actor before editing its presentation.");
             if(update.Time.HasValue)resumeAudio=false;
             if(update.StagePositions.Count>0)
             {
@@ -258,7 +274,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 }
             }
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
-            Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation);
+            Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation,isolationTransform:update.IsolationTransform);
             if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
             foreach(var waiter in update.Waiters)waiter.TrySetResult();
         }
@@ -277,7 +293,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     int FrameAt(double time)=>Math.Min(renderer!.EndFrame,checked((int)Math.Floor(time*renderer.Fps+1e-8)));
     void RequireRenderer(){if(renderer is null)throw new InvalidOperationException("Load a project into the native preview first.");}
 
-    void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false,CancellationToken cancellationToken=default)
+    void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false,CancellationToken cancellationToken=default,IsolatedActorTransform? isolationTransform=null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var active=renderer!;long stamp=Stopwatch.GetTimestamp(),allocated=GC.GetAllocatedBytesForCurrentThread();
@@ -290,6 +306,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             renderer=null;active.Dispose();
             active=renderer=new SceneState(source,document,project,cache){Duration=duration,Timing=timing};sessionId++;from=0;
         }
+        if(isolationTransform is not null)((SceneState)active).SetIsolatedTransform(isolationTransform);
         var pixels=active.Render(next,edits,cancellationToken);
         frame=active is SceneState current?current.NativeFrame:next;
         if(active is SceneState finished&&finished.Finished&&!finished.NeedsReplay&&finished.Source.DurationMode==PreviewDurationMode.Automatic)
@@ -539,23 +556,38 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             CueCache=cueCache??new();
             clean=project.Output["clean"]?.GetValue<bool>()??false;
             native=new(new Archive(source.ArchivePath),project.Site,source.CubismPath,project.Adv,project.Language,
-                source.Width,source.Height,source.ProjectPath,source.FfmpegPath,1,Document,false,CueCache){PreferGpuPresentation=source.GpuPresentation};
+                source.Width,source.Height,source.ProjectPath,source.FfmpegPath,source.Supersample,Document,false,CueCache){PreferGpuPresentation=source.GpuPresentation};
         }
         public void Commit(ScenePreviewSource source)
         {
             ArgumentNullException.ThrowIfNull(source);
             var next=DirectorProject.Read(source.ProjectPath);
-            if(next.Adv!=project.Adv||next.Site!=project.Site||next.Language!=project.Language||source.Width!=Source.Width||source.Height!=Source.Height
+            bool isolated=!string.IsNullOrWhiteSpace(Archive.S(project.Output,"isolateActor"));
+            if(next.Adv!=project.Adv||next.Site!=project.Site||next.Language!=project.Language
+                ||!isolated&&(source.Width!=Source.Width||source.Height!=Source.Height||source.Supersample!=Source.Supersample)
                 ||source.ArchivePath!=Source.ArchivePath||source.CubismPath!=Source.CubismPath||source.FfmpegPath!=Source.FfmpegPath
                 ||(next.Output["clean"]?.GetValue<bool>()??false)!=clean||Archive.S(next.Output,"letterbox")!=Archive.S(project.Output,"letterbox")
                 ||Archive.S(next.Output,"isolateActor")!=Archive.S(project.Output,"isolateActor")
+                ||isolated&&(!JsonNode.DeepEquals(next.Output["width"],project.Output["width"])
+                    ||!JsonNode.DeepEquals(next.Output["height"],project.Output["height"]))
                 ||ActorIsolation.ReadTransform(next.Output["isolateTransform"],next.Output["isolateActor"]?.ToString())!=native.IsolationTransform
+                ||!JsonNode.DeepEquals(next.Output["isolateCanvas"],project.Output["isolateCanvas"])
                 ||SceneContent.Read(next.Output["content"])!=SceneContent.Read(project.Output["content"])
                 ||!JsonNode.DeepEquals(next.Output["playbackViewport"],project.Output["playbackViewport"]))
                 throw new ArgumentException("Changing source, viewport or presentation requires reloading the scene.");
             if(!double.IsFinite(source.Duration)||source.Duration<=0||source.Duration>36000)throw new ArgumentOutOfRangeException(nameof(source));
-            Source=source;Duration=source.Duration;NeedsReplay=true;project=next;
-            Document=DirectorProject.Document(source.ProjectPath);ProjectHash=Archive.Hash(Encoding.UTF8.GetBytes(Document.ToJsonString()));Timing=null;
+            var document=DirectorProject.Document(source.ProjectPath);
+            bool changedProgram=new[]{"source","initialize","commands","finalize","text"}
+                .Any(key=>!JsonNode.DeepEquals(Document[key],document[key]))
+                ||!string.Equals(Path.GetDirectoryName(Path.GetFullPath(source.ProjectPath)),
+                    Path.GetDirectoryName(Path.GetFullPath(Source.ProjectPath)),
+                    OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal);
+            // Adaptive presentation can have resized while a UI snapshot was saving.
+            // The live FBO dimensions are authoritative; output canvas checks stay strict.
+            Source=isolated?source with{Width=Source.Width,Height=Source.Height,Supersample=Source.Supersample}:source;
+            Duration=source.Duration;NeedsReplay|=changedProgram;project=next;
+            Document=document;ProjectHash=Archive.Hash(Encoding.UTF8.GetBytes(Document.ToJsonString()));
+            Timing=!changedProgram&&Timing is {} timing?timing with{ProjectHash=ProjectHash}:null;
         }
         public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits,CancellationToken cancellationToken=default)
         {
@@ -569,6 +601,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             (native.Player.CompletionFrame!.Value+1)/30d,native.Player.CommandTimings(),native.Loop.Frame);
         public void PreviewStagePosition(string actor,int slot,System.Numerics.Vector3 position)=>native.Scene.PreviewStagePosition(actor,slot,position);
         public void SetIsolatedTransform(IsolatedActorTransform transform)=>native.SetIsolatedTransform(transform);
+        public bool Resize(int width,int height,int supersample)
+        {
+            if(width==Source.Width&&height==Source.Height&&supersample==Source.Supersample)return false;
+            native.ResizePreview(width,height,supersample);
+            Source=Source with{Width=width,Height=height,Supersample=supersample};return true;
+        }
         public IReadOnlyList<PreviewParameter> Parameters(string actor)=>(native.Scene.Character(actor)
             ??throw new ArgumentException("Unknown actor: "+actor)).PreviewParameters();
         public override IReadOnlyList<PreviewTarget> Targets()=>native.PreviewTargets();

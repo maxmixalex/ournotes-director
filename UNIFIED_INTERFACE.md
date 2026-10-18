@@ -39,6 +39,7 @@ validate 检查项目结构并执行资源初始化／首帧，不是全时间�
 - `output.isolateActor`：要提取的角色标识。整个原生演出仍从开头执行，仅绘制此刻该角色的原始模型画布，输出透明背景。原剧情的动作历史、表情、语音口型、物理、淡入淡出与换装仍由同一执行器求值。
 - `output.playbackViewport`：`{width,height,letterbox}` 保留源播放器的开场等待条件。隔离输出可更换画布与黑边显示，但不能因此提前原演出。由场景或 Live2D 工作台导出时自动写入。
 - `output.isolateTransform`：仅与 `isolateActor` 一起使用，形如 `{x:0.5,y:0.5,scale:1,rotation:0,opacity:1}`。x/y 是模型画布中心相对于输出宽高的位置，y 向下；scale 为相对于原始模型画布适配尺寸的倍率，rotation 为绕画布中心的角度，opacity 为 0–1。默认值保留原来的独立角色画面；这些字段直接影响原生几何、合成透明度与预览命中范围。它们不修改源舞台位置、摄影机或动作时间。
+- `output.isolateCanvas`：仅与 `isolateActor` 一起使用，固定画布形如 `{referenceWidth:2048,referenceHeight:3072,x:0.1,y:0.05,width:0.8,height:0.9}`。referenceWidth/referenceHeight 保存应用画布前的原输出尺寸；x/y/width/height 是该原画布的归一化取景矩形，可以延伸到 0–1 以外。先在原画布求值 isolateTransform，再使用这一个固定矩形绘制所有帧，输出尺寸变化时保持人物比例。工作台逐帧合并完整演出中可见角色的真实几何范围，增加边缘采样余量，再按倍率扩展宽高；倍率 1 为完整动作最小范围，倍率大于 1 只增加透明留白。视频尺寸对齐只向外增加透明边缘。再次分析仍使用 referenceWidth/referenceHeight，不在已有裁剪上继续累积变换。PNG、帧序列与 MOV 直接共用相同字段；源指令、声音、开场等待及导出时间不改变。
 - 项目文件中的本地素材路径相对项目目录解析，输出命令路径相对当前工作目录解析。
 
 未来版本字段不静默接受；扩展行严格校验。原游戏行保留原数据字段，不将原始引擎未消费的字段误报为新接口错误。

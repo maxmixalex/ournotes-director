@@ -14,6 +14,8 @@ GitHub Actions 的 [**Build Windows editor** 工作流](https://github.com/maxmi
 
 **Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 场景与主页采用效果控件／节目监视器／项目素材／时间轴四分区；可调整比例、最大化面板并记住布局。Live2D 使用大画布与侧边控制面板，支持模型、动作、表情、真实参数、呼吸／眨眼／物理及位置／缩放等调整。场景角色右键可带完整演出与区间进入 Live2D；单 Live2D 角色 PNG、透明动画和帧序列统一在这里输出。三个工作台均能保存各自项目，JSON 保留为高级入口。具体步骤见 [桌面使用说明](DESKTOP.md)。下面保留共用执行器的 CLI 说明。
 
+Live2D 的侧栏和导出面板均可选择“仅角色”画布，按完整动作的最小矩形设置 X 倍透明留白，整段使用固定构图。预览随显示尺寸和 DPI 调整清晰度并进行抗锯齿，拖动过程中持续显示实际模型位置。
+
 ```powershell
 # Windows：在解压后的目录中运行
 ./advkit.exe archive

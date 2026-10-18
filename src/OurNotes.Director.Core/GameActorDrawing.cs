@@ -3,6 +3,9 @@ using System.Text.Json.Nodes;
 
 namespace OurNotes.Director.Core;
 
+/// <summary>Cumulative native drawing work, useful for separating pose evaluation from presentation edits.</summary>
+public sealed record ActorDrawingWork(long PoseRefreshes, long MaskPasses, long ModelDraws);
+
 // Original Cubism Lit-URP materials and the four-channel 1024px Cubism mask atlas.
 public sealed unsafe class GameActorDrawing : IDisposable
 {
@@ -15,6 +18,10 @@ public sealed unsafe class GameActorDrawing : IDisposable
     // Immutable uniform values shared by draws; only the per-mesh dictionaries change.
     static readonly float[] Zero=[0],One=[1],ZeroVector=[0,0,0,0],Ambient=[0,0,0,1],MultiplyUv=[1,1,0,0];
     Dictionary<string,float[]>? maskValues;
+    long poseRevision=-1,poseRefreshes,maskPasses,modelDraws;
+    float[] poseAlpha=[];
+    int[] poseOrder=[];
+    public ActorDrawingWork DrawingWork=>new(poseRefreshes,maskPasses,modelDraws);
     public bool LightingEnabled{get;set;}=true;
     public float[] DirectorTint{get;set;}=[1,1,1,1];public float DirectorBrightness{get;set;}=1;
     public bool DisableMultiplyLighting{get;set;}=true;
@@ -54,12 +61,15 @@ public sealed unsafe class GameActorDrawing : IDisposable
         =>AdvRenderItem.DrawAll(Items(globals,opacity,0));
     public IReadOnlyList<AdvRenderItem> Items(IReadOnlyDictionary<string,float[]> globals,float opacity,int baseOrder)
     {
-        int n=meshes.Length;var positions=(nint*)core.Pointer("DrawableVertexPositions");var alpha=core.Floats("DrawableOpacities",n);var order=core.Ints("RenderOrders",n);
+        int n=meshes.Length;
+        bool changed=poseRevision!=core.Revision;
+        if(changed){poseAlpha=core.Floats("DrawableOpacities",n);poseOrder=core.Ints("RenderOrders",n);poseRefreshes++;}
+        var positions=(nint*)core.Pointer("DrawableVertexPositions");var alpha=poseAlpha;var order=poseOrder;
         Span<float> color=stackalloc float[4];
         for(int i=0;i<n;i++){
             var mesh=meshes[i];var p=mesh.Attributes["in_POSITION0"];var colors=mesh.Attributes["in_COLOR0"];var raw=new ReadOnlySpan<float>((void*)positions[i],p.Length/2);
             if(alpha[i]<=0&&!mesh.UsedAsMask)continue;
-            for(int j=0;j<p.Length/4;j++){p[j*4]=raw[j*2];p[j*4+1]=raw[j*2+1];p[j*4+3]=1;}
+            if(changed)for(int j=0;j<p.Length/4;j++){p[j*4]=raw[j*2];p[j*4+1]=raw[j*2+1];p[j*4+3]=1;}
             for(int k=0;k<4;k++)color[k]=mesh.Tint[k]*DirectorTint[k]*(k<3?DirectorBrightness:alpha[i]);
             if(!color.SequenceEqual(mesh.LastColor))
             {
@@ -67,11 +77,14 @@ public sealed unsafe class GameActorDrawing : IDisposable
                 if(mesh.LastColor.Length==4)color.CopyTo(mesh.LastColor);else mesh.LastColor=color.ToArray();
             }
         }
-        foreach(var junction in junctions){float lx=float.PositiveInfinity,ly=lx,hx=float.NegativeInfinity,hy=hx;foreach(int i in junction.Masks){var p=meshes[i].Attributes["in_POSITION0"];for(int j=0;j<p.Length;j+=4){lx=Math.Min(lx,p[j]);ly=Math.Min(ly,p[j+1]);hx=Math.Max(hx,p[j]);hy=Math.Max(hy,p[j+1]);}}float span=Math.Max(hx-lx,hy-ly);junction.Transform=[(lx+hx)*.5f,(ly+hy)*.5f,span>0?1/span:0,0];}
-        if(junctions.Count>0)gl.InSurface(mask,()=>{maskValues??=shaders.Defaults(Mask);maskValues["_ProjectionParams"]=[1,.3f,1000,.001f];var maskShader=shaders.Program(Mask);foreach(var junction in junctions)foreach(int i in junction.Masks){
+        if(changed)foreach(var junction in junctions){float lx=float.PositiveInfinity,ly=lx,hx=float.NegativeInfinity,hy=hx;foreach(int i in junction.Masks){var p=meshes[i].Attributes["in_POSITION0"];for(int j=0;j<p.Length;j+=4){lx=Math.Min(lx,p[j]);ly=Math.Min(ly,p[j+1]);hx=Math.Max(hx,p[j]);hy=Math.Max(hy,p[j+1]);}}float span=Math.Max(hx-lx,hy-ly);junction.Transform=[(lx+hx)*.5f,(ly+hy)*.5f,span>0?1/span:0,0];}
+        // The atlas is in model space. A paused pan/zoom/rotation changes only the world
+        // matrix, so its identical mask and Cubism vertex buffers remain reusable.
+        if(changed&&junctions.Count>0)gl.InSurface(mask,()=>{maskPasses++;maskValues??=shaders.Defaults(Mask);maskValues["_ProjectionParams"]=[1,.3f,1000,.001f];var maskShader=shaders.Program(Mask);foreach(var junction in junctions)foreach(int i in junction.Masks){
             var mesh=meshes[i];maskValues["cubism_MaskTile"]=junction.Tile;maskValues["cubism_MaskTransform"]=junction.Transform;
             gl.GameMaterial(maskShader,maskValues,mesh.MaskTextures,mesh.MaskAttributes,mesh.Indices,4,1,4,1,(mesh.Flags&4)!=0?0:1,true);
         }});
+        poseRevision=core.Revision;modelDraws++;
         var matrices=currentWorldMatrices;matrices.Clear();
         float[] modelOpacity=[opacity],rimIntensity=[RimThreshold],rimSmooth=[RimSmoothness],shadowIntensity=[ShadowIntensity];
         float[] World(AdvTransform transform){if(!matrices.TryGetValue(transform,out var matrix))matrices[transform]=matrix=transform.Parent is null?transform.LocalMatrix():AdvMatrix.Multiply(World(transform.Parent),transform.LocalMatrix());return matrix;}
@@ -90,15 +103,15 @@ public sealed unsafe class GameActorDrawing : IDisposable
     }
     // Read the actual evaluated Cubism vertices and the same per-drawable world matrices
     // used by Items. Editor bounds never substitute an estimated model rectangle for pixels.
-    public PreviewTarget? PreviewBounds(string id,string label,float[] viewProjection)
+    public PreviewTarget? PreviewBounds(string id,string label,float[] viewProjection,bool freshMatrices=false)
     {
         float left=float.PositiveInfinity,top=left,right=float.NegativeInfinity,bottom=right;
         var alpha=core.Floats("DrawableOpacities",meshes.Length);
         var positions=(nint*)core.Pointer("DrawableVertexPositions");
         for(int i=0;i<meshes.Length;i++){
             var mesh=meshes[i];
-            if(alpha[i]<=0||mesh.Tint[3]<=0||mesh.Indices.Length==0||!mesh.Transform.ActiveInHierarchy)continue;
-            var matrix=AdvMatrix.Multiply(viewProjection,currentWorldMatrices.GetValueOrDefault(mesh.Transform)??mesh.Transform.WorldMatrix());
+            if(alpha[i]<=0||mesh.Tint[3]*DirectorTint[3]<=0||mesh.Indices.Length==0||!mesh.Transform.ActiveInHierarchy)continue;
+            var matrix=AdvMatrix.Multiply(viewProjection,freshMatrices?mesh.Transform.WorldMatrix():currentWorldMatrices.GetValueOrDefault(mesh.Transform)??mesh.Transform.WorldMatrix());
             int count=mesh.Attributes["in_POSITION0"].Length/4;
             var raw=new ReadOnlySpan<float>((void*)positions[i],count*2);
             for(int j=0;j<count;j++){

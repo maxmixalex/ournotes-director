@@ -23,15 +23,32 @@ public sealed class AdvStoryRenderer : IDisposable
     public void DisableGpuPresentation(string reason) => gl.DisableGpuPresentation(reason);
 
     readonly OffscreenGl gl;
-    readonly int outputWidth,outputHeight,supersample,viewportY;
+    int outputWidth,outputHeight,supersample;
+    readonly int viewportY;
+    OffscreenGl.DrawingCanvas? previewCanvas;
     readonly string? isolateActor;
     IsolatedActorTransform isolateTransform;
+    readonly IsolatedActorCanvas? isolateCanvas;
+    public long PresentationCompositePasses=>gl.PresentationCompositePasses;
     public IsolatedActorTransform IsolationTransform => isolateTransform;
     public void SetIsolatedTransform(IsolatedActorTransform transform)
     {
         ArgumentNullException.ThrowIfNull(transform);
         if(isolateActor is null)throw new InvalidOperationException("Load an isolated actor before editing its presentation.");
         isolateTransform=ActorIsolation.ReadTransform(ActorIsolation.TransformJson(transform),isolateActor);
+    }
+    /// <summary>Changes only an isolated actor's presentation FBO. The ADV player,
+    /// Cubism model, masks, captures and original UI coordinate system stay alive.</summary>
+    public void ResizePreview(int width,int height,int sampling=1)
+    {
+        if(isolateActor is null)throw new InvalidOperationException("Only isolated actor previews support live resizing.");
+        RenderDimensions.Validate(width,height,sampling);
+        if(PendingFrames>0)throw new InvalidOperationException("Read queued exports before resizing a preview.");
+        if(outputWidth==width&&outputHeight==height&&supersample==sampling)return;
+        int sampledWidth=checked(width*sampling),sampledHeight=checked(height*sampling);
+        var next=sampledWidth==gl.Width&&sampledHeight==gl.Height?null:gl.CreateDrawingCanvas(sampledWidth,sampledHeight);
+        previewCanvas?.Dispose();previewCanvas=next;
+        outputWidth=width;outputHeight=height;supersample=sampling;
     }
     readonly bool charactersOnly;
     bool TransparentOutput => charactersOnly || isolateActor is not null || Scene.DirectorTransparent;
@@ -49,6 +66,7 @@ public sealed class AdvStoryRenderer : IDisposable
         var sourceOutput = (supplied as JsonObject)?["output"] as JsonObject;
         isolateActor = sourceOutput?["isolateActor"]?.ToString();
         isolateTransform = ActorIsolation.ReadTransform(sourceOutput?["isolateTransform"],isolateActor);
+        isolateCanvas = ActorIsolation.ReadCanvas(sourceOutput?["isolateCanvas"],isolateActor);
         charactersOnly = SceneContent.Read(sourceOutput?["content"]) == "characters";
         var playbackViewport = sourceOutput?["playbackViewport"];
         ActorIsolation.ValidateViewport(playbackViewport);
@@ -98,8 +116,14 @@ public sealed class AdvStoryRenderer : IDisposable
     }
     public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
     {
-        RenderFrame(frame,clean,previewEdits,stopAtEnd,cancellationToken);
-        var pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();return pixels;
+        AdvanceFrame(frame,previewEdits,stopAtEnd,cancellationToken);
+        Pixels pixels;
+        using(gl.UseDrawingCanvas(previewCanvas))
+        {
+            Draw(clean);
+            pixels=Measure("readbackAndResolve",()=>gl.Present(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput,isolateActor is not null));
+        }
+        Loop.Drain();Player.ThrowIfFailed();return pixels;
     }
     public IReadOnlyList<PreviewTarget> PreviewTargets()
     {
@@ -107,13 +131,22 @@ public sealed class AdvStoryRenderer : IDisposable
         double top=viewportY/(double)outputHeight,height=gl.Height/(double)supersample/outputHeight;
         return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height,StagePlacement=target.StagePlacement is {} plane?plane with{ViewportHeight=height}:null}).ToArray();
     }
-    void RenderFrame(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
+    void AdvanceFrame(int frame,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
     {
         if(frame<Loop.Frame)throw new ArgumentException("Frame requests must be increasing");
         Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){cancellationToken.ThrowIfCancellationRequested();Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
         cancellationToken.ThrowIfCancellationRequested();
         if(previewEdits is {Count:>0})Scene.ApplyPreviewEdits(previewEdits,Player);
-        Draw(clean);
+    }
+    /// <summary>Runs every preceding native step, then reads current model geometry
+    /// in the original isolation canvas. No final scene draw or pixel readback occurs.</summary>
+    public PreviewTarget? MeasureIsolatedBounds(int frame,int referenceWidth,int referenceHeight,CancellationToken cancellationToken=default)
+    {
+        if(isolateActor is null)throw new InvalidOperationException("Load an isolated actor before measuring its bounds.");
+        RenderDimensions.Validate(referenceWidth,referenceHeight,1);
+        AdvanceFrame(frame,cancellationToken:cancellationToken);
+        var result=Scene.MeasureIsolatedActorBounds(isolateActor,isolateTransform,referenceWidth,referenceHeight);
+        Loop.Drain();Player.ThrowIfFailed();return result;
     }
     /// <summary>
     /// Runs the same handlers and resource-based waits as export, without drawing or
@@ -140,11 +173,21 @@ public sealed class AdvStoryRenderer : IDisposable
             end.HasValue?null:"剧情未在十小时分析上限内结束，请检查循环指令或使用自由时长。");
     }
     public int PendingFrames=>gl.PendingPixels;
-    public void QueueFrame(int frame,bool clean=false){if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");RenderFrame(frame,clean);Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput));Loop.Drain();Player.ThrowIfFailed();}
+    public void QueueFrame(int frame,bool clean=false)
+    {
+        if(PendingFrames>=3)throw new InvalidOperationException("Read a queued frame before advancing the story");
+        AdvanceFrame(frame);
+        using(gl.UseDrawingCanvas(previewCanvas))
+        {
+            Draw(clean);
+            Measure("readbackAndResolve",()=>gl.QueuePresent(outputWidth,outputHeight,supersample,viewportY,DrawOutputLetterbox,TransparentOutput,isolateActor is not null));
+        }
+        Loop.Drain();Player.ThrowIfFailed();
+    }
     public Pixels ReadQueuedFrame()=>Measure("readbackAndResolve",gl.ReadQueued);
     void DrawOutputLetterbox(int width,int height,int viewportHeight){if(!charactersOnly)Ui.DrawLetterbox(width,height,viewportHeight);}
-    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor,isolateTransform));return;}if(charactersOnly){Measure("characters",Scene.DrawCharacters);Scene.ApplyDirectorGrade();return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
-    public void Dispose(){Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();gl.Dispose();}
+    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor,isolateTransform,isolateCanvas));return;}if(charactersOnly){Measure("characters",Scene.DrawCharacters);Scene.ApplyDirectorGrade();return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
+    public void Dispose(){Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
     public static object Contact(Archive archive,string site,string dll,string id,string language,string? script,string output,int width,int height,double[] times,int columns,bool clean,bool overwrite,string ffmpeg,int supersample=2)
     {
         if(times.Length is <1 or >64||times.Any(t=>!double.IsFinite(t)||t<0||t>36000))throw new ArgumentException("Contact needs 1..64 times within ten hours");

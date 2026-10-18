@@ -6,7 +6,7 @@ public sealed record PreviewTarget(string Id, string Label, double X, double Y, 
 /// <summary>A private project snapshot, using the same document and renderer as final scene export.</summary>
 public sealed record ScenePreviewSource(string ArchivePath, string ProjectPath, string CubismPath,
     string FfmpegPath, int Width = 960, int Height = 540, double Duration = 60,
-    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed, bool GpuPresentation = false);
+    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed, bool GpuPresentation = false, int Supersample = 1);
 
 public enum PreviewDurationMode { Fixed, Automatic }
 

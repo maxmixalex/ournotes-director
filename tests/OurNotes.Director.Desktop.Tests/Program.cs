@@ -13,6 +13,7 @@ SceneDocumentTests.Run(Check);
 StudioSceneDocumentTests.Run(Check);
 HomeStudioDocumentTests.Run(Check);
 Live2DDocumentTests.Run(Check);
+ActorCanvasTests.Run(Check);
 StudioWorkflowTests.Run(Check);
 CreativeExportTests.Run(Check);
 CreativeStagingTests.Run(Check);

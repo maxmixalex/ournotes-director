@@ -20,6 +20,7 @@ public sealed unsafe partial class Actor
     public float ParameterValue(string id)=>ids.TryGetValue(id,out int index)?Values[index]:throw new ArgumentException("Unknown model parameter: "+id);
     readonly JsonNode gameModel,gamePrefab;
     GameActorDrawing? gameDrawing;
+    public ActorDrawingWork DrawingWork=>gameDrawing?.DrawingWork??new(0,0,0);
     public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl){gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();}
     bool HasEditorOverlay=>EditorOffsetX!=0||EditorOffsetY!=0||EditorScale!=1;
     float[] OverlayProjection(float[] projection)
@@ -43,7 +44,7 @@ public sealed unsafe partial class Actor
     public bool GameLighting{get=>gameDrawing?.LightingEnabled??false;set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
     public void SetDirectorTint(float[] tint,float brightness){if(gameDrawing is null)throw new InvalidOperationException("Game drawing not initialized");gameDrawing.DirectorTint=tint;gameDrawing.DirectorBrightness=brightness;}
     public PreviewTarget? PreviewBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,OverlayProjection(viewProjection));
-    internal PreviewTarget? PreviewIsolatedBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,viewProjection);
+    internal PreviewTarget? PreviewIsolatedBounds(float[] viewProjection,bool freshMatrices=false)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,viewProjection,freshMatrices);
     float[]? previewAutomaticValues;
     internal void RefreshPreviewParameters()
     {

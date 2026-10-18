@@ -40,7 +40,9 @@ public sealed partial class Live2DDocument
         set
         {
             if (!double.IsFinite(value)) throw new ArgumentOutOfRangeException(nameof(value));
-            root["time"] = Snap(value); observed.Clear();
+            double snapped = Snap(value);
+            if (Time == snapped) return;
+            root["time"] = snapped; observed.Clear();
         }
     }
     public TimelineRange? Range
@@ -69,16 +71,26 @@ public sealed partial class Live2DDocument
     public bool Blink => Controller("blink");
     public bool Physics => Controller("physics");
     public bool Loop => Controller("loop");
-    public IReadOnlyList<Live2DParameter> Parameters => Definitions().Select(definition =>
+    public IReadOnlyList<Live2DParameter> Parameters
     {
-        var pin = ActiveRows().LastOrDefault(row => Text(row, "cmd") == "Director.Parameter"
-            && Text(row, "Parameter") == definition.Id);
-        bool pinned = pin is not null && Text(pin, "Operation") != "release";
-        double value = observed.TryGetValue(definition.Id, out var live) ? live.Value
-            : pinned ? Number(pin!, "Value", definition.Default) : definition.Default;
-        return definition with { Value = Math.Clamp(value, definition.Minimum, definition.Maximum),
-            IsOverridden = live?.IsOverridden ?? pinned };
-    }).ToArray();
+        get
+        {
+            // Captured performances can contain thousands of rows. Resolve their active
+            // pins once per inspector refresh, rather than parsing that history per slider.
+            var pins = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            foreach (var row in ActiveRows())
+                if (Text(row, "cmd") == "Director.Parameter") pins[Text(row, "Parameter")] = row;
+            return Definitions().Select(definition =>
+            {
+                var pin = pins.GetValueOrDefault(definition.Id);
+                bool pinned = pin is not null && Text(pin, "Operation") != "release";
+                double value = observed.TryGetValue(definition.Id, out var live) ? live.Value
+                    : pinned ? Number(pin!, "Value", definition.Default) : definition.Default;
+                return definition with { Value = Math.Clamp(value, definition.Minimum, definition.Maximum),
+                    IsOverridden = live?.IsOverridden ?? pinned };
+            }).ToArray();
+        }
+    }
 
     Live2DDocument(JsonObject value, string? filePath = null, string? directory = null)
     {
