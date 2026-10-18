@@ -39,6 +39,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     Stream? pixelStream;
     byte[] bgra=[];
     PreviewFrame? lastFrame,pendingFrame;
+    long pendingFrameReadyStamp;
     bool presentationQueued,disposed;
     bool loading;
     long sourceVersion;
@@ -52,6 +53,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     long statusClock;
     bool statusPlaying,diagnosticFailure;
     public double PresentationMilliseconds{get;private set;}
+    public double PresentationQueueMilliseconds { get; private set; }
     internal long SceneProjectCommitCount { get; private set; }
     public event EventHandler<PreviewFrame>? FramePresented;
     public event EventHandler<Exception>? Failed;
@@ -111,12 +113,14 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
 
     public async Task LoadSceneAsync(ScenePreviewSource source)
     {
+        RecordPreviewOperation("load.begin", width: source.Width, height: source.Height, supersample: source.Supersample);
         long version=BeginLoad("正在载入场景…");
         try
         {
             await session.LoadSceneAsync(source with{GpuPresentation=true});PreviewSupersample=source.Supersample;await AwaitPresentationAsync();
             if(version==sourceVersion)ConfigureAudio(source);
             if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
+            RecordPreviewOperation("load.end");
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
     }
@@ -150,8 +154,10 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     }
     public async Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
+        RecordPreviewOperation("seek.begin");
         await session.SeekAsync(seconds,cancellationToken);
         await AwaitPresentationAsync();
+        RecordPreviewOperation("seek.end");
     }
     public async Task PauseForEditingAsync()
     { session.Pause(); await session.SynchronizeAsync(); await AwaitPresentationAsync(); }
@@ -162,8 +168,10 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     }
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
     {
+        RecordPreviewOperation("edits.begin", rows.Count);
         await session.ApplySceneEditsAsync(rows);
         await AwaitPresentationAsync();
+        RecordPreviewOperation("edits.end", rows.Count);
     }
     public async Task SetHomeEditStateAsync(HomeEditState state)
     {
@@ -171,20 +179,26 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await AwaitPresentationAsync();
     }
     public async Task CommitSceneProjectAsync(ScenePreviewSource source)
-    {await session.CommitSceneProjectAsync(source with{GpuPresentation=true});SceneProjectCommitCount++;ConfigureAudio(source);}
+    {
+        RecordPreviewOperation("commit.begin");
+        await session.CommitSceneProjectAsync(source with{GpuPresentation=true});SceneProjectCommitCount++;ConfigureAudio(source);
+        RecordPreviewOperation("commit.end");
+    }
     public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
     public Task<IReadOnlyList<PreviewParameter>> ReadActorParametersAsync(string actorId,CancellationToken cancellationToken=default)=>session.ReadActorParametersAsync(actorId,cancellationToken);
     public async Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
     {
+        RecordPreviewOperation("transform.begin", hasTransform: true);
         await session.SetIsolatedTransformAsync(transform);
         await AwaitPresentationAsync();
+        RecordPreviewOperation("transform.end", hasTransform: true);
     }
     async Task AwaitPresentationAsync()
     {
         if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);
     }
-    public void Play(double? exclusiveEndSeconds=null)=>session.Play(exclusiveEndSeconds);
-    public void Pause()=>session.Pause();
+    public void Play(double? exclusiveEndSeconds=null){RecordPreviewOperation("play");session.Play(exclusiveEndSeconds);}
+    public void Pause(){RecordPreviewOperation("pause");session.Pause();}
 
     /// <summary>Completes only after the raw native pixels have been copied into the XAML image.</summary>
     public async Task<PreviewFrame> WaitForFrameAsync(long afterSequence=0,TimeSpan? timeout=null)
@@ -205,7 +219,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         lock(frameGate)
         {
             if(disposed||showingEmptyCanvas)return;
-            pendingFrame=frame;
+            pendingFrame=frame;pendingFrameReadyStamp=Stopwatch.GetTimestamp();
             if(presentationQueued)return;
             presentationQueued=true;
         }
@@ -216,14 +230,16 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     void PresentLatest()
     {
         PreviewFrame? frame;
+        long readyStamp;
         lock(frameGate)
         {
-            frame=pendingFrame;pendingFrame=null;presentationQueued=false;
+            frame=pendingFrame;readyStamp=pendingFrameReadyStamp;pendingFrame=null;presentationQueued=false;
             if(disposed||frame is null)return;
         }
         try
         {
             long stamp=Stopwatch.GetTimestamp();
+            PresentationQueueMilliseconds=Stopwatch.GetElapsedTime(readyStamp,stamp).TotalMilliseconds;
             var pixels=frame.Pixels;
             if(frame.GpuSurface is not null)
             {

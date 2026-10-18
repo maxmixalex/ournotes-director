@@ -125,7 +125,8 @@ internal sealed partial class Live2DStudioPage
         try
         {
             dialog = await WaitForSmokeDialogAsync(exporting);
-            SmokeChoice(dialog, "画面尺寸", "actor");
+            check(Ui.Selected(SmokeControl<ComboBox>(dialog, "画面尺寸")) == "actor",
+                "保存过角色画布的项目默认使用完整动作范围，透明视频自动向外对齐编码尺寸");
             var multiplier = SmokeControl<NumberBox>(dialog, "画布倍数（X）");
             multiplier.Value = 1.25;
             if (kind != "frame") SmokeChoice(dialog, "时间范围", "complete");

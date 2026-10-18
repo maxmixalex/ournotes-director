@@ -22,7 +22,18 @@ public sealed record NativePlaybackTiming(string ProjectHash,bool IsComplete,int
     double? Duration,IReadOnlyList<NativeCommandTiming> Commands,int AnalyzedFrame=0,string? Error=null);
 
 public sealed record PreviewPerformance(double SimulationMilliseconds,double SceneMilliseconds,
-    double ReadbackMilliseconds,double TargetMilliseconds,long AllocatedBytes,int SimulationFrames);
+    double ReadbackMilliseconds,double TargetMilliseconds,long AllocatedBytes,int SimulationFrames,
+    PreviewRenderDiagnostics? Diagnostics=null);
+
+/// <summary>Per-render work deltas. GC counters/pause and process allocations include
+/// all managed threads; native work counters belong to the rendering thread. These
+/// observations distinguish a paused-pose draw from replay, uploads or cold shaders
+/// without retaining pixels or allocating one diagnostic object for each frame.</summary>
+public readonly record struct PreviewRenderDiagnostics(int Width,int Height,int Supersample,
+    int Gen0Collections,int Gen1Collections,int Gen2Collections,double GcPauseMilliseconds,
+    long ProcessAllocatedBytes,long CompiledPrograms,double ShaderCompilationMilliseconds,
+    long MeshUploads,long MeshUploadBytes,long PoseRefreshes,long MaskPasses,long ModelDraws,
+    long PresentationCopies);
 
 public sealed record PreviewLipSync(string TargetId,string Engine,bool IsActive,float MouthOpen,string? Missing);
 

@@ -399,7 +399,7 @@ public sealed unsafe partial class OffscreenGl : IDisposable
             if(!fullCanvas)
             {
                 Fn<Bind>("glBindFramebuffer")(0x8D40,target.Framebuffer);glViewport(0,0,sw,sh);glClearColor(0,0,0,transparent?0:1);ClearTarget();
-                glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);PresentationCompositePasses++;
+                glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);PresentationCompositePasses++;PreviewNativeWork.PresentationCopies++;
                 glViewport(0,0,sw,sh);drawBands(sw,sh,Height);
             }
             if(!queued&&TryGpuPresentation(target,width,height,supersample))return new Pixels(width,height,[]);

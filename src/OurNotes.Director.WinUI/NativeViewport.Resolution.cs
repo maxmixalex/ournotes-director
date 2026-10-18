@@ -39,13 +39,17 @@ public sealed partial class NativeViewport
     public async Task ResizePreviewAsync(int width, int height, int supersample = 1,
         CancellationToken cancellationToken = default)
     {
+        RecordPreviewOperation("resize.begin", width: width, height: height, supersample: supersample);
         await session.ResizePreviewAsync(width, height, supersample, cancellationToken);
         PreviewSupersample = supersample; await AwaitPresentationAsync();
+        RecordPreviewOperation("resize.end");
     }
 
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows, IsolatedActorTransform? transform)
     {
+        RecordPreviewOperation("edits.begin", rows.Count, transform is not null);
         await session.ApplySceneEditsAsync(rows, transform); await AwaitPresentationAsync();
+        RecordPreviewOperation("edits.end", rows.Count, transform is not null);
     }
 
     void InitializePresentationResolution()

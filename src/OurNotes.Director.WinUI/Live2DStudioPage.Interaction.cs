@@ -28,7 +28,7 @@ internal sealed partial class Live2DStudioPage
         if (modelDrag is not { IsCompleted: false } gesture || !ReferenceEquals(gesture.Document, document))
         {
             actorCanvasCancellation?.Cancel();
-            Pause(); scrubber.Cancel(); previewTimer.Stop();
+            Pause(); DeferDraft(); scrubber.Cancel(); previewTimer.Stop();
             modelDrag = gesture = new(document, previewDirty, viewport.LastFrame?.Pixels.Width ?? document.Width,
                 viewport.LastFrame?.Pixels.Height ?? document.Height);
         }
@@ -46,8 +46,11 @@ internal sealed partial class Live2DStudioPage
             {
                 document.SetTransform(gesture.Value); editVersion++;
                 previewDirty = transformPending = true;
-                RefreshHeader(); draftTimer.Stop(); draftTimer.Start();
+                RefreshHeader(); ScheduleDraft();
             }
+            // Capture loss uses the same completion path; a gesture that returns to
+            // its origin must also resume a draft scheduled before the pointer press.
+            ResumeDraft();
         }
         if (!presentingModelDrag)
         {

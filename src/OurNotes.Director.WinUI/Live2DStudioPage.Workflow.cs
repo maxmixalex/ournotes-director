@@ -166,12 +166,14 @@ internal sealed partial class Live2DStudioPage
     internal void SaveDraft()
     {
         if (document is null) return;
-        draftTimer.Stop();
+        draftTimer.Stop(); draftPending = false;
+        viewport.RecordPreviewOperation("draft.begin");
         try
         {
             DesktopSettings.AtomicWrite(DraftPath, document.ToDraft().ToJsonString(DesktopSettings.JsonOptions));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { window.SetStatus("Live2D 草稿保存失败：" + error.Message); }
+        finally { viewport.RecordPreviewOperation("draft.end"); }
     }
     Task RestoreDraftAsync()
     {
@@ -349,7 +351,7 @@ internal sealed partial class Live2DStudioPage
         await FlushEditsAsync(); if (!viewport.HasCurrentSource) return;
         var range = PlaybackRange;
         if (document.Time < range.Start || document.Time >= range.LastFrameTime - 1d / 60) await SeekAsync(range.Start);
-        playbackRequested = true; ((FontIcon)playButton.Content).Glyph = "\uE769";
+        playbackRequested = true; DeferDraft(); ((FontIcon)playButton.Content).Glyph = "\uE769";
         viewport.Play(range.End);
     }
     void OnFrame(PreviewFrame frame)
@@ -374,7 +376,7 @@ internal sealed partial class Live2DStudioPage
                 Task rewind = SeekAsync(PlaybackRange.Start); long resumeVersion = pauseVersion;
                 await rewind;
                 if (!active || document is null || resumeVersion != pauseVersion) return;
-                playbackRequested = true; viewport.Play(PlaybackRange.End);
+                playbackRequested = true; DeferDraft(); viewport.Play(PlaybackRange.End);
             }
             finally { restartingLoop = false; }
         });

@@ -63,7 +63,7 @@ public sealed unsafe class GameActorDrawing : IDisposable
     {
         int n=meshes.Length;
         bool changed=poseRevision!=core.Revision;
-        if(changed){poseAlpha=core.Floats("DrawableOpacities",n);poseOrder=core.Ints("RenderOrders",n);poseRefreshes++;}
+        if(changed){poseAlpha=core.Floats("DrawableOpacities",n);poseOrder=core.Ints("RenderOrders",n);poseRefreshes++;PreviewNativeWork.PoseRefreshes++;}
         var positions=(nint*)core.Pointer("DrawableVertexPositions");var alpha=poseAlpha;var order=poseOrder;
         Span<float> color=stackalloc float[4];
         for(int i=0;i<n;i++){
@@ -80,11 +80,11 @@ public sealed unsafe class GameActorDrawing : IDisposable
         if(changed)foreach(var junction in junctions){float lx=float.PositiveInfinity,ly=lx,hx=float.NegativeInfinity,hy=hx;foreach(int i in junction.Masks){var p=meshes[i].Attributes["in_POSITION0"];for(int j=0;j<p.Length;j+=4){lx=Math.Min(lx,p[j]);ly=Math.Min(ly,p[j+1]);hx=Math.Max(hx,p[j]);hy=Math.Max(hy,p[j+1]);}}float span=Math.Max(hx-lx,hy-ly);junction.Transform=[(lx+hx)*.5f,(ly+hy)*.5f,span>0?1/span:0,0];}
         // The atlas is in model space. A paused pan/zoom/rotation changes only the world
         // matrix, so its identical mask and Cubism vertex buffers remain reusable.
-        if(changed&&junctions.Count>0)gl.InSurface(mask,()=>{maskPasses++;maskValues??=shaders.Defaults(Mask);maskValues["_ProjectionParams"]=[1,.3f,1000,.001f];var maskShader=shaders.Program(Mask);foreach(var junction in junctions)foreach(int i in junction.Masks){
+        if(changed&&junctions.Count>0)gl.InSurface(mask,()=>{maskPasses++;PreviewNativeWork.MaskPasses++;maskValues??=shaders.Defaults(Mask);maskValues["_ProjectionParams"]=[1,.3f,1000,.001f];var maskShader=shaders.Program(Mask);foreach(var junction in junctions)foreach(int i in junction.Masks){
             var mesh=meshes[i];maskValues["cubism_MaskTile"]=junction.Tile;maskValues["cubism_MaskTransform"]=junction.Transform;
             gl.GameMaterial(maskShader,maskValues,mesh.MaskTextures,mesh.MaskAttributes,mesh.Indices,4,1,4,1,(mesh.Flags&4)!=0?0:1,true);
         }});
-        poseRevision=core.Revision;modelDraws++;
+        poseRevision=core.Revision;modelDraws++;PreviewNativeWork.ModelDraws++;
         var matrices=currentWorldMatrices;matrices.Clear();
         float[] modelOpacity=[opacity],rimIntensity=[RimThreshold],rimSmooth=[RimSmoothness],shadowIntensity=[ShadowIntensity];
         float[] World(AdvTransform transform){if(!matrices.TryGetValue(transform,out var matrix))matrices[transform]=matrix=transform.Parent is null?transform.LocalMatrix():AdvMatrix.Multiply(World(transform.Parent),transform.LocalMatrix());return matrix;}

@@ -22,7 +22,8 @@ internal static class StudioExportDialog
             output.Codec == "h264" ? "cineform" : output.Codec, output.CineformQuality, full.Duration, live2d.Time,
             false, true, output.Supersample, initialKind: initialKind, isolated: true, transparencyRequired: true,
             initialRange: live2d.Range, actorCanvas: (progress, cancellation) => ActorCanvasAnalysis.AnalyzeAsync(
-                source, full.StartFrame, full.EndFrameExclusive, progress, cancellation), canvasMultiplier: live2d.CanvasMultiplier);
+                source, full.StartFrame, full.EndFrameExclusive, progress, cancellation), canvasMultiplier: live2d.CanvasMultiplier,
+            initialActorCanvas: live2d.Canvas is not null);
         if (settings is null) return;
         if (settings.CanvasFit is { } fit) document = SceneAssetExport.ApplyCanvasFit(document, fit);
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
@@ -101,7 +102,8 @@ internal static class StudioExportDialog
     private static async Task<ExportSettings?> ChooseAsync(MainWindow window, string title, int width, int height,
         int fps, string codec, string quality, double duration, double playhead, bool home, bool selected,
         int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false, bool transparencyRequired = false, TimelineRange? initialRange = null,
-        Func<IProgress<ActorCanvasProgress>?, CancellationToken, Task<ActorCanvasBounds>>? actorCanvas = null, double canvasMultiplier = 1)
+        Func<IProgress<ActorCanvasProgress>?, CancellationToken, Task<ActorCanvasBounds>>? actorCanvas = null, double canvasMultiplier = 1,
+        bool initialActorCanvas = false)
     {
         var kind = Ui.Choice("导出内容", [("frame", "图片 · 当前姿态 PNG"), ("clip", "动画 · 视频"), ("sequence", "动画 · PNG 帧序列")], initialKind);
         var scope = Ui.Choice("导出范围", [("scene", "完整主页"), ("selected", "选中的角色"), ("all", "每个角色分别导出"), ("both", "完整主页与全部角色")], isolated && home ? "selected" : "scene");
@@ -303,6 +305,8 @@ internal static class StudioExportDialog
         };
         if (isolated && selected && nativeCanvas is not null)
             resolution.SelectedItem = resolution.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "native");
+        else if (initialActorCanvas && actorCanvas is not null)
+            resolution.SelectedItem = resolution.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "actor");
         try { Update(); EnableExport(); return await dialog.ShowAsync() == ContentDialogResult.Primary ? result : null; }
         finally
         {

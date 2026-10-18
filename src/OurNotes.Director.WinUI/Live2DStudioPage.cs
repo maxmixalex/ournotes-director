@@ -56,7 +56,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         previewTimer = DispatcherQueue.CreateTimer(); previewTimer.IsRepeating = false; previewTimer.Interval = TimeSpan.FromMilliseconds(45);
         previewTimer.Tick += (_, _) => _ = SafeAsync(ApplyPreviewEditsAsync);
         draftTimer = DispatcherQueue.CreateTimer(); draftTimer.IsRepeating = false; draftTimer.Interval = TimeSpan.FromMilliseconds(800);
-        draftTimer.Tick += (_, _) => SaveDraft();
+        draftTimer.Tick += (_, _) => SaveDraftWhenIdle();
         InitializeAdaptivePreview();
 
         chooseButton = StudioLayout.AsyncTool("选择模型…", () => SafeAsync(NewAsync), "\uE77B");
@@ -198,6 +198,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     {
         pauseVersion++; playbackRequested = false; viewport.Pause();
         ((FontIcon)playButton.Content).Glyph = "\uE768";
+        ResumeDraft();
     }
     void Edit(Action<Live2DDocument> change, bool live = false)
     {
@@ -210,7 +211,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         // Throttle continuous input; restarting a one-shot timer on every movement
         // starves the renderer until the user stops dragging.
         if (active && !previewTimer.IsRunning && !applyingPreviewEdits) previewTimer.Start();
-        draftTimer.Stop(); draftTimer.Start();
+        ScheduleDraft();
     }
     void EditLive(Action<Live2DDocument> change) => Edit(change, true);
     void EditTransform(Action<Live2DDocument> change)
@@ -229,9 +230,9 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         var full = TimelineRange.Full(document.Duration, 30);
         var range = document.Range ?? full;
         document.Range = (start ? range.MarkIn(document.Time) : range.MarkOut(document.Time)).ClampTo(full);
-        RefreshHeader(); SaveDraft();
+        RefreshHeader(); ScheduleDraft();
     }
-    void ClearRange() { if (document is null) return; document.Range = null; RefreshHeader(); SaveDraft(); }
+    void ClearRange() { if (document is null) return; document.Range = null; RefreshHeader(); ScheduleDraft(); }
     void RefreshHeader()
     {
         title.Text = document is null ? "未打开模型" : (document.FilePath is null ? DisplayNames.Model(document.ModelId) : Path.GetFileNameWithoutExtension(document.FilePath)) + (HasUnsavedChanges ? " *" : "");

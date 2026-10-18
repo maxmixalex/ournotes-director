@@ -297,6 +297,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         var active=renderer!;long stamp=Stopwatch.GetTimestamp(),allocated=GC.GetAllocatedBytesForCurrentThread();
+        int gen0=GC.CollectionCount(0),gen1=GC.CollectionCount(1),gen2=GC.CollectionCount(2);
+        TimeSpan gcPause=GC.GetTotalPauseDuration();long processAllocated=GC.GetTotalAllocatedBytes(false);
+        var workBefore=PreviewNativeWork.Read();
         int from=frame;
         if(active is SceneState scene&&(next<scene.NativeFrame||replay&&scene.NeedsReplay))
         {
@@ -316,8 +319,17 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         long targetsStart=Stopwatch.GetTimestamp();var targets=active.Targets();var lips=active.LipSync();var animations=active.Animations();
         double targetsMs=Stopwatch.GetElapsedTime(targetsStart).TotalMilliseconds;
         var measured=active.Performance;
+        var workAfter=PreviewNativeWork.Read();
+        var diagnostics=new PreviewRenderDiagnostics(pixels.Width,pixels.Height,(active as SceneState)?.Source.Supersample??1,
+            GC.CollectionCount(0)-gen0,GC.CollectionCount(1)-gen1,GC.CollectionCount(2)-gen2,
+            (GC.GetTotalPauseDuration()-gcPause).TotalMilliseconds,GC.GetTotalAllocatedBytes(false)-processAllocated,
+            workAfter.CompiledPrograms-workBefore.CompiledPrograms,
+            workAfter.ShaderCompilationMilliseconds-workBefore.ShaderCompilationMilliseconds,
+            workAfter.MeshUploads-workBefore.MeshUploads,workAfter.MeshUploadBytes-workBefore.MeshUploadBytes,
+            workAfter.PoseRefreshes-workBefore.PoseRefreshes,workAfter.MaskPasses-workBefore.MaskPasses,
+            workAfter.ModelDraws-workBefore.ModelDraws,workAfter.PresentationCopies-workBefore.PresentationCopies);
         var performance=new PreviewPerformance(measured.SimulationMilliseconds,measured.SceneMilliseconds,
-            measured.ReadbackMilliseconds,targetsMs,GC.GetAllocatedBytesForCurrentThread()-allocated,Math.Max(0,frame-from));
+            measured.ReadbackMilliseconds,targetsMs,GC.GetAllocatedBytesForCurrentThread()-allocated,Math.Max(0,frame-from),diagnostics);
         Publish(pixels,Stopwatch.GetElapsedTime(stamp).TotalMilliseconds,targets,lips,performance,animations);
     }
 
