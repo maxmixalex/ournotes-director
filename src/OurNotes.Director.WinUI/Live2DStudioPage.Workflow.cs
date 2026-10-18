@@ -10,6 +10,7 @@ namespace OurNotes.Director.WinUI;
 internal sealed partial class Live2DStudioPage
 {
     Task readyTask = Task.CompletedTask;
+    long openVersion;
     JsonObject? handoffSource;
 
     MenuFlyout FileMenu()
@@ -45,39 +46,42 @@ internal sealed partial class Live2DStudioPage
 
     internal async Task NewAsync()
     {
+        long version = ++openVersion;
         if (!Directory.Exists(window.Settings.ArchivePath)) { window.ShowResourceManager(); return; }
         var selection = await ResourcePicker.PickAsync(window,
             new("modelId", "模型", CommandFieldKind.Text, "") { LookupCommandId = "model.list" },
             new Dictionary<string, string?> { ["site"] = window.Settings.Site, ["lang"] = window.Settings.Language });
-        if (selection is null) return;
+        if (selection is null || version != openVersion) return;
         string label = selection.RelatedValues.TryGetValue("displayName", out var name) ? name ?? selection.Value : selection.Value;
         await OpenModelAsync(selection.Value, label);
     }
     internal Task OpenModelAsync(string model, string label, string? motion = null, string? expression = null,
         string? site = null, string? language = null)
     {
-        readyTask = OpenModelCoreAsync(model, label, motion, expression, site, language); return readyTask;
+        readyTask = OpenModelCoreAsync(model, label, motion, expression, site, language, ++openVersion); return readyTask;
     }
-    async Task OpenModelCoreAsync(string model, string label, string? motion, string? expression, string? site, string? language)
+    async Task OpenModelCoreAsync(string model, string label, string? motion, string? expression, string? site, string? language, long version)
     {
-        if (!await ConfirmReplaceAsync()) return;
+        if (!await ConfirmReplaceAsync() || version != openVersion) return;
         string selectedSite = site ?? window.Settings.Site;
         var metadata = await ModelMetadataAsync(model, selectedSite);
+        if (version != openVersion) return;
         var next = Live2DDocument.Create(model, selectedSite, language ?? window.Settings.Language, metadata);
         if (motion is not null) next.SetMotion(motion);
         if (expression is not null) next.SetExpression(expression);
         await SetDocumentAsync(next);
+        if (version != openVersion || !ReferenceEquals(document, next)) return;
         ToolTipService.SetToolTip(modelName, label);
     }
     internal Task OpenSceneActorAsync(SceneDocument source, string actor, JsonNode metadata, double playhead,
         TimelineRange? range, double? duration = null)
     {
-        readyTask = OpenSceneActorCoreAsync(source, actor, metadata, playhead, range, duration); return readyTask;
+        readyTask = OpenSceneActorCoreAsync(source, actor, metadata, playhead, range, duration, ++openVersion); return readyTask;
     }
     async Task OpenSceneActorCoreAsync(SceneDocument source, string actor, JsonNode metadata, double playhead,
-        TimelineRange? range, double? duration)
+        TimelineRange? range, double? duration, long version)
     {
-        if (!await ConfirmReplaceAsync()) return;
+        if (!await ConfirmReplaceAsync() || version != openVersion) return;
         string model = metadata["id"]?.ToString() ?? throw new ArgumentException("所选人物缺少模型信息。");
         var original = source.Root;
         double lastFrame = duration ?? Math.Max(playhead, Math.Max(range?.LastFrameTime ?? 0,
@@ -86,19 +90,21 @@ internal sealed partial class Live2DStudioPage
                 + (double.TryParse(row["Duration"]?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) ? seconds : 0)).DefaultIfEmpty(3).Max() ?? 3));
         var next = Live2DDocument.FromSceneActor(source, actor, model, metadata, playhead, lastFrame, range);
         await SetDocumentAsync(next);
+        if (version != openVersion || !ReferenceEquals(document, next)) return;
         handoffSource = original;
         Notice("已带入这个人物的完整演出；当前姿态、历史动作和所选区间均已保留。", false);
     }
     internal Task OpenAsync(string? path = null)
     {
-        readyTask = OpenCoreAsync(path); return readyTask;
+        readyTask = OpenCoreAsync(path, ++openVersion); return readyTask;
     }
-    async Task OpenCoreAsync(string? path)
+    async Task OpenCoreAsync(string? path, long version)
     {
-        path ??= await window.PickFileAsync(extensions: [".json"]); if (path is null) return;
+        path ??= await window.PickFileAsync(extensions: [".json"]); if (path is null || version != openVersion) return;
         var next = Live2DDocument.Open(path);
-        if (!await ConfirmReplaceAsync()) return;
+        if (!await ConfirmReplaceAsync() || version != openVersion) return;
         await SetDocumentAsync(next);
+        if (version != openVersion || !ReferenceEquals(document, next)) return;
         window.Settings.RememberProject(path); window.SaveSettings();
     }
     async Task SetDocumentAsync(Live2DDocument next)
@@ -166,12 +172,17 @@ internal sealed partial class Live2DStudioPage
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { window.SetStatus("Live2D 草稿保存失败：" + error.Message); }
     }
-    async Task RestoreDraftAsync()
+    Task RestoreDraftAsync()
+    {
+        readyTask = RestoreDraftCoreAsync(++openVersion); return readyTask;
+    }
+    async Task RestoreDraftCoreAsync(long version)
     {
         if (!File.Exists(DraftPath)) return;
         var draft = JsonNode.Parse(await File.ReadAllTextAsync(DraftPath, lifetime.Token)) as JsonObject ?? throw new InvalidDataException("Live2D 草稿无效。");
+        if (version != openVersion) return;
         var next = Live2DDocument.FromDraft(draft);
-        if (!await ConfirmReplaceAsync()) return;
+        if (!await ConfirmReplaceAsync() || version != openVersion) return;
         await SetDocumentAsync(next);
     }
 

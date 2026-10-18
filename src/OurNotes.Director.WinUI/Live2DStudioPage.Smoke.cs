@@ -160,6 +160,25 @@ internal sealed partial class Live2DStudioPage
         check(current.ToJson() == saved && !HasUnsavedChanges && current.Range == workRange,
             "三种实际导出完成后，已保存的独立项目和原工作区间保持不变");
         DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
+
+        await OpenModelAsync(current.ModelId, DisplayNames.Model(current.ModelId), site: current.Site, language: current.Language);
+        await WaitForReadyAsync();
+        var standalone = document!; var standaloneFrame = viewport.LastFrame!;
+        check(!standalone.IsCapturedPerformance && standalone.ToSceneDocument().Source.IsLibrary && standalone.Range is null,
+            "正常模型入口创建独立素材库项目，不携带场景副本或旧工作区间");
+        check(standaloneFrame.Targets.Count == 1 && standaloneFrame.Targets[0].Id == standalone.ActorId
+            && standaloneFrame.Pixels.Rgba.Where((_, index) => index % 4 == 3).Any(alpha => alpha > 128),
+            "独立 Create 初始化在真实原生画布中显示一个非空人物");
+        SelectInspector("controls"); viewport.FitCanvas(); UpdateLayout();
+        await App.CaptureCheckpointAsync("live2d-standalone");
+        string standalonePicture = App.SmokeEvidencePath("live2d-standalone-" + id + ".png");
+        var standaloneJob = await ExportSmokeAsync("frame", standalonePicture, check, "live2d-standalone-export");
+        var standalonePixels = Png.Decode(await File.ReadAllBytesAsync(standalonePicture));
+        var standaloneCounts = CheckPixels(standalonePixels, check, "独立模型正常导出的 PNG");
+        report["standalone"] = new JsonObject { ["model"] = standalone.ModelId, ["canvasWidth"] = standalone.Width,
+            ["canvasHeight"] = standalone.Height, ["picture"] = standalonePicture,
+            ["transparentPixels"] = standaloneCounts.Transparent, ["visiblePixels"] = standaloneCounts.Visible };
+        RecordJob(report, standaloneJob); DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
     }
 
     async Task<string?> SelectSmokeAnimationAsync(bool expressions, Action<bool, string> check)
@@ -179,7 +198,7 @@ internal sealed partial class Live2DStudioPage
             expressions ? "选择实际表情列表后，原生人物使用该表情" : "选择实际动作列表后，原生人物使用该动作");
         return id;
     }
-    async Task<DesktopTask> ExportSmokeAsync(string kind, string destination, Action<bool, string> check)
+    async Task<DesktopTask> ExportSmokeAsync(string kind, string destination, Action<bool, string> check, string? evidenceName = null)
     {
         var before = window.Jobs.Tasks.Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
         Task exporting = ExportAsync(kind); ContentDialog? dialog = null;
@@ -201,7 +220,7 @@ internal sealed partial class Live2DStudioPage
             }
             if (kind == "clip") SmokeChoice(dialog, "视频格式", "cineform");
             SmokeControl<TextBox>(dialog, "保存到").Text = destination;
-            dialog.UpdateLayout(); await App.CapturePopupCheckpointAsync(dialog, "live2d-export-" + kind);
+            dialog.UpdateLayout(); await App.CapturePopupCheckpointAsync(dialog, evidenceName ?? "live2d-export-" + kind);
             await PressSmokeButtonAsync(dialog); await exporting.WaitAsync(TimeSpan.FromSeconds(20));
         }
         finally { dialog?.Hide(); }
@@ -217,7 +236,7 @@ internal sealed partial class Live2DStudioPage
         check(queued.Root["output"]?["isolateActor"]?.ToString() == document!.ActorId
             && JsonNode.DeepEquals(queued.Root["output"]?["isolateTransform"], document.ToSceneDocument().Root["output"]?["isolateTransform"]),
             "Live2D " + kind + " 队列快照保留同一角色与实际变换");
-        File.Copy(job.Request.Arguments[2], App.SmokeEvidencePath("live2d-export-" + kind + ".project.json"), true);
+        File.Copy(job.Request.Arguments[2], App.SmokeEvidencePath((evidenceName ?? "live2d-export-" + kind) + ".project.json"), true);
         return job;
     }
     static void RecordJob(JsonObject report, DesktopTask job) => report["exports"]!.AsArray().Add(new JsonObject

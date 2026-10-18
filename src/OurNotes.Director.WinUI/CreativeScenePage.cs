@@ -86,7 +86,8 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         assetKind.SelectionChanged+=(_,_)=>{search.PlaceholderText=AssetKind=="voice"?"输入台词后按 Enter 搜索…":"筛选名称…";ShowProjectAssets();_=Safe(LoadAssetsAsync);};
         search.TextChanged+=(_,_)=>{if(AssetKind!="voice")FilterAssets();};search.KeyDown+=(_,args)=>{if(args.Key==VirtualKey.Enter){_=Safe(LoadAssetsAsync);args.Handled=true;}};
         assets.DoubleTapped+=(_,_)=>_=Safe(PreviewSelectedAssetAsync);
-        assets.KeyDown+=(_,args)=>{if(args.Key==VirtualKey.Enter){_=Safe(InsertSelectedAssetAsync);args.Handled=true;}};
+        // ListViewItem consumes Enter during bubbling; handle the editor command first.
+        assets.PreviewKeyDown+=(_,args)=>{if(args.Key==VirtualKey.Enter){args.Handled=true;_=Safe(InsertSelectedAssetAsync);}};
         actors.DoubleTapped+=(_,_)=>_=Safe(()=>OpenActorInLive2DAsync());
         assets.DragItemsStarting+=(_,args)=>
         {
