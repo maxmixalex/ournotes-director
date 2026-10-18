@@ -117,22 +117,46 @@ internal sealed partial class Live2DStudioPage
         void RecordScroll(JsonObject trace) { scrolls.Add(trace); WriteReport(); }
         void Record(string position)
         {
-            int visual = VisualTreeHelper.GetChildrenCount(parameterRepeater);
             var realized = new JsonArray();
-            foreach (var (id, row) in parameterControls.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-                realized.Add(new JsonObject { ["id"] = id, ["instance"] = row.Instance, ["bindings"] = row.Bindings });
+            int checkedValues = 0;
+            bool valuesMatch = true;
+            var focus = FocusedAncestors();
+            foreach (var binding in ParameterBindings().OrderBy(value => value.Id, StringComparer.Ordinal))
+            {
+                var row = binding.Control;
+                var detail = new JsonObject { ["id"] = binding.Id, ["instance"] = row.Instance, ["bindings"] = binding.Version };
+                realized.Add(detail);
+                if (!IsCurrentParameterBinding(binding) || !ParameterRowIsVisible(row)
+                    || focus.Contains(row.Number) || focus.Contains(row.Slider)) continue;
+                if (!IsCurrentParameterBinding(binding) || !parameterValues.TryGetValue(binding.Id, out var expected)) continue;
+                double numberMinimum = row.Number.Minimum, numberMaximum = row.Number.Maximum, numberValue = row.Number.Value;
+                double sliderMinimum = row.Slider.Minimum, sliderMaximum = row.Slider.Maximum, sliderValue = row.Slider.Value;
+                double step = row.Slider.StepFrequency;
+                if (!IsCurrentParameterBinding(binding)) continue;
+                double epsilon = Math.Max(1e-6, Math.Abs(expected.Maximum - expected.Minimum) * 1e-7);
+                bool matches = numberMinimum == expected.Minimum && numberMaximum == expected.Maximum
+                    && sliderMinimum == expected.Minimum && sliderMaximum == expected.Maximum
+                    && step == Math.Max(.0001, (expected.Maximum - expected.Minimum) / 200)
+                    && Math.Abs(numberValue - expected.Value) <= epsilon
+                    && Math.Abs(sliderValue - expected.Value) <= Math.Abs(step) / 2 + epsilon;
+                checkedValues++; valuesMatch &= matches; detail["valuesMatch"] = matches;
+            }
+            int visual = VisualTreeHelper.GetChildrenCount(parameterRepeater);
             samples.Add(new JsonObject
             {
                 ["position"] = position, ["realized"] = parameterControls.Count,
                 ["visualChildren"] = visual, ["created"] = parameterRowsCreated - initialCreated,
                 ["reused"] = parameterRowsReused - initialReused,
-                ["verticalOffset"] = parameterScroll!.VerticalOffset, ["ids"] = realized
+                ["verticalOffset"] = parameterScroll!.VerticalOffset, ["ids"] = realized,
+                ["visibleValuesChecked"] = checkedValues, ["visibleValuesMatch"] = valuesMatch
             });
             WriteReport();
             check(parameterControls.Count is > 0 and <= 32 && visual is > 0 and <= 32
                 && parameterControls.Count <= visual
                 && parameterControls.All(pair => pair.Key == pair.Value.Id && ReferenceEquals(pair.Value.Document, current)),
                 "参数列表在" + position + "只保留至多32行真实控件，回收行不残留旧参数绑定");
+            check(checkedValues > 0 && valuesMatch,
+                "参数列表在" + position + "的可见非聚焦行保持正确原生参数范围与数值，重绑不留下旧定义");
         }
 
         // This test runs after the existing drag/playback recordings, so the extra

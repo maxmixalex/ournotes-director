@@ -23,6 +23,17 @@ internal sealed partial class Live2DStudioPage
     Live2DDocument? parameterDocument;
     string[] parameterIds = [];
     int parameterRowsCreated, parameterRowsReused, parameterRowsCleared;
+    bool refreshingParameterValues;
+
+    readonly record struct ParameterBinding(string Id, ParameterControl Control, Live2DDocument? Document, int Version);
+
+    ParameterBinding[] ParameterBindings() => parameterControls.Select(pair =>
+        new ParameterBinding(pair.Key, pair.Value, pair.Value.Document, pair.Value.Bindings)).ToArray();
+
+    bool IsCurrentParameterBinding(ParameterBinding binding) => binding.Control.Id == binding.Id
+        && ReferenceEquals(binding.Control.Document, binding.Document)
+        && ReferenceEquals(document, binding.Document) && binding.Control.Bindings == binding.Version
+        && parameterControls.TryGetValue(binding.Id, out var registered) && ReferenceEquals(registered, binding.Control);
 
     FrameworkElement CreateParameterInspector()
     {
@@ -59,7 +70,7 @@ internal sealed partial class Live2DStudioPage
         // The bounded star row supplies the effective viewport. Repeater is the
         // scroller's direct content, so StackLayout can virtualize offscreen rows.
         parameterScroll = Ui.Scroll(parameterRepeater);
-        parameterScroll.ViewChanged += (_, _) => RefreshParameterValues();
+        parameterScroll.ViewChanged += (_, _) => { if (!refreshing) RefreshParameterValues(); };
         panel.Children.Add(parameterScroll); Grid.SetRow(parameterScroll, 2);
         parameterSearch.TextChanged += (_, _) => BuildParameters();
         return panel;
@@ -98,29 +109,36 @@ internal sealed partial class Live2DStudioPage
             // Ordinary edits/undo keep the same items and scroll position. Refresh
             // their current data without discarding or rebuilding native controls.
             var focus = FocusedAncestors();
-            foreach (var (id, control) in parameterControls)
-                if (parameterValues.TryGetValue(id, out var parameter)) control.Update(parameter, focus, definition: true);
+            foreach (var binding in ParameterBindings())
+                if (IsCurrentParameterBinding(binding) && parameterValues.TryGetValue(binding.Id, out var parameter))
+                    binding.Control.Update(binding, parameter, focus, definition: true);
         }
         finally { refreshing = previous; }
     }
 
     void RefreshParameterValues()
     {
-        if (document is null || activeTab != "parameters") return;
-        bool previous = refreshing; refreshing = true;
+        if (document is null || activeTab != "parameters" || refreshingParameterValues) return;
+        bool previous = refreshing; refreshing = true; refreshingParameterValues = true;
         try
         {
             // Resolve the document's pins once, then touch only realized controls.
             UpdateParameterSnapshot(document.Parameters);
             var focus = FocusedAncestors();
-            foreach (var (id, control) in parameterControls)
+            foreach (var binding in ParameterBindings())
             {
-                if (!ReferenceEquals(control.Document, document) || !parameterValues.TryGetValue(id, out var parameter)) continue;
-                if (!ParameterRowIsVisible(control) && !focus.Contains(control.Number) && !focus.Contains(control.Slider)) continue;
-                control.Update(parameter, focus, definition: false);
+                if (!IsCurrentParameterBinding(binding)) continue;
+                var control = binding.Control;
+                // TransformToVisual can synchronously prepare/recycle repeater
+                // rows. Never use the old ID after that native layout boundary.
+                bool visible = ParameterRowIsVisible(control);
+                if (!IsCurrentParameterBinding(binding)) continue;
+                if (!visible && !focus.Contains(control.Number) && !focus.Contains(control.Slider)) continue;
+                if (parameterValues.TryGetValue(binding.Id, out var parameter))
+                    control.Update(binding, parameter, focus, definition: false);
             }
         }
-        finally { refreshing = previous; }
+        finally { refreshingParameterValues = false; refreshing = previous; }
     }
 
     void BindParameterControl(ParameterControl control, string id)
@@ -131,8 +149,10 @@ internal sealed partial class Live2DStudioPage
         try
         {
             control.Id = id; control.Document = document; control.Bindings++;
-            control.Update(parameter, null, definition: true);
+            // Register before native property writes: a nested clear/prepare
+            // owns the mapping and must not be overwritten when Update returns.
             parameterControls.Add(id, control);
+            control.Update(new(id, control, control.Document, control.Bindings), parameter, null, definition: true);
         }
         finally { refreshing = previous; }
     }
@@ -194,36 +214,64 @@ internal sealed partial class Live2DStudioPage
                 owner.EditLive(current => current.ResetParameter(id));
         }
 
-        internal void Update(Live2DParameter parameter, HashSet<DependencyObject>? focus, bool definition)
+        internal void Update(ParameterBinding binding, Live2DParameter parameter, HashSet<DependencyObject>? focus, bool definition)
         {
+            bool Current() => owner.IsCurrentParameterBinding(binding);
+            if (parameter.Id != binding.Id || !Current()) return;
+            // Every native setter can run a synchronous callback. A recycled
+            // row may already contain its new definition when that call returns.
             if (definition)
             {
                 string label = string.IsNullOrWhiteSpace(parameter.Name) ? parameter.Id : parameter.Name;
                 if (name.Text != label) name.Text = label;
-                if (identifier.Text != parameter.Id)
-                {
-                    identifier.Text = parameter.Id; ToolTipService.SetToolTip(name, parameter.Id);
-                    AutomationProperties.SetName(Slider, "参数滑块 " + parameter.Id);
-                    AutomationProperties.SetName(Number, "参数数值 " + parameter.Id);
-                    AutomationProperties.SetName(Reset, "参数恢复自动 " + parameter.Id);
-                }
+                if (!Current()) return;
+                if (identifier.Text != parameter.Id) identifier.Text = parameter.Id;
+                if (!Current()) return;
+                ToolTipService.SetToolTip(name, parameter.Id);
+                if (!Current()) return;
+                AutomationProperties.SetName(Slider, "参数滑块 " + parameter.Id);
+                if (!Current()) return;
+                AutomationProperties.SetName(Number, "参数数值 " + parameter.Id);
+                if (!Current()) return;
+                AutomationProperties.SetName(Reset, "参数恢复自动 " + parameter.Id);
+                if (!Current()) return;
                 string range = string.Create(CultureInfo.InvariantCulture,
                     $"{parameter.Minimum:0.###} … {parameter.Maximum:0.###} · 默认 {parameter.Default:0.###}");
                 if (limits.Text != range) limits.Text = range;
+                if (!Current()) return;
                 double span = parameter.Maximum - parameter.Minimum, step = Math.Max(.0001, span / 200);
                 // A recycled row can change to a disjoint numeric range. Widen
                 // the lower bound first, then set the final bounds and value.
                 Slider.Minimum = Math.Min(Slider.Minimum, parameter.Minimum);
-                Slider.Maximum = parameter.Maximum; Slider.Minimum = parameter.Minimum; Slider.StepFrequency = step;
+                if (!Current()) return;
+                Slider.Maximum = parameter.Maximum;
+                if (!Current()) return;
+                Slider.Minimum = parameter.Minimum;
+                if (!Current()) return;
+                Slider.StepFrequency = step;
+                if (!Current()) return;
                 Number.Minimum = Math.Min(Number.Minimum, parameter.Minimum);
-                Number.Maximum = parameter.Maximum; Number.Minimum = parameter.Minimum;
-                Number.SmallChange = step; Number.LargeChange = span / 10;
-                Slider.IsEnabled = Number.IsEnabled = span > 0;
+                if (!Current()) return;
+                Number.Maximum = parameter.Maximum;
+                if (!Current()) return;
+                Number.Minimum = parameter.Minimum;
+                if (!Current()) return;
+                Number.SmallChange = step;
+                if (!Current()) return;
+                Number.LargeChange = span / 10;
+                if (!Current()) return;
+                Number.IsEnabled = span > 0;
+                if (!Current()) return;
+                Slider.IsEnabled = span > 0;
+                if (!Current()) return;
             }
             if (focus?.Contains(Number) != true && Number.Value != parameter.Value) Number.Value = parameter.Value;
+            if (!Current()) return;
             if (focus?.Contains(Slider) != true && Slider.Value != parameter.Value) Slider.Value = parameter.Value;
+            if (!Current()) return;
             string mode = parameter.IsOverridden ? "固定" : "自动";
             if (Mode.Text != mode) Mode.Text = mode;
+            if (!Current()) return;
             if (Reset.IsEnabled != parameter.IsOverridden) Reset.IsEnabled = parameter.IsOverridden;
         }
     }
