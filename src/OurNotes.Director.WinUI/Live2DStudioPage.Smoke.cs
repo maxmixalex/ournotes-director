@@ -42,6 +42,7 @@ internal sealed partial class Live2DStudioPage
     internal async Task RunRealSmokeTestAsync(Action<bool, string> check)
     {
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE"))) return;
+        using var gcTrace = new RuntimeGcTrace(App.SmokeEvidencePath("live2d-gc-events.json"));
         await WaitForReadyAsync();
         check(document is not null && viewport.HasCurrentSource, "Live2D 实窗回归沿用场景交接的真实人物与演出");
         var current = document!;
@@ -95,7 +96,9 @@ internal sealed partial class Live2DStudioPage
             && current.CurrentEditRows().Any(row => row["Values"]?["controls"] is JsonObject)
             && viewport.LastFrame!.SessionId == session && viewport.LastFrame.Frame == frameNumber,
             "呼吸、眨眼和模型可用的物理开关写入原生控制器指令，并即时保留当前画面");
-        await RunPreviewResponsivenessSmokeAsync(check);
+        gcTrace.Mark("drag.begin");
+        bool dragResponsive = await RunPreviewResponsivenessSmokeAsync(check);
+        gcTrace.Mark("drag.end");
 
         string? motion = await SelectSmokeAnimationAsync(false, check);
         string? expression = await SelectSmokeAnimationAsync(true, check);
@@ -172,7 +175,9 @@ internal sealed partial class Live2DStudioPage
         check(standaloneFrame.Targets.Count == 1 && standaloneFrame.Targets[0].Id == standalone.ActorId
             && standaloneFrame.Pixels.Rgba.Where((_, index) => index % 4 == 3).Any(alpha => alpha > 128),
             "独立 Create 初始化在真实原生画布中显示一个非空人物");
-        await RunPlaybackResponsivenessSmokeAsync(check);
+        gcTrace.Mark("playback.begin");
+        bool playbackResponsive = await RunPlaybackResponsivenessSmokeAsync(check);
+        gcTrace.Mark("playback.end");
         SelectInspector("controls"); viewport.FitCanvas(); UpdateLayout();
         await App.CaptureCheckpointAsync("live2d-standalone");
         string standalonePicture = App.SmokeEvidencePath("live2d-standalone-" + id + ".png");
@@ -183,7 +188,15 @@ internal sealed partial class Live2DStudioPage
             ["canvasHeight"] = standalone.Height, ["picture"] = standalonePicture,
             ["transparentPixels"] = standaloneCounts.Transparent, ["visiblePixels"] = standaloneCounts.Visible };
         RecordJob(report, standaloneJob); DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
+        gcTrace.Mark("actor-canvas.begin");
         await RunCanvasSmokeTestAsync(check);
+        gcTrace.Mark("actor-canvas.end");
+        // Keep the performance gates binding, but finish the independent output
+        // checks before reporting a latency failure so a run preserves both results.
+        check(dragResponsive,
+            "真实连续拖动在松手前呈现至少四个中间原生位置，软件GPU输入到显示P95低于250毫秒");
+        check(playbackResponsive,
+            "真实空格播放连续原生帧，播放期间UI心跳P95低于250毫秒且再次空格在500毫秒内暂停");
     }
 
     async Task<string?> SelectSmokeAnimationAsync(bool expressions, Action<bool, string> check)

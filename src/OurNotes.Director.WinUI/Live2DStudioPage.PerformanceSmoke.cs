@@ -9,7 +9,7 @@ namespace OurNotes.Director.WinUI;
 
 internal sealed partial class Live2DStudioPage
 {
-    async Task RunPreviewResponsivenessSmokeAsync(Action<bool, string> check)
+    async Task<bool> RunPreviewResponsivenessSmokeAsync(Action<bool, string> check)
     {
         await FlushEditsAsync(); await ApplyPreviewSizeAsync();
         var current = document!; double time = current.Time;
@@ -17,6 +17,7 @@ internal sealed partial class Live2DStudioPage
         long session = viewport.LastFrame!.SessionId, commits = viewport.SceneProjectCommitCount;
         var before = viewport.LastFrame!;
         ScheduleDraft(); // Exercise a pending idle save during the longer held gesture.
+        var dragStartedUtc = DateTimeOffset.UtcNow;
         var trace = await viewport.SendContinuousDragSmokeAsync(window, current.ActorId, .12, .035, () =>
         {
             check(current.ToJson() == original && current.Transform == transform
@@ -50,6 +51,7 @@ internal sealed partial class Live2DStudioPage
         double p95 = Percentile(latency, .95);
         var report = new JsonObject
         {
+            ["dragStartedUtc"] = dragStartedUtc.ToString("O"),
             ["previewWidth"] = before.Pixels.Width, ["previewHeight"] = before.Pixels.Height,
             ["supersample"] = viewport.PreviewSupersample, ["heldMs"] = trace.HeldMilliseconds,
             ["deliveredInputs"] = trace.Inputs.Count, ["nativePositionsWhileHeld"] = moving.Length,
@@ -63,9 +65,11 @@ internal sealed partial class Live2DStudioPage
                 ["deliveredMs"] = input.DeliveredMilliseconds, ["dx"] = input.X, ["dy"] = input.Y });
         report["dragInputs"] = delivered;
         string reportPath = App.SmokeEvidencePath("live2d-preview-performance.json");
+        bool responsive = moving.Length >= 4 && latency.Count >= 4 && p95 < 250;
+        report["dragResponsivenessPassed"] = responsive;
         DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
-        check(moving.Length >= 4 && latency.Count >= 4 && p95 < 250,
-            "真实连续拖动在松手前呈现至少四个中间原生位置，软件GPU输入到显示P95低于250毫秒");
+        check(moving.Length >= 4 && latency.Count >= 4,
+            "真实连续拖动在松手前呈现至少四个可与输入匹配的中间原生位置");
         check(!trace.Operations.Any(sample => sample.Operation.Kind == "draft.begin"),
             "待保存草稿跨过800毫秒定时点时，连续按住拖动仍不执行同步JSON写盘");
         check(moving.All(sample => sample.Frame.SessionId == session && sample.Frame.Frame == before.Frame)
@@ -89,9 +93,10 @@ internal sealed partial class Live2DStudioPage
         check(current.ToJson() == moved, "真实Ctrl+Y一次恢复完整拖动，未拆成每个PointerMoved一条历史");
         await viewport.SendViewportKeySmokeAsync(window, VirtualKey.Z, control: true); await FlushEditsAsync();
         await SeekAsync(time); viewport.SelectedTargetId = current.ActorId;
+        return responsive;
     }
 
-    async Task RunPlaybackResponsivenessSmokeAsync(Action<bool, string> check)
+    async Task<bool> RunPlaybackResponsivenessSmokeAsync(Action<bool, string> check)
     {
         var current = document!; double time = current.Time;
         check(!current.IsCapturedPerformance && current.Range is null && current.Duration >= 1,
@@ -102,6 +107,7 @@ internal sealed partial class Live2DStudioPage
         string reportPath = App.SmokeEvidencePath("live2d-preview-performance.json");
         var report = JsonNode.Parse(await File.ReadAllTextAsync(reportPath))!.AsObject();
         var played = new List<NativeViewport.DragFrameSample>(); var pulses = new List<double>(); var clock = Stopwatch.StartNew();
+        report["playbackStartedUtc"] = DateTimeOffset.UtcNow.ToString("O");
         var operations = new List<NativeViewport.OperationSample>();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pulse = DispatcherQueue.CreateTimer(); pulse.IsRepeating = true; pulse.Interval = TimeSpan.FromMilliseconds(20);
@@ -152,15 +158,18 @@ internal sealed partial class Live2DStudioPage
         }
         report["dispatcherGapP95Ms"] = pulses.Count > 0 ? Percentile(pulses, .95) : null;
         report["pauseResponseMs"] = pauseMilliseconds;
+        bool responsive = played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4
+            && Percentile(pulses, .95) < 250 && pauseMilliseconds < 500 && !viewport.IsPlaying;
+        report["playbackResponsivenessPassed"] = responsive;
         DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
-        check(played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4
-            && Percentile(pulses, .95) < 250 && pauseMilliseconds < 500 && !viewport.IsPlaying,
-            "真实空格播放连续原生帧，播放期间UI心跳P95低于250毫秒且再次空格在500毫秒内暂停");
+        check(played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4 && !viewport.IsPlaying,
+            "真实空格播放至少四个不同原生帧，再次空格实际暂停播放");
         var cpuFrames = played.Where(sample => sample.Frame.RenderMilliseconds > 0 && sample.HasContiguousRgba is not null).ToArray();
         if (cpuFrames.Length > 0)
             check(cpuFrames.Length >= 4 && cpuFrames.All(sample => sample.HasContiguousRgba == false),
                 "参数检查器打开的连续CPU播放不触发RGBA大数组物化");
         await SeekAsync(time); viewport.SelectedTargetId = current.ActorId; SelectInspector("controls");
+        return responsive;
     }
 
     static JsonObject FramePerformanceJson(PreviewFrame frame, double presented, double queue, double presentation, bool? contiguous)
