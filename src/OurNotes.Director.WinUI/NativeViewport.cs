@@ -248,18 +248,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             else
             {
             DetachGpu();
-            if(pixels.Rgba.Length!=checked(pixels.Width*pixels.Height*4))throw new InvalidDataException("Incomplete CPU preview frame");
+            if(pixels.ByteLength!=checked(pixels.Width*pixels.Height*4))throw new InvalidDataException("Incomplete CPU preview frame");
             if(bitmap is null||bitmap.PixelWidth!=pixels.Width||bitmap.PixelHeight!=pixels.Height)
             {
                 pixelStream?.Dispose();bitmap=new(pixels.Width,pixels.Height);
-                pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.Rgba.Length];
+                pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.ByteLength];
             }
             if(!ReferenceEquals(image.Source,bitmap))image.Source=bitmap;
             // Metadata-only progress/pause events retain the same pixel object.
             // Copy only a newly rendered image, using the vectorized display converter.
             if(!ReferenceEquals(LastFrame?.Pixels,pixels))
             {
-                PreviewPixelConverter.CopyBgraPremultiplied(pixels.Rgba,bgra);
+                PreviewPixelConverter.CopyBgraPremultiplied(pixels,bgra);
                 pixelStream!.Position=0;pixelStream.Write(bgra);bitmap.Invalidate();
             }
             }

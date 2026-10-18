@@ -4,7 +4,6 @@ using System.Text;
 
 namespace OurNotes.Director.Core;
 
-public record Pixels(int Width, int Height, byte[] Rgba);
 public static class Png
 {
     static int Int(ReadOnlySpan<byte> b) => BinaryPrimitives.ReadInt32BigEndian(b);

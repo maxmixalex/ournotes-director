@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using OurNotes.Director.Core;
 
@@ -6,6 +7,12 @@ using OurNotes.Director.Core;
 /// Timings describe the measured device; no software-GPU result predicts user hardware.</summary>
 static class PreviewQualityNativeTests
 {
+    static byte[] RowHash(Pixels pixels)
+    {
+        using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        for(int y=0;y<pixels.Height;y++)hash.AppendData(pixels.GetRgbaRow(y));
+        return hash.GetHashAndReset();
+    }
     static double Error(Pixels image,Pixels reference)
     {
         if(image.Width!=reference.Width||image.Height!=reference.Height)throw new ArgumentException("Matching pixel grids are required.");
@@ -128,10 +135,19 @@ static class PreviewQualityNativeTests
                     "Advancing native animation invalidates the paused-pose and mask reuse");
             });
             await using var session=new RealtimePreviewSession();
-            await session.LoadSceneAsync(source with{Width=160,Height=240,Supersample=2});await session.SeekAsync(1);
+            await session.LoadSceneAsync(source with{Width=160,Height=240,Supersample=2,SegmentedCpuFrames=true});await session.SeekAsync(1);
             var beforeResize=session.LastFrame!;var beforeParameters=await session.ReadActorParametersAsync(actorId);
+            var savedPixelHash=RowHash(beforeResize.Pixels);
+            check(!beforeResize.Pixels.HasContiguousRgba&&beforeResize.CpuPixelTransferBytes==160*240*4,
+                "Native CPU preview exposes every immutable row and transfer byte without materializing a large contiguous snapshot");
             await session.ResizePreviewAsync(320,480,1);
             var resized=session.LastFrame!;
+            check(!resized.Pixels.HasContiguousRgba&&!beforeResize.Pixels.HasContiguousRgba
+                &&RowHash(beforeResize.Pixels).SequenceEqual(savedPixelHash),
+                "A retained segmented native frame stays byte-exact after renderer resize and scratch-buffer reuse");
+            var retainedArray=beforeResize.Pixels.Rgba;
+            check(SHA256.HashData(retainedArray).SequenceEqual(savedPixelHash),
+                "Requesting Rgba from an older native frame materializes its original complete image");
             check(resized.SessionId==beforeResize.SessionId&&resized.Frame==beforeResize.Frame
                 &&resized.Pixels.Width==320&&resized.Pixels.Height==480
                 &&resized.ActorAnimations!.SequenceEqual(beforeResize.ActorAnimations!)
@@ -139,6 +155,9 @@ static class PreviewQualityNativeTests
                 "Session resize changes the actual presentation pixel grid while preserving current parameters, time and native session identity");
             var transform=new IsolatedActorTransform(.57,.46,.85,3,1);
             await session.SetIsolatedTransformAsync(transform);
+            check(SHA256.HashData(retainedArray).SequenceEqual(savedPixelHash)
+                &&ReferenceEquals(retainedArray,beforeResize.Pixels.Rgba)&&!session.LastFrame!.Pixels.HasContiguousRgba,
+                "A caller's retained Rgba array remains private across later renders while new preview frames remain segmented");
             var saved=DirectorProject.Document(source.ProjectPath).DeepClone().AsObject();
             saved["output"]!["isolateTransform"]=ActorIsolation.TransformJson(transform);
             string editedPath=Path.Combine(directory,"quality-live-edits.project.json");

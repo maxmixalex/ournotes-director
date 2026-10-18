@@ -568,7 +568,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             CueCache=cueCache??new();
             clean=project.Output["clean"]?.GetValue<bool>()??false;
             native=new(new Archive(source.ArchivePath),project.Site,source.CubismPath,project.Adv,project.Language,
-                source.Width,source.Height,source.ProjectPath,source.FfmpegPath,source.Supersample,Document,false,CueCache){PreferGpuPresentation=source.GpuPresentation};
+                source.Width,source.Height,source.ProjectPath,source.FfmpegPath,source.Supersample,Document,false,CueCache){PreferGpuPresentation=source.GpuPresentation,SegmentedCpuFrames=source.SegmentedCpuFrames};
         }
         public void Commit(ScenePreviewSource source)
         {
@@ -596,7 +596,10 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                     OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal);
             // Adaptive presentation can have resized while a UI snapshot was saving.
             // The live FBO dimensions are authoritative; output canvas checks stay strict.
-            Source=isolated?source with{Width=Source.Width,Height=Source.Height,Supersample=Source.Supersample}:source;
+            // CPU snapshot storage is a live client's transport preference, not a
+            // saved project's setting. A fresh export snapshot must not disable it.
+            Source=(isolated?source with{Width=Source.Width,Height=Source.Height,Supersample=Source.Supersample}:source)
+                with{SegmentedCpuFrames=Source.SegmentedCpuFrames};
             Duration=source.Duration;NeedsReplay|=changedProgram;project=next;
             Document=document;ProjectHash=Archive.Hash(Encoding.UTF8.GetBytes(Document.ToJsonString()));
             Timing=!changedProgram&&Timing is {} timing?timing with{ProjectHash=ProjectHash}:null;

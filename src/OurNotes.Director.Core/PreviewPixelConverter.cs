@@ -6,6 +6,14 @@ namespace OurNotes.Director.Core;
 /// <summary>Display-only conversion. Export buffers remain straight-alpha RGBA.</summary>
 public static class PreviewPixelConverter
 {
+    public static void CopyBgraPremultiplied(Pixels pixels,Span<byte> bgra)
+    {
+        ArgumentNullException.ThrowIfNull(pixels);
+        int stride=checked(pixels.Width*4);
+        if(pixels.ByteLength!=checked(stride*pixels.Height)||bgra.Length!=pixels.ByteLength)
+            throw new ArgumentException("RGBA and BGRA buffers must contain the same complete image.");
+        for(int y=0;y<pixels.Height;y++)CopyBgraPremultiplied(pixels.GetRgbaRow(y),bgra.Slice(y*stride,stride));
+    }
     public static void CopyBgraPremultiplied(ReadOnlySpan<byte> rgba,Span<byte> bgra)
     {
         if(rgba.Length%4!=0||bgra.Length!=rgba.Length)throw new ArgumentException("RGBA and BGRA buffers must contain the same whole pixels.");

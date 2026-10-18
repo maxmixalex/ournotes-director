@@ -310,6 +310,7 @@ public sealed unsafe partial class OffscreenGl : IDisposable
     public void Rule(uint texture,float value,bool gradient,float[] color)
     {Float("rulePass",1);Float("ruleValue",value);Float("ruleGradient",gradient?1:0);Draw(texture,[-1,-1,1,-1,1,1,-1,1],[0,1,1,1,1,0,0,0],[0,1,2,0,2,3],1,[1,1,1,1],[0,0,0,0],color,0,false,false);Float("rulePass",0);}
     GlSurface? presentation,resolvedPresentation;
+    public bool SegmentedCpuFrames{get;set;}
     byte[] readbackScratch=[];
     byte[] ReadbackStorage(int length)
     {
@@ -364,6 +365,7 @@ public sealed unsafe partial class OffscreenGl : IDisposable
             return null;
         }
         var pixels=ReadbackStorage(checked(width*height*4));glReadPixels(0,0,width,height,0x1908,0x1401,pixels);
+        if(SegmentedCpuFrames)return Pixels.CopySegmented(width,height,pixels,true);
         var result=GC.AllocateUninitializedArray<byte>(pixels.Length);int stride=width*4;
         for(int y=0;y<height;y++)Buffer.BlockCopy(pixels,(height-1-y)*stride,result,y*stride,stride);
         return new(width,height,result);

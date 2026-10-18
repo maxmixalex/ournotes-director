@@ -197,7 +197,8 @@ internal sealed partial class Live2DStudioPage
         return new(window.Settings.ArchivePath, input.FilePath,
             NativeDependencies.CoreLibrary(Empty(window.Settings.NativeLibraryPath), Empty(window.Settings.CubismSdkPath)),
             NativeDependencies.MediaTool("ffmpeg", Empty(window.Settings.FFmpegPath)),
-            size.Width, size.Height, TimelineRange.Full(current.Duration, 30).End, Supersample: size.Supersample);
+            size.Width, size.Height, TimelineRange.Full(current.Duration, 30).End,
+            Supersample: size.Supersample, SegmentedCpuFrames: true);
     }
     async Task RefreshPreviewAsync()
     {

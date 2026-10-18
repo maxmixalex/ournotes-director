@@ -52,24 +52,27 @@ internal sealed partial class Live2DStudioPage
 
     async Task FitActorCanvasCoreAsync()
     {
-        if (document is null) return;
+        if (document is not { } current) return;
         double multiplier = actorCanvasMultiplier.Value;
         if (!double.IsFinite(multiplier) || multiplier < 1)
             throw new ArgumentException("画布倍数需要大于或等于 1。");
-        Pause(); await FlushEditsAsync();
-        var current = document;
-        if (current is null) return;
-        if (modelDrag is { IsCompleted: false })
-            throw new InvalidOperationException("请先完成模型拖动，再计算完整动作画布。");
-        long edited = editVersion;
+        // Own the operation before its first await. Preparing pending edits may
+        // yield; a second invocation must reuse this task rather than start analysis.
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         actorCanvasCancellation = cancellation;
         fitActorCanvasButton!.IsEnabled = false; actorCanvasMultiplier.IsEnabled = false;
         cancelActorCanvasButton!.Visibility = Visibility.Visible;
         actorCanvasProgress.Visibility = Visibility.Visible; actorCanvasProgress.Value = 0;
-        actorCanvasStatus.Text = "正在计算完整动作范围…";
+        actorCanvasStatus.Text = "正在准备完整动作范围…";
         try
         {
+            Pause(); await FlushEditsAsync();
+            cancellation.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(document, current)) return;
+            if (modelDrag is { IsCompleted: false })
+                throw new InvalidOperationException("请先完成模型拖动，再计算完整动作画布。");
+            long edited = editVersion;
+            actorCanvasStatus.Text = "正在计算完整动作范围…";
             using var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-canvas"));
             var full = TimelineRange.Full(current.Duration, 30);
             var progress = new Progress<ActorCanvasProgress>(value =>
@@ -92,10 +95,13 @@ internal sealed partial class Live2DStudioPage
         { if (!disposed) Notice("已取消画布计算。", false); }
         finally
         {
-            actorCanvasCancellation = null;
-            actorCanvasProgress.Visibility = Visibility.Collapsed;
-            cancelActorCanvasButton!.Visibility = Visibility.Collapsed;
-            if (!disposed) RefreshActorCanvasControls();
+            if (ReferenceEquals(actorCanvasCancellation, cancellation))
+            {
+                actorCanvasCancellation = null;
+                actorCanvasProgress.Visibility = Visibility.Collapsed;
+                cancelActorCanvasButton!.Visibility = Visibility.Collapsed;
+                if (!disposed) RefreshActorCanvasControls();
+            }
         }
     }
 }

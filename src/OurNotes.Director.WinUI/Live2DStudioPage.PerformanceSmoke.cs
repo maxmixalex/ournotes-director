@@ -26,7 +26,7 @@ internal sealed partial class Live2DStudioPage
         await FlushEditsAsync();
         var moving = trace.Frames.Where(sample => sample.Frame.Targets.Any(target => target.Id == current.ActorId))
             .Select(sample => (sample.Milliseconds, sample.Frame, sample.PixelHash,
-                sample.PresentationQueueMilliseconds, sample.PresentationMilliseconds,
+                sample.PresentationQueueMilliseconds, sample.PresentationMilliseconds, sample.HasContiguousRgba,
                 Target: sample.Frame.Targets.Single(target => target.Id == current.ActorId)))
             .Where(sample => sample.Target.X - trace.Origin.X > .005)
             .DistinctBy(sample => Math.Round(sample.Target.X, 5)).ToArray();
@@ -41,7 +41,7 @@ internal sealed partial class Live2DStudioPage
             double delay = input is null ? double.PositiveInfinity : sample.Milliseconds - input.InjectedMilliseconds;
             if (error < .002 && double.IsFinite(delay)) latency.Add(delay);
             var detail = FramePerformanceJson(sample.Frame, sample.Milliseconds,
-                sample.PresentationQueueMilliseconds, sample.PresentationMilliseconds);
+                sample.PresentationQueueMilliseconds, sample.PresentationMilliseconds, sample.HasContiguousRgba);
             detail["dx"] = x; detail["dy"] = y; detail["pixelSha256"] = sample.PixelHash;
             detail["matchingInputError"] = double.IsFinite(error) ? error : null;
             detail["inputToPresentationMs"] = double.IsFinite(delay) ? delay : null;
@@ -71,10 +71,12 @@ internal sealed partial class Live2DStudioPage
         check(moving.All(sample => sample.Frame.SessionId == session && sample.Frame.Frame == before.Frame)
             && viewport.LastFrame!.SessionId == session && viewport.LastFrame.Frame == before.Frame,
             "拖动中的真实命中边界持续更新，所有中间画面保留同一模型会话和演出帧");
-        if (before.Pixels.Rgba.Length > 0)
+        if (before.Pixels.ByteLength > 0)
         {
             var distinct = moving.Select(sample => sample.PixelHash).Where(hash => hash is not null).Distinct().Take(4).Count();
             check(distinct >= 4, "按住鼠标时至少四张原生像素画面发生改变，没有用XAML平移冒充模型重绘");
+            check(moving.Length >= 4 && moving.All(sample => sample.HasContiguousRgba == false),
+                "真实CPU拖动呈现和逐行像素SHA均不合并RGBA大数组，分块帧保持独立快照");
         }
         check(viewport.SceneProjectCommitCount == commits + 1 && current.Transform != transform,
             "松手只提交一次Live2D项目，保留最后一个实际鼠标位置");
@@ -109,7 +111,8 @@ internal sealed partial class Live2DStudioPage
         {
             if (!frame.IsPlaying || frame.RenderMilliseconds <= 0) return;
             played.Add(new(clock.Elapsed.TotalMilliseconds, frame with { Pixels = new(frame.Pixels.Width, frame.Pixels.Height, []) },
-                null, viewport.PresentationQueueMilliseconds, viewport.PresentationMilliseconds));
+                null, viewport.PresentationQueueMilliseconds, viewport.PresentationMilliseconds,
+                frame.Pixels.ByteLength > 0 ? frame.Pixels.HasContiguousRgba : null));
             started.TrySetResult();
         }
         void OnOperation(NativeViewport.PreviewOperation operation) => operations.Add(new(clock.Elapsed.TotalMilliseconds, operation));
@@ -135,7 +138,7 @@ internal sealed partial class Live2DStudioPage
         var playbackSamples = new JsonArray();
         foreach (var sample in played)
             playbackSamples.Add(FramePerformanceJson(sample.Frame, sample.Milliseconds,
-                sample.PresentationQueueMilliseconds, sample.PresentationMilliseconds));
+                sample.PresentationQueueMilliseconds, sample.PresentationMilliseconds, sample.HasContiguousRgba));
         report["playbackFrameSamples"] = playbackSamples;
         report["playbackOperations"] = OperationTraceJson(operations);
         if (performance.Length > 0)
@@ -153,16 +156,21 @@ internal sealed partial class Live2DStudioPage
         check(played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4
             && Percentile(pulses, .95) < 250 && pauseMilliseconds < 500 && !viewport.IsPlaying,
             "真实空格播放连续原生帧，播放期间UI心跳P95低于250毫秒且再次空格在500毫秒内暂停");
+        var cpuFrames = played.Where(sample => sample.Frame.RenderMilliseconds > 0 && sample.HasContiguousRgba is not null).ToArray();
+        if (cpuFrames.Length > 0)
+            check(cpuFrames.Length >= 4 && cpuFrames.All(sample => sample.HasContiguousRgba == false),
+                "参数检查器打开的连续CPU播放不触发RGBA大数组物化");
         await SeekAsync(time); viewport.SelectedTargetId = current.ActorId; SelectInspector("controls");
     }
 
-    static JsonObject FramePerformanceJson(PreviewFrame frame, double presented, double queue, double presentation)
+    static JsonObject FramePerformanceJson(PreviewFrame frame, double presented, double queue, double presentation, bool? contiguous)
     {
         var value = new JsonObject
         {
             ["presentedMs"] = presented, ["sequence"] = frame.Sequence, ["sessionId"] = frame.SessionId,
             ["frame"] = frame.Frame, ["width"] = frame.Pixels.Width, ["height"] = frame.Pixels.Height,
-            ["renderMs"] = frame.RenderMilliseconds, ["presentationQueueMs"] = queue, ["presentationMs"] = presentation
+            ["renderMs"] = frame.RenderMilliseconds, ["presentationQueueMs"] = queue, ["presentationMs"] = presentation,
+            ["cpuContiguousRgba"] = contiguous
         };
         if (frame.Performance is not { } performance) return value;
         value["simulationMs"] = performance.SimulationMilliseconds; value["sceneMs"] = performance.SceneMilliseconds;

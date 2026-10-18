@@ -64,6 +64,7 @@ JsonObject Put(string text, string encoding)
 try
 {
     JsonOutputTests.Run(Assert);
+    SegmentedPixelsTests.Run(Assert);
     ShotTemplateTests.Run(Assert);
     NativeDependencyTests.Run(Assert);
     VideoEncodingTests.Run(Assert);

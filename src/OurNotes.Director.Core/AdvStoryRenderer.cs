@@ -18,6 +18,7 @@ public sealed class AdvStoryRenderer : IDisposable
     public AdvVideo Video{get;}
     public string Device=>gl.Device;
     public bool PreferGpuPresentation { get => gl.PreferGpuPresentation; set => gl.PreferGpuPresentation = value; }
+    public bool SegmentedCpuFrames { get => gl.SegmentedCpuFrames; set => gl.SegmentedCpuFrames = value; }
     public GpuPreviewSurface? GpuSurface => gl.GpuSurface;
     public string? GpuFallbackReason => gl.GpuFallbackReason;
     public void DisableGpuPresentation(string reason) => gl.DisableGpuPresentation(reason);

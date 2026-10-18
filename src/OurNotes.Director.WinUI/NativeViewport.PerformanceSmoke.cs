@@ -10,7 +10,7 @@ public sealed partial class NativeViewport
 {
     internal sealed record DragInputSample(double InjectedMilliseconds, double DeliveredMilliseconds, double X, double Y);
     internal sealed record DragFrameSample(double Milliseconds, PreviewFrame Frame, string? PixelHash,
-        double PresentationQueueMilliseconds, double PresentationMilliseconds);
+        double PresentationQueueMilliseconds, double PresentationMilliseconds, bool? HasContiguousRgba);
     internal sealed record OperationSample(double Milliseconds, PreviewOperation Operation);
     internal sealed record DragTrace(PreviewTarget Origin, IReadOnlyList<DragInputSample> Inputs,
         IReadOnlyList<DragFrameSample> Frames, IReadOnlyList<OperationSample> Operations, double HeldMilliseconds);
@@ -26,6 +26,7 @@ public sealed partial class NativeViewport
         var injections = new ConcurrentQueue<(double Time, double X, double Y)>();
         var inputs = new List<DragInputSample>(); var frames = new List<DragFrameSample>();
         var operations = new List<OperationSample>();
+        using var pixelHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var clock = Stopwatch.StartNew(); bool held = true;
         var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void OnDrag(object? sender, PreviewDrag drag)
@@ -42,9 +43,15 @@ public sealed partial class NativeViewport
             if (held && dragTarget == actor && dragMoved && inputs.Count > 0)
             {
                 double presented = clock.Elapsed.TotalMilliseconds;
-                string? hash = frame.Pixels.Rgba.Length > 0 ? Convert.ToHexString(SHA256.HashData(frame.Pixels.Rgba)) : null;
+                string? hash = null;
+                if (frame.Pixels.ByteLength > 0)
+                {
+                    for (int row = 0; row < frame.Pixels.Height; row++) pixelHash.AppendData(frame.Pixels.GetRgbaRow(row));
+                    hash = Convert.ToHexString(pixelHash.GetHashAndReset());
+                }
                 frames.Add(new(presented, frame with { Pixels = new(frame.Pixels.Width, frame.Pixels.Height, []) },
-                    hash, PresentationQueueMilliseconds, PresentationMilliseconds));
+                    hash, PresentationQueueMilliseconds, PresentationMilliseconds,
+                    frame.Pixels.ByteLength > 0 ? frame.Pixels.HasContiguousRgba : null));
             }
         }
         void OnOperation(PreviewOperation operation) => operations.Add(new(clock.Elapsed.TotalMilliseconds, operation));

@@ -6,7 +6,8 @@ public sealed record PreviewTarget(string Id, string Label, double X, double Y, 
 /// <summary>A private project snapshot, using the same document and renderer as final scene export.</summary>
 public sealed record ScenePreviewSource(string ArchivePath, string ProjectPath, string CubismPath,
     string FfmpegPath, int Width = 960, int Height = 540, double Duration = 60,
-    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed, bool GpuPresentation = false, int Supersample = 1);
+    PreviewDurationMode DurationMode = PreviewDurationMode.Fixed, bool GpuPresentation = false, int Supersample = 1,
+    bool SegmentedCpuFrames = false);
 
 public enum PreviewDurationMode { Fixed, Automatic }
 
@@ -54,7 +55,7 @@ public sealed record PreviewFrame(long Sequence, long SessionId, int Frame, doub
     IReadOnlyList<PreviewActorAnimation>? ActorAnimations=null, GpuPreviewSurface? GpuSurface=null, string? PresentationFallback=null)
 {
     public bool IsGpuPresented => GpuSurface is not null;
-    public long CpuPixelTransferBytes => Pixels.Rgba.LongLength;
+    public long CpuPixelTransferBytes => Pixels.ByteLength;
     public NativePlaybackTiming? NativeTiming=>Timing;
     public bool DurationResolved=>DurationMode==PreviewDurationMode.Fixed||Timing?.IsComplete==true;
 }
