@@ -13,7 +13,8 @@ public sealed partial class NativeViewport
         double PresentationQueueMilliseconds, double PresentationMilliseconds, bool? HasContiguousRgba);
     internal sealed record OperationSample(double Milliseconds, PreviewOperation Operation);
     internal sealed record DragTrace(PreviewTarget Origin, IReadOnlyList<DragInputSample> Inputs,
-        IReadOnlyList<DragFrameSample> Frames, IReadOnlyList<OperationSample> Operations, double HeldMilliseconds);
+        IReadOnlyList<DragFrameSample> Frames, IReadOnlyList<OperationSample> Operations, double HeldMilliseconds,
+        DateTimeOffset StartedUtc, long StartedTimestamp, double MotionStartMilliseconds);
 
     internal async Task<DragTrace> SendContinuousDragSmokeAsync(Window window, string actor,
         double dx, double dy, Action inspectWhileHeld)
@@ -27,13 +28,16 @@ public sealed partial class NativeViewport
         var inputs = new List<DragInputSample>(); var frames = new List<DragFrameSample>();
         var operations = new List<OperationSample>();
         using var pixelHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var clock = Stopwatch.StartNew(); bool held = true;
+        long startedTimestamp = Stopwatch.GetTimestamp();
+        var startedUtc = DateTimeOffset.UtcNow;
+        double ElapsedMilliseconds() => Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds;
+        bool held = true;
         var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void OnDrag(object? sender, PreviewDrag drag)
         {
             if (drag.TargetId != actor) return;
             if (drag.IsCompleted) { released.TrySetResult(); return; }
-            double now = clock.Elapsed.TotalMilliseconds;
+            double now = ElapsedMilliseconds();
             var closest = injections.ToArray().Where(point => point.Time <= now).OrderBy(point => Math.Abs(point.X - drag.DeltaX)
                 + Math.Abs(point.Y - drag.DeltaY)).ThenByDescending(point => point.Time).FirstOrDefault();
             inputs.Add(new(closest.Time, now, drag.DeltaX, drag.DeltaY));
@@ -42,7 +46,7 @@ public sealed partial class NativeViewport
         {
             if (held && dragTarget == actor && dragMoved && inputs.Count > 0)
             {
-                double presented = clock.Elapsed.TotalMilliseconds;
+                double presented = ElapsedMilliseconds();
                 string? hash = null;
                 if (frame.Pixels.ByteLength > 0)
                 {
@@ -54,11 +58,11 @@ public sealed partial class NativeViewport
                     frame.Pixels.ByteLength > 0 ? frame.Pixels.HasContiguousRgba : null));
             }
         }
-        void OnOperation(PreviewOperation operation) => operations.Add(new(clock.Elapsed.TotalMilliseconds, operation));
+        void OnOperation(PreviewOperation operation) => operations.Add(new(ElapsedMilliseconds(), operation));
         ObjectDragged += OnDrag; FramePresented += OnPresented; PreviewOperationObserved += OnOperation;
         MoveSmokePointer(screen.X, screen.Y); await Task.Delay(80);
         SendSmokeInput(new() { Flags = 0x0002 }); await Task.Delay(80);
-        double motionStart = clock.Elapsed.TotalMilliseconds;
+        double motionStart = ElapsedMilliseconds();
         try
         {
             // Injection runs outside the dispatcher. A blocked UI cannot turn a
@@ -68,7 +72,7 @@ public sealed partial class NativeViewport
                 const double duration = 1400;
                 while (true)
                 {
-                    double now = clock.Elapsed.TotalMilliseconds, fraction = Math.Min(1, (now - motionStart) / duration);
+                    double now = ElapsedMilliseconds(), fraction = Math.Min(1, (now - motionStart) / duration);
                     int x = (int)Math.Round(dx * pixelWidth * fraction), y = (int)Math.Round(dy * pixelHeight * fraction);
                     injections.Enqueue((now, x / pixelWidth, y / pixelHeight));
                     MoveSmokePointer(screen.X + x, screen.Y + y);
@@ -77,7 +81,8 @@ public sealed partial class NativeViewport
                 }
             });
             inspectWhileHeld();
-            return new(origin, inputs.ToArray(), frames.ToArray(), operations.ToArray(), clock.Elapsed.TotalMilliseconds - motionStart);
+            return new(origin, inputs.ToArray(), frames.ToArray(), operations.ToArray(), ElapsedMilliseconds() - motionStart,
+                startedUtc, startedTimestamp, motionStart);
         }
         finally
         {

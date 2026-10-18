@@ -17,7 +17,6 @@ internal sealed partial class Live2DStudioPage
         long session = viewport.LastFrame!.SessionId, commits = viewport.SceneProjectCommitCount;
         var before = viewport.LastFrame!;
         ScheduleDraft(); // Exercise a pending idle save during the longer held gesture.
-        var dragStartedUtc = DateTimeOffset.UtcNow;
         var trace = await viewport.SendContinuousDragSmokeAsync(window, current.ActorId, .12, .035, () =>
         {
             check(current.ToJson() == original && current.Transform == transform
@@ -49,13 +48,17 @@ internal sealed partial class Live2DStudioPage
             samples.Add(detail);
         }
         double p95 = Percentile(latency, .95);
+        double maximumLatency = latency.Count > 0 ? latency.Max() : double.PositiveInfinity;
         var report = new JsonObject
         {
-            ["dragStartedUtc"] = dragStartedUtc.ToString("O"),
+            ["dragStartedUtc"] = trace.StartedUtc.ToString("O"),
+            ["dragClockStartTimestamp"] = trace.StartedTimestamp, ["stopwatchFrequency"] = Stopwatch.Frequency,
+            ["dragMotionStartMs"] = trace.MotionStartMilliseconds,
             ["previewWidth"] = before.Pixels.Width, ["previewHeight"] = before.Pixels.Height,
             ["supersample"] = viewport.PreviewSupersample, ["heldMs"] = trace.HeldMilliseconds,
             ["deliveredInputs"] = trace.Inputs.Count, ["nativePositionsWhileHeld"] = moving.Length,
             ["inputToPresentationP95Ms"] = double.IsFinite(p95) ? p95 : null, ["dragFrames"] = samples,
+            ["inputToPresentationMaxMs"] = double.IsFinite(maximumLatency) ? maximumLatency : null,
             ["device"] = before.Device, ["presentationFallback"] = before.PresentationFallback,
             ["dragOperations"] = OperationTraceJson(trace.Operations)
         };
@@ -65,7 +68,9 @@ internal sealed partial class Live2DStudioPage
                 ["deliveredMs"] = input.DeliveredMilliseconds, ["dx"] = input.X, ["dy"] = input.Y });
         report["dragInputs"] = delivered;
         string reportPath = App.SmokeEvidencePath("live2d-preview-performance.json");
-        bool responsive = moving.Length >= 4 && latency.Count >= 4 && p95 < 250;
+        // A single visible freeze must not disappear from the gate merely because
+        // a faster run presents enough ordinary frames to exclude it from P95.
+        bool responsive = moving.Length >= 4 && latency.Count >= 4 && p95 < 250 && maximumLatency < 250;
         report["dragResponsivenessPassed"] = responsive;
         DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
         check(moving.Length >= 4 && latency.Count >= 4,
@@ -124,13 +129,18 @@ internal sealed partial class Live2DStudioPage
         void OnOperation(NativeViewport.PreviewOperation operation) => operations.Add(new(clock.Elapsed.TotalMilliseconds, operation));
         viewport.FramePresented += OnPlayed; viewport.PreviewOperationObserved += OnOperation;
         double pauseMilliseconds;
+        bool pausedBySpace = false;
         try
         {
             pulse.Start(); await viewport.SendViewportKeySmokeAsync(window, VirtualKey.Space);
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Task.Delay(900);
             long pauseStamp = Stopwatch.GetTimestamp();
-            await viewport.SendViewportKeySmokeAsync(window, VirtualKey.Space); await viewport.PauseForEditingAsync();
+            await viewport.SendViewportKeySmokeAsync(window, VirtualKey.Space);
+            // Check the real key handler before the synchronization helper's own
+            // Pause call could conceal a missed keyboard command.
+            pausedBySpace = !viewport.IsPlaying && !playbackRequested;
+            await viewport.PauseForEditingAsync();
             pauseMilliseconds = Stopwatch.GetElapsedTime(pauseStamp).TotalMilliseconds;
         }
         finally { pulse.Stop(); viewport.FramePresented -= OnPlayed; viewport.PreviewOperationObserved -= OnOperation; Pause(); }
@@ -157,12 +167,16 @@ internal sealed partial class Live2DStudioPage
             report["simulationFrames"] = performance.Sum(value => value.SimulationFrames);
         }
         report["dispatcherGapP95Ms"] = pulses.Count > 0 ? Percentile(pulses, .95) : null;
+        double maximumPulseGap = pulses.Count > 0 ? pulses.Max() : double.PositiveInfinity;
+        report["dispatcherGapMaxMs"] = double.IsFinite(maximumPulseGap) ? maximumPulseGap : null;
         report["pauseResponseMs"] = pauseMilliseconds;
+        report["pausedBySpace"] = pausedBySpace;
         bool responsive = played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4
-            && Percentile(pulses, .95) < 250 && pauseMilliseconds < 500 && !viewport.IsPlaying;
+            && Percentile(pulses, .95) < 250 && maximumPulseGap < 250
+            && pauseMilliseconds < 500 && pausedBySpace && !viewport.IsPlaying;
         report["playbackResponsivenessPassed"] = responsive;
         DesktopSettings.AtomicWrite(reportPath, report.ToJsonString(DesktopSettings.JsonOptions));
-        check(played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4 && !viewport.IsPlaying,
+        check(played.Select(sample => (sample.Frame.SessionId, sample.Frame.Frame)).Distinct().Count() >= 4 && pausedBySpace && !viewport.IsPlaying,
             "真实空格播放至少四个不同原生帧，再次空格实际暂停播放");
         var cpuFrames = played.Where(sample => sample.Frame.RenderMilliseconds > 0 && sample.HasContiguousRgba is not null).ToArray();
         if (cpuFrames.Length > 0)

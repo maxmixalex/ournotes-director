@@ -25,9 +25,9 @@ internal sealed partial class Live2DStudioPage
         SelectInspector("parameters");
         var parameter = current.Parameters.First(value => value.Maximum > value.Minimum
             && value.Id.Contains("Angle", StringComparison.OrdinalIgnoreCase));
-        parameterControls[parameter.Id].Number.Value = parameter.Minimum;
+        (await BringParameterIntoViewSmokeAsync(parameter.Id)).Number.Value = parameter.Minimum;
         await FlushEditsAsync(); await SeekAsync(.2);
-        parameterControls[parameter.Id].Number.Value = parameter.Maximum;
+        (await BringParameterIntoViewSmokeAsync(parameter.Id)).Number.Value = parameter.Maximum;
         await FlushEditsAsync(); await SeekAsync(0);
         SelectInspector("controls"); UpdateLayout();
         var transform = current.Transform;

@@ -52,10 +52,11 @@ internal sealed partial class Live2DStudioPage
         SelectInspector("parameters"); UpdateLayout(); await Task.Delay(80);
         await ReadParametersAsync();
         var editable = current.Parameters.Where(parameter => parameter.Maximum > parameter.Minimum).ToArray();
-        check(editable.Length > 0 && parameterControls.Count == current.Parameters.Count,
+        check(editable.Length > 0 && parameterIds.Length == current.Parameters.Count
+            && parameterControls.Count is > 0 and <= 32,
             "真实模型加载实际 Cubism 参数、取值范围、默认值、滑块和数值框");
         var parameter = editable.FirstOrDefault(value => value.Id.Contains("Angle", StringComparison.OrdinalIgnoreCase)) ?? editable[0];
-        var controls = parameterControls[parameter.Id];
+        var controls = await BringParameterIntoViewSmokeAsync(parameter.Id);
         double firstValue = parameter.Minimum + (parameter.Maximum - parameter.Minimum) * .73;
         double finalValue = parameter.Minimum + (parameter.Maximum - parameter.Minimum) * .31;
         long session = viewport.LastFrame!.SessionId;
@@ -103,7 +104,7 @@ internal sealed partial class Live2DStudioPage
         string? motion = await SelectSmokeAnimationAsync(false, check);
         string? expression = await SelectSmokeAnimationAsync(true, check);
         SelectInspector("parameters"); UpdateLayout();
-        controls = parameterControls[parameter.Id]; controls.Number.Value = finalValue;
+        controls = await BringParameterIntoViewSmokeAsync(parameter.Id); controls.Number.Value = finalValue;
         await FlushEditsAsync();
         await App.CaptureCheckpointAsync("live2d-parameters");
 
@@ -178,6 +179,9 @@ internal sealed partial class Live2DStudioPage
         gcTrace.Mark("playback.begin");
         bool playbackResponsive = await RunPlaybackResponsivenessSmokeAsync(check);
         gcTrace.Mark("playback.end");
+        gcTrace.Mark("parameters.virtualization.begin");
+        await RunParameterVirtualizationSmokeAsync(check);
+        gcTrace.Mark("parameters.virtualization.end");
         SelectInspector("controls"); viewport.FitCanvas(); UpdateLayout();
         await App.CaptureCheckpointAsync("live2d-standalone");
         string standalonePicture = App.SmokeEvidencePath("live2d-standalone-" + id + ".png");
@@ -194,9 +198,9 @@ internal sealed partial class Live2DStudioPage
         // Keep the performance gates binding, but finish the independent output
         // checks before reporting a latency failure so a run preserves both results.
         check(dragResponsive,
-            "真实连续拖动在松手前呈现至少四个中间原生位置，软件GPU输入到显示P95低于250毫秒");
+            "真实连续拖动在松手前呈现至少四个中间原生位置，软件GPU输入到显示P95及最长延迟均低于250毫秒");
         check(playbackResponsive,
-            "真实空格播放连续原生帧，播放期间UI心跳P95低于250毫秒且再次空格在500毫秒内暂停");
+            "真实空格播放连续原生帧，播放期间UI心跳P95及最长调度间隔均低于250毫秒，且再次空格在500毫秒内暂停");
     }
 
     async Task<string?> SelectSmokeAnimationAsync(bool expressions, Action<bool, string> check)

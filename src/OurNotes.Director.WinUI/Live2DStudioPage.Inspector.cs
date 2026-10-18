@@ -13,9 +13,7 @@ namespace OurNotes.Director.WinUI;
 internal sealed partial class Live2DStudioPage
 {
     sealed record NumberControl(Slider Slider, NumberBox Number);
-    sealed record ParameterControl(Slider Slider, NumberBox Number, Button Reset, TextBlock Mode, FrameworkElement Row);
     readonly Dictionary<string, NumberControl> transformControls = new(StringComparer.Ordinal);
-    readonly Dictionary<string, ParameterControl> parameterControls = new(StringComparer.Ordinal);
     readonly CheckBox visibleBox = new() { Content = "显示模型", IsChecked = true };
     readonly CheckBox breathBox = new() { Content = "呼吸", IsChecked = true }, blinkBox = new() { Content = "自动眨眼", IsChecked = true };
     readonly CheckBox physicsBox = new() { Content = "物理", IsChecked = true }, loopBox = new() { Content = "循环播放", IsChecked = true };
@@ -23,11 +21,8 @@ internal sealed partial class Live2DStudioPage
     readonly NumberBox widthBox = new() { Header = "画布宽度", Minimum = 16, Maximum = 16384, SmallChange = 16, Value = 512 };
     readonly NumberBox heightBox = new() { Header = "画布高度", Minimum = 16, Maximum = 16384, SmallChange = 8, Value = 768 };
     readonly TextBox motionSearch = Ui.Input("查找动作", placeholder: "名称或编号"), expressionSearch = Ui.Input("查找表情", placeholder: "名称或编号");
-    readonly TextBox parameterSearch = Ui.Input("查找参数", placeholder: "名称或参数 ID");
     readonly ListView motionList = new() { SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     readonly ListView expressionList = new() { SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-    readonly StackPanel parameterRows = Ui.Stack(11);
-    readonly TextBlock parameterSummary = Ui.Text("载入模型后显示真实参数范围。", 11, true);
     readonly TextBlock motionState = Ui.Text("", 11, true), expressionState = Ui.Text("", 11, true);
     JsonNode? nativeDescription;
 
@@ -174,63 +169,6 @@ internal sealed partial class Live2DStudioPage
         }
         finally { refreshing = previous; }
     }
-    FrameworkElement CreateParameterInspector()
-    {
-        var panel = new Grid { RowSpacing = 8 };
-        panel.RowDefinitions.Add(new() { Height = GridLength.Auto }); panel.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        panel.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
-        panel.Children.Add(parameterSearch);
-        var tools = Ui.Stack(4, Ui.Row(4, StudioLayout.Tool("全部恢复自动", () => EditLive(current => current.ResetParameters()), "\uE777")), parameterSummary);
-        panel.Children.Add(tools); Grid.SetRow(tools, 1);
-        var scroll = Ui.Scroll(parameterRows); parameterScroll = scroll;
-        scroll.ViewChanged += (_, _) => RefreshParameterValues();
-        panel.Children.Add(scroll); Grid.SetRow(scroll, 2);
-        parameterSearch.TextChanged += (_, _) => BuildParameters();
-        return panel;
-    }
-    void BuildParameters()
-    {
-        bool previous = refreshing; refreshing = true;
-        try
-        {
-            parameterControls.Clear(); parameterRows.Children.Clear();
-            if (document is null) { parameterSummary.Text = "载入模型后显示真实参数范围。"; return; }
-            string search = parameterSearch.Text.Trim();
-            var parameters = document.Parameters;
-            var shown = parameters.Where(parameter => search.Length == 0 || parameter.Id.Contains(search, StringComparison.OrdinalIgnoreCase)
-                || parameter.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
-            parameterSummary.Text = $"{shown.Length} / {parameters.Count} 个参数 · 调整数值后固定，恢复自动后由演出驱动。";
-            foreach (var parameter in shown)
-            {
-                string id = parameter.Id;
-                double span = parameter.Maximum - parameter.Minimum;
-                double step = Math.Max(.0001, span / 200);
-                var slider = new Slider { Minimum = parameter.Minimum, Maximum = parameter.Maximum, Value = parameter.Value, StepFrequency = step,
-                    IsEnabled = span > 0 };
-                var number = new NumberBox { Minimum = parameter.Minimum, Maximum = parameter.Maximum, Value = parameter.Value, SmallChange = step,
-                    LargeChange = span / 10, Width = 86, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden, IsEnabled = span > 0 };
-                var mode = Ui.Text(parameter.IsOverridden ? "固定" : "自动", 10, true);
-                var reset = StudioLayout.Tool("自动", () => EditLive(current => current.ResetParameter(id)), "\uE777");
-                reset.Padding = new(6, 3, 6, 3); ToolTipService.SetToolTip(reset, "释放数值固定，恢复动作与表情驱动");
-                AutomationProperties.SetName(slider, "参数滑块 " + id); AutomationProperties.SetName(number, "参数数值 " + id);
-                AutomationProperties.SetName(reset, "参数恢复自动 " + id);
-                var heading = new Grid { ColumnSpacing = 4 };
-                heading.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                var name = Ui.Text(string.IsNullOrWhiteSpace(parameter.Name) ? id : parameter.Name, 12); name.VerticalAlignment = VerticalAlignment.Center;
-                ToolTipService.SetToolTip(name, id); heading.Children.Add(name); heading.Children.Add(number); Grid.SetColumn(number, 1);
-                var details = new Grid { ColumnSpacing = 4 };
-                details.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); details.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                string limits = string.Create(CultureInfo.InvariantCulture, $"{parameter.Minimum:0.###} … {parameter.Maximum:0.###} · 默认 {parameter.Default:0.###}");
-                details.Children.Add(Ui.Stack(0, Ui.Text(id, 10, true), Ui.Text(limits, 10, true)));
-                var auto = Ui.Row(4, mode, reset); details.Children.Add(auto); Grid.SetColumn(auto, 1);
-                var row = Ui.Stack(0, heading, slider, details);
-                parameterRows.Children.Add(row); parameterControls.Add(id, new(slider, number, reset, mode, row));
-                number.ValueChanged += (_, args) => { if (!refreshing && double.IsFinite(args.NewValue)) EditLive(current => current.SetParameter(id, args.NewValue)); };
-                slider.ValueChanged += (_, args) => { if (!refreshing) EditLive(current => current.SetParameter(id, args.NewValue)); };
-            }
-        }
-        finally { refreshing = previous; }
-    }
     void RefreshControls()
     {
         bool previous = refreshing; refreshing = true;
@@ -262,26 +200,6 @@ internal sealed partial class Live2DStudioPage
                 if (control.Slider.Value != value) control.Slider.Value = value;
                 if (control.Number.IsEnabled != (document is not null)) control.Number.IsEnabled = document is not null;
                 if (control.Slider.IsEnabled != (document is not null)) control.Slider.IsEnabled = document is not null;
-            }
-        }
-        finally { refreshing = previous; }
-    }
-    void RefreshParameterValues()
-    {
-        if (document is null || activeTab != "parameters") return;
-        bool previous = refreshing; refreshing = true;
-        try
-        {
-            var focus = FocusedAncestors();
-            foreach (var parameter in document.Parameters)
-            {
-                if (!parameterControls.TryGetValue(parameter.Id, out var controls)) continue;
-                if (!ParameterRowIsVisible(controls.Row) && !focus.Contains(controls.Number) && !focus.Contains(controls.Slider)) continue;
-                if (!focus.Contains(controls.Number) && controls.Number.Value != parameter.Value) controls.Number.Value = parameter.Value;
-                if (!focus.Contains(controls.Slider) && controls.Slider.Value != parameter.Value) controls.Slider.Value = parameter.Value;
-                string mode = parameter.IsOverridden ? "固定" : "自动";
-                if (controls.Mode.Text != mode) controls.Mode.Text = mode;
-                if (controls.Reset.IsEnabled != parameter.IsOverridden) controls.Reset.IsEnabled = parameter.IsOverridden;
             }
         }
         finally { refreshing = previous; }
