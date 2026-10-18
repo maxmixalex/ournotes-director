@@ -25,7 +25,7 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     readonly InfoBar notice = new() { IsClosable = true };
     readonly Slider playhead = new() { Minimum = 0, Maximum = 3, StepFrequency = 1d / 30 };
     readonly Button playButton, previousButton, nextButton, pngButton, movieButton, sequenceButton, chooseButton;
-    readonly ContentControl inspectorBody = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
+    readonly Grid inspectorBody = new();
     readonly Dictionary<string, ToggleButton> inspectorTabs = new(StringComparer.Ordinal);
     readonly Dictionary<string, FrameworkElement> inspectorViews = new(StringComparer.Ordinal);
     readonly StackPanel welcome;
@@ -114,6 +114,11 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
         inspectorViews.Add("motion", CreateAnimationInspector(false));
         inspectorViews.Add("expression", CreateAnimationInspector(true));
         inspectorViews.Add("parameters", CreateParameterInspector());
+        foreach (var view in inspectorViews.Values)
+        {
+            view.Visibility = Visibility.Collapsed;
+            inspectorBody.Children.Add(view);
+        }
         var inspector = new Grid { RowSpacing = 8 };
         inspector.RowDefinitions.Add(new() { Height = GridLength.Auto }); inspector.RowDefinitions.Add(new() { Height = GridLength.Auto });
         inspector.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); inspector.Children.Add(modelHeader);
@@ -159,7 +164,11 @@ internal sealed partial class Live2DStudioPage : UserControl, IAsyncDisposable
     }
     void SelectInspector(string key)
     {
-        activeTab = key; inspectorBody.Content = inspectorViews[key];
+        // Keep the native scroller/repeater mounted across tab switches. A detach
+        // resets its viewport subscriptions even when the old layout is reusable.
+        activeTab = key;
+        foreach (var (name, view) in inspectorViews)
+            view.Visibility = name == key ? Visibility.Visible : Visibility.Collapsed;
         foreach (var (name, tab) in inspectorTabs) tab.IsChecked = key == name;
         RefreshTimeDependentControls();
         if (key == "parameters" && document is not null && viewport.HasCurrentSource) _ = SafeAsync(ReadParametersAsync);

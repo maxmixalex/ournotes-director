@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using OurNotes.Director.Desktop.Core;
 
@@ -32,7 +33,7 @@ internal sealed partial class Live2DStudioPage
         throw new InvalidOperationException("参数没有滚入实际视口：" + id);
     }
 
-    async Task<ParameterControl> ScrollParametersToEndSmokeAsync(bool end)
+    async Task<ParameterControl> ScrollParametersToEndSmokeAsync(bool end, Action<JsonObject>? record = null)
     {
         if (activeTab != "parameters") SelectInspector("parameters");
         UpdateLayout();
@@ -41,16 +42,61 @@ internal sealed partial class Live2DStudioPage
         var provider = peer.GetPattern(PatternInterface.Scroll) as IScrollProvider
             ?? throw new InvalidOperationException("参数滚动区域未提供真实 UI Automation Scroll 模式。");
         string id = end ? parameterIds[^1] : parameterIds[0];
+        var attempts = new JsonArray();
+        var trace = new JsonObject { ["target"] = id, ["end"] = end, ["attempts"] = attempts };
+        int attempt = 0;
         var deadline = DateTime.UtcNow.AddSeconds(3);
         do
         {
             provider.SetScrollPercent(-1, end ? 100 : 0);
             await Task.Delay(40); UpdateLayout();
+            // Keep the first and the most recent attempts, including the last
+            // actual native geometry if scrolling times out.
+            if (attempts.Count == 16) attempts.RemoveAt(1);
+            var state = CaptureParameterScrollSmokeState(scroll);
+            state["attempt"] = ++attempt; attempts.Add(state);
             if (parameterControls.TryGetValue(id, out var control) && ParameterRowIsVisible(control)
-                && (!end || scroll.VerticalOffset > scroll.ViewportHeight)) return control;
+                && (!end || scroll.VerticalOffset > scroll.ViewportHeight))
+            { trace["completed"] = true; record?.Invoke(trace); return control; }
         }
         while (DateTime.UtcNow < deadline);
+        trace["completed"] = false; record?.Invoke(trace);
+        await App.CaptureCheckpointAsync("live2d-parameters-scroll-failed");
         throw new InvalidOperationException("实际参数滚动条未到达" + (end ? "最后" : "第一") + "项。");
+    }
+
+    JsonObject CaptureParameterScrollSmokeState(ScrollViewer scroll)
+    {
+        static double? Finite(double value) => double.IsFinite(value) ? value : null;
+        var rows = new JsonArray();
+        int nativeChildren = VisualTreeHelper.GetChildrenCount(parameterRepeater);
+        for (int index = 0; index < Math.Min(32, nativeChildren); index++)
+        {
+            if (VisualTreeHelper.GetChild(parameterRepeater, index) is not ContentControl host) continue;
+            var row = host.Content as ParameterControl;
+            double? y = null;
+            string? positionError = null;
+            try
+            {
+                if (host.IsLoaded) y = Finite(host.TransformToVisual(scroll).TransformPoint(new Windows.Foundation.Point()).Y);
+            }
+            catch (Exception error) { positionError = error.Message; }
+            rows.Add(new JsonObject
+            {
+                ["index"] = parameterRepeater.GetElementIndex(host), ["id"] = row?.Id,
+                ["instance"] = row?.Instance, ["bindings"] = row?.Bindings,
+                ["hostLoaded"] = host.IsLoaded, ["rowLoaded"] = row?.IsLoaded,
+                ["height"] = Finite(host.ActualHeight), ["y"] = y, ["positionError"] = positionError
+            });
+        }
+        return new JsonObject
+        {
+            ["verticalOffset"] = Finite(scroll.VerticalOffset), ["scrollableHeight"] = Finite(scroll.ScrollableHeight),
+            ["extentHeight"] = Finite(scroll.ExtentHeight), ["viewportHeight"] = Finite(scroll.ViewportHeight),
+            ["scrollLoaded"] = scroll.IsLoaded, ["repeaterLoaded"] = parameterRepeater.IsLoaded,
+            ["repeaterHeight"] = Finite(parameterRepeater.ActualHeight), ["realized"] = parameterControls.Count,
+            ["nativeChildren"] = nativeChildren, ["rows"] = rows
+        };
     }
 
     async Task RunParameterVirtualizationSmokeAsync(Action<bool, string> check)
@@ -63,10 +109,12 @@ internal sealed partial class Live2DStudioPage
             "虚拟参数列表保留全部原生参数数据，滚动不筛掉任何模型参数");
         int initialCreated = parameterRowsCreated, initialReused = parameterRowsReused;
         var samples = new JsonArray();
+        var scrolls = new JsonArray();
         var report = new JsonObject
-        { ["parameterCount"] = parameters.Count, ["lastId"] = parameterIds[^1], ["samples"] = samples };
+        { ["parameterCount"] = parameters.Count, ["lastId"] = parameterIds[^1], ["samples"] = samples, ["scrolls"] = scrolls };
         void WriteReport() => DesktopSettings.AtomicWrite(App.SmokeEvidencePath("live2d-parameter-virtualization.json"),
             report.ToJsonString(DesktopSettings.JsonOptions));
+        void RecordScroll(JsonObject trace) { scrolls.Add(trace); WriteReport(); }
         void Record(string position)
         {
             int visual = VisualTreeHelper.GetChildrenCount(parameterRepeater);
@@ -90,12 +138,12 @@ internal sealed partial class Live2DStudioPage
         // This test runs after the existing drag/playback recordings, so the extra
         // scrolling and edits cannot precondition their GC/latency measurements.
         viewport.Focus(FocusState.Programmatic);
-        await ScrollParametersToEndSmokeAsync(false); Record("顶部");
-        await ScrollParametersToEndSmokeAsync(true); Record("底部");
+        await ScrollParametersToEndSmokeAsync(false, RecordScroll); Record("顶部");
+        await ScrollParametersToEndSmokeAsync(true, RecordScroll); Record("底部");
         check(parameterControls.ContainsKey(parameterIds[^1]) && parameterSearch.Text.Length == 0,
             "真实UIA滚动条到达完整列表最后一个参数，未用搜索或全量控件假装虚拟化");
-        await ScrollParametersToEndSmokeAsync(false); Record("编辑前滚回顶部");
-        await ScrollParametersToEndSmokeAsync(true); Record("编辑前再次到底部");
+        await ScrollParametersToEndSmokeAsync(false, RecordScroll); Record("编辑前滚回顶部");
+        await ScrollParametersToEndSmokeAsync(true, RecordScroll); Record("编辑前再次到底部");
 
         var last = parameters.Last(value => value.Maximum > value.Minimum);
         var control = await BringParameterIntoViewSmokeAsync(last.Id);
@@ -130,9 +178,9 @@ internal sealed partial class Live2DStudioPage
 
         await App.CaptureCheckpointAsync("live2d-parameters-last");
         viewport.Focus(FocusState.Programmatic);
-        await ScrollParametersToEndSmokeAsync(false); Record("滚回顶部");
-        await ScrollParametersToEndSmokeAsync(true); Record("再次到底部");
-        await ScrollParametersToEndSmokeAsync(false); Record("再次滚回顶部");
+        await ScrollParametersToEndSmokeAsync(false, RecordScroll); Record("滚回顶部");
+        await ScrollParametersToEndSmokeAsync(true, RecordScroll); Record("再次到底部");
+        await ScrollParametersToEndSmokeAsync(false, RecordScroll); Record("再次滚回顶部");
         check(parameterRowsReused > initialReused && parameterRowsCleared > 0 && parameterControls.Count < parameters.Count,
             "反复滚动复用同一批参数行，realized字典没有逐步积累全部参数控件");
         // The NumberBox pin and reset are two real undoable edits. Restore both
