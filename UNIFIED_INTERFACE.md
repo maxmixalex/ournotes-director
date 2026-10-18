@@ -28,7 +28,7 @@ validate 检查项目结构并执行资源初始化／首帧，不是全时间�
 
 `format: "ournotes-director/project"` 与 `version: 1` 明确区分旧 Shot。
 
-- `source.adv`：基础场景／资源来源，不表示只能回放这集剧情。统一项目目前必填；旧 Shot 适配默认以归档 10060 提供基础场景。Character 可用 Model 直接引用归档模型 ID，解除原剧情角色列表限制。
+- `source.adv`：可选的原剧情来源；省略时使用素材库，不绑定任何原剧情。自由项目需要显式提供 `initialize`、`commands`、`finalize` 三个数组，空数组表示该段没有指令；只有指定真实原剧情时，省略段落才表示继承。编辑、预览和导出共用这条规则。旧 Shot 兼容格式省略来源时仍默认归档 10060，新建的自由 Shot 模板显式使用 `library`。Character 可用 Model 直接引用归档模型 ID。
 - `source.site` 默认 intl，`source.language` 默认 zh-Hans。归档根目录沿用 CLI/environment 解析，不写死在项目内。
 - `initialize`、`commands`、`finalize`：省略时使用原剧情相应段；明确 `[]` 清空。原有游戏行的 cmd 和参数字段不改名。
 - `text`：合并原文本表，沿用现有多语言格式。

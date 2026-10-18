@@ -386,7 +386,7 @@ public static class CommandLineBuilder
                 return new(defaults, home.Source.AdvId?.ToString(CultureInfo.InvariantCulture), home.Duration, !home.EditState.Background,
                     home.Source.Site, SourceSpot: home.Source.SpotId.ToString(CultureInfo.InvariantCulture));
             }
-            bool unified = root["format"]?.ToString() == "ournotes-director/project";
+            bool unified = root["format"]?.ToString() == DirectorProject.Format;
             bool legacy = root["format"] is null && root["actors"] is JsonArray;
             if (command.Id.StartsWith("render.", StringComparison.Ordinal) && !unified && !legacy)
                 errors.Add(new(key, "请选择统一项目或包含 actors 的旧版 Shot 文件。普通指令文件请使用剧情操作。"));
@@ -394,9 +394,16 @@ public static class CommandLineBuilder
             string? sourceSite = null, sourceLanguage = null;
             if (unified)
             {
-                if (root["source"] is not JsonObject || string.IsNullOrWhiteSpace(sourceAdv)) errors.Add(new(key, "统一项目必须提供 source.adv。"));
-                sourceSite = root["source"]?["site"]?.ToString() ?? "intl";
-                sourceLanguage = root["source"]?["language"]?.ToString() ?? "zh-Hans";
+                // Use the editor's existing project validation instead of maintaining a
+                // second source contract here. Library projects require explicit sections;
+                // only a real story may inherit omitted opening/body/ending commands.
+                var validation = SceneDocument.Parse(root.ToJsonString(), filePath: path).Validate();
+                foreach (var issue in validation.Issues.Where(issue => issue.Severity == SceneIssueSeverity.Error))
+                    errors.Add(new(key, issue.Path + "：" + issue.Message));
+                var source = root["source"] as JsonObject;
+                sourceAdv = DirectorProject.SourceId(source);
+                sourceSite = source?["site"]?.ToString() ?? "intl";
+                sourceLanguage = source?["language"]?.ToString() ?? "zh-Hans";
                 if (root["output"] is JsonObject output)
                 {
                     foreach (string name in new[] { "width", "height", "supersample", "codec" })

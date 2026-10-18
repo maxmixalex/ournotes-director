@@ -112,7 +112,7 @@ internal sealed partial class CreativeScenePage
             key => EditAsync(() => CreativeStaging.AssignSlot(document, id, int.Parse(key))));
         inspector.Children.Add(Ui.Row(6, Button("靠近镜头", () => MoveStageDepthAsync(id, -.25f), "\uE74A"),
             Button("远离镜头", () => MoveStageDepthAsync(id, .25f), "\uE74B")));
-        ToolTipService.SetToolTip(inspector.Children[^1], "在播放头记录原作空间位移；不改变遮挡顺序。Ctrl+滚轮可连续调整。 ");
+        ToolTipService.SetToolTip(inspector.Children[^1], "在播放头记录原作空间位移；不改变遮挡顺序。普通滚轮可连续调整所选人物。 ");
         inspector.Children.Add(Button("对焦此人", () => FocusActorAsync(id), "\uE722", true));
         inspector.Children.Add(Button("添加前后移动", () => EditAsync(() => selectedClip = CreativeStaging.AddDepth(document, id, playhead, -.5, .5)), "\uE7C2"));
         StageChoice("同深度遮挡顺序", new[] { ("", "沿用原作"), ("Forward", "置于前面"), ("Back", "置于后面") }, S(actor, "layer"),
@@ -141,7 +141,7 @@ internal sealed partial class CreativeScenePage
             StageNumber("垂直位移", N(row, "Parameter2"), -1000, 1000, v => EditAsync(() => document.Clip(id)["data"]!["Parameter2"] = v));
             StageNumber("前后位移", N(row, "Parameter3"), -1000, 1000, v => EditAsync(() => document.Clip(id)["data"]!["Parameter3"] = v));
             FoldStagingFields(start, "精确位移", false);
-            inspector.Children.Add(new TextBlock { Text = "在画布上拖动人物继续摆放；Ctrl+滚轮调整前后距离。", FontSize = 12, TextWrapping = TextWrapping.Wrap });
+            inspector.Children.Add(new TextBlock { Text = "拖动人物摆放，普通滚轮调整所选人物前后距离。", FontSize = 12, TextWrapping = TextWrapping.Wrap });
             return true;
         }
         if (kind == "depth")
@@ -298,6 +298,8 @@ internal sealed partial class CreativeScenePage
         check(viewport.LastFrame!.Pixels.Rgba.SequenceEqual(savedPixels), "鼠标拖动后的图像与保存指令重放一致");
         await App.CaptureCheckpointAsync("native-space-drag");
         await VerifyMaterialAuthoringAsync(check, first, motion, expression, metadata["defaultExpression"]!.ToString());
+        await VerifyNavigationWorkflowAsync(check, first, second);
+        await VerifyProjectExportWorkflowAsync(check, first);
 
     }
 

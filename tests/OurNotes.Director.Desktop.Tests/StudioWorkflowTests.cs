@@ -37,5 +37,6 @@ internal static class StudioWorkflowTests
         check(SceneDocument.Parse(inherited.ToJsonString()).Validate().HasErrors, "library project cannot accidentally inherit unknown opening commands");
         scene.Undo(); scene.Redo();
         check(scene.ToJson() == before, "blank project commands still round-trip through undo and redo");
+        LibraryProjectWorkflowTests.Run(check);
     }
 }

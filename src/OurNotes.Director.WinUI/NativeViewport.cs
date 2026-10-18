@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using OurNotes.Director.Core;
+using OurNotes.Director.Desktop.Core;
 using Windows.Foundation;
 using Windows.UI;
 
@@ -65,8 +66,9 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         get=>selected;
         set
         {
+            if(string.IsNullOrWhiteSpace(value))value=null;
             if(selected==value)return;
-            selected=value;DrawSelection();SelectionChanged?.Invoke(this,value);
+            selected=value;DrawSelection();RefreshNavigationHint();SelectionChanged?.Invoke(this,value);
         }
     }
 
@@ -86,7 +88,6 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         var bar=new Border{Background=Brush(27,31,40),Padding=new(12,7,12,7),Child=status};
         Grid.SetRow(bar,1);root.Children.Add(bar);Content=root;
         AutomationProperties.SetName(this,"实时画布");
-        AutomationProperties.SetHelpText(this,"点击选择、拖动角色；滚轮缩放画布，Ctrl+滚轮缩放角色。");
         ToolTipService.SetToolTip(status,diagnostics);
         diagnostics.Opened+=(_,_)=>
         {
@@ -284,9 +285,9 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(surface.ActualWidth<=0||surface.ActualHeight<=0)return;
         int width=showingEmptyCanvas?emptyWidth:LastFrame?.Pixels.Width??emptyWidth;
         int height=showingEmptyCanvas?emptyHeight:LastFrame?.Pixels.Height??emptyHeight;
-        double scale=Math.Min(surface.ActualWidth/width,surface.ActualHeight/height)*viewZoom;
-        var rect=new Rect((surface.ActualWidth-width*scale)/2+viewPan.X,(surface.ActualHeight-height*scale)/2+viewPan.Y,
-            width*scale,height*scale);
+        navigation.Resize(surface.ActualWidth,surface.ActualHeight,width,height);
+        var bounds=navigation.Bounds;
+        var rect=new Rect(bounds.X,bounds.Y,bounds.Width,bounds.Height);
         LayoutGpu(rect);
         if(imageRect!=rect)
         {
@@ -339,13 +340,13 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
 
     void OnPointerPressed(object sender,PointerRoutedEventArgs args)
     {
-        if(!HasCurrentSource)return;
         var point=args.GetCurrentPoint(surface);
         if(args.Pointer.PointerDeviceType==Microsoft.UI.Input.PointerDeviceType.Mouse&&!point.Properties.IsLeftButtonPressed)return;
-        if(!InCanvas(point.Position))return;
+        Focus(FocusState.Pointer);
+        if(!HasCurrentSource||!InCanvas(point.Position)){SelectedTargetId=null;args.Handled=true;return;}
         var normalized=Normalize(point.Position);var target=HitTest(normalized.X,normalized.Y);
         TracePointer($"pressed id={args.Pointer.PointerId} point={point.Position} normalized={normalized} target={target?.Id} source={args.OriginalSource?.GetType().Name}");
-        if(target is null){SelectedTargetId=null;return;}
+        if(target is null){SelectedTargetId=null;args.Handled=true;return;}
         // Keep pointer ownership before selection rebuilds inspectors and scrolls tracks.
         Pause();dragTarget=target.Id;dragPointer=args.Pointer.PointerId;dragStart=dragLast=normalized;dragMoved=false;
         if(!surface.CapturePointer(args.Pointer)){dragTarget=null;TracePointer("capture failed");return;}
@@ -380,14 +381,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     void OnPointerWheelChanged(object sender,PointerRoutedEventArgs args)
     {
         var point=args.GetCurrentPoint(surface);
+        int delta=point.Properties.MouseWheelDelta;
+        if(delta==0||point.Properties.IsHorizontalMouseWheel)return;
+        if(dragTarget is not null||panning){args.Handled=true;return;}
         bool control=(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
-        if(!control){ZoomCanvas(point.Position,point.Properties.MouseWheelDelta);args.Handled=true;return;}
-        if(!HasCurrentSource||!InCanvas(point.Position))return;
-        var normalized=Normalize(point.Position);
-        var target=HitTest(normalized.X,normalized.Y)??LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
-        if(target is null||point.Properties.MouseWheelDelta==0)return;
-        SelectedTargetId=target.Id;Pause();
-        ObjectScaled?.Invoke(this,new(target.Id,Math.Pow(1.1,point.Properties.MouseWheelDelta/120d),true));args.Handled=true;
+        var target=HasCurrentSource?LastFrame?.Targets.LastOrDefault(target=>target.Id==selected):null;
+        switch(ViewportNavigation.WheelAction(control,selected is not null,target is not null))
+        {
+            case ViewportWheelAction.Canvas: ZoomCanvas(point.Position,delta);break;
+            case ViewportWheelAction.SelectedObject:
+                Pause();ObjectScaled?.Invoke(this,new(target!.Id,Math.Pow(1.1,delta/120d),true));break;
+        }
+        args.Handled=true;
     }
 
     public async ValueTask DisposeAsync()

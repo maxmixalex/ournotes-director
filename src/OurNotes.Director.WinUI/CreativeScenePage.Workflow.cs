@@ -35,7 +35,7 @@ internal sealed partial class CreativeScenePage
         var menu=new MenuFlyout();menu.Items.Add(StudioMenus.Item("画布适应窗口",viewport.FitCanvas,"\uE9A6",true,"F"));
         var follow = new ToggleMenuFlyoutItem { Text = "单击片段时定位画面", IsChecked = timeline.FollowSelection };
         follow.Click += (_, _) => timeline.FollowSelection = follow.IsChecked; menu.Items.Add(follow);
-        menu.Items.Add(StudioMenus.Item("画布设置",()=>{selectedActor=selectedClip=null;BuildInspector();},"\uE740"));
+        menu.Items.Add(StudioMenus.Item("画布设置",ClearSelection,"\uE740"));
         menu.Items.Add(StudioMenus.Async("场景 JSON…",()=>Safe(ShowJsonAsync),"\uE943"));
         menu.Items.Add(StudioMenus.Async("查看原生指令…",()=>Safe(ShowNativeAsync),"\uE8A5"));AddPlacementModeMenu(menu);return menu;
     }
@@ -64,7 +64,7 @@ internal sealed partial class CreativeScenePage
     MenuFlyout ClipMenu(JsonObject clip)
     {
         string id=S(clip,"id");var menu=new MenuFlyout();
-        TimelineRange ClipRange()=>TimelineRange.ForClip(N(clip,"start"),N(clip,"duration"),30,document.Duration);
+        TimelineRange ClipRange()=>RangeForClip(document.Clip(id));
         menu.Items.Add(StudioMenus.Async("导出这一段…",()=>Safe(()=>ExportAsync("clip",false,ClipRange())),"\uE898"));
         if(S(clip,"actor").Length>0)menu.Items.Add(StudioMenus.Async("仅导出这个角色的这一段…",()=>Safe(()=>ExportAsync("clip",true,ClipRange())),"\uE77B"));
         menu.Items.Add(StudioMenus.Async("播放此处",()=>Safe(async()=>{await SeekAsync(N(document.Clip(id),"start"));viewport.Play();}),"\uE768"));
@@ -75,10 +75,12 @@ internal sealed partial class CreativeScenePage
         menu.Items.Add(StudioMenus.Async("片段 JSON…",()=>Safe(()=>EditClipJsonAsync(id)),"\uE943"));menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(StudioMenus.Async("删除",()=>Safe(DeleteClipAsync),"\uE74D"));return menu;
     }
+    TimelineRange RangeForClip(JsonObject clip)=>TimelineRange.ForClip(N(clip,"start"),
+        Math.Max(1d/30,CreativeClipEditing.DisplayEnd(document,clip)-N(clip,"start")),30,document.Duration);
     internal async Task NewAsync(bool original=false)
     {
         if(original){await OpenStoryAsync();return;}if(!await ConfirmReplaceAsync())return;scrubber.Cancel();SaveDraft();viewport.InvalidateSource();previewDirty=true;loadedSourceKey=null;
-        document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);timeline.ClearRange();savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
+        document=CreativeScene.Blank(window.Settings.Site,window.Settings.Language);timeline.ResetProjectView();savedText=document.ToJson();selectedActor=selectedClip=replaceAssetClip=path=null;
         directory=Environment.CurrentDirectory;playhead=0;undo.Clear();redo.Clear();Refresh();viewport.SetEmptyCanvas(1920,1080);notice.IsOpen=false;
     }
     internal async Task OpenAsync(string? filename=null)
@@ -86,7 +88,7 @@ internal sealed partial class CreativeScenePage
         filename??=await window.PickFileAsync(extensions:[".json"]);if(filename is null)return;
         string text=await File.ReadAllTextAsync(filename);var node=JsonNode.Parse(text) as JsonObject??throw new ArgumentException("文件不是场景 JSON。");SaveDraft();
         if(S(node,"format")!=CreativeScene.Format){await ImportNativeAsync(text,Path.GetDirectoryName(Path.GetFullPath(filename))!);return;}
-        var next=new CreativeScene(node);if(!await ConfirmReplaceAsync())return;scrubber.Cancel();document=next;path=filename;directory=Path.GetDirectoryName(Path.GetFullPath(filename))!;savedText=next.ToJson();
+        var next=new CreativeScene(node);if(!await ConfirmReplaceAsync())return;scrubber.Cancel();viewport.InvalidateSource();document=next;timeline.ResetProjectView();path=filename;directory=Path.GetDirectoryName(Path.GetFullPath(filename))!;savedText=next.ToJson();
         selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;Refresh();await ReloadAsync();
     }
     async Task OpenStoryAsync()
@@ -97,9 +99,10 @@ internal sealed partial class CreativeScenePage
     }
     async Task ImportNativeAsync(string json,string baseDirectory)
     {
+        var project=ParseNativeProject(json,baseDirectory);
         if(!Directory.Exists(window.Settings.ArchivePath))throw new DirectoryNotFoundException("请先选择已下载的素材库。");
         if(!await ConfirmReplaceAsync())return;scrubber.Cancel();SaveDraft();viewport.Pause();notice.Severity=InfoBarSeverity.Informational;notice.Message="正在解析原剧情的演出和语音时间…";notice.IsOpen=true;
-        var expanded=StudioSceneDocument.FromSceneDocument(SceneDocument.Parse(json,baseDirectory:baseDirectory));
+        var expanded=StudioSceneDocument.FromSceneDocument(project);
         await Task.Run(()=>{var archive=new Archive(window.Settings.ArchivePath);expanded.ExpandInheritedSections(archive);expanded.ResolveSourceModels(archive);});
         var native=expanded.ToSceneDocument();var input=native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview"));
         try
@@ -109,15 +112,26 @@ internal sealed partial class CreativeScenePage
             foreach(var a in expanded.Actors)
                 if(!string.IsNullOrWhiteSpace(a.Model)&&!imported.Actors.OfType<JsonObject>().Any(actor=>S(actor,"id")==a.Id))
                     imported.Actors.Add((JsonNode)new JsonObject{["id"]=a.Id,["name"]=a.Id,["model"]=a.Model,["fromSource"]=true});
-            document=imported;path=null;directory=baseDirectory;savedText="";selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
+            document=imported;timeline.ResetProjectView();path=null;directory=baseDirectory;savedText="";selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
             Refresh();SaveDraft();notice.IsOpen=false;
         }
         finally{input.Dispose();}
         await ReloadAsync();
     }
+    static SceneDocument ParseNativeProject(string json,string baseDirectory)
+    {
+        var project=SceneDocument.Parse(json,baseDirectory:baseDirectory);var validation=project.Validate();
+        if(validation.HasErrors)throw new ArgumentException(string.Join(Environment.NewLine,
+            validation.Issues.Where(issue=>issue.Severity==SceneIssueSeverity.Error).Select(issue=>issue.Path+"："+issue.Message)));
+        return project;
+    }
     internal async Task SaveAsync(bool saveAs=false)
     {
         string? destination=path;if(saveAs||destination is null)destination=await window.PickFileAsync(true,path??"scene.json",[".json"]);if(destination is null)return;
+        SaveTo(destination);
+    }
+    void SaveTo(string destination)
+    {
         foreach(var clip in document.Clips.OfType<JsonObject>())if(clip["data"]?["AudioPath"] is JsonValue file)clip["data"]!["AudioPath"]=Path.GetFullPath(file.ToString(),directory);
         DesktopSettings.AtomicWrite(destination,document.ToJson());path=destination;directory=Path.GetDirectoryName(Path.GetFullPath(destination))!;savedText=document.ToJson();Refresh();
     }

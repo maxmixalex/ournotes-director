@@ -18,6 +18,7 @@ CreativeStagingTests.Run(Check);
 CreativeMaterialTests.Run(Check);
 CreativeMaterialFrameTests.Run(Check);
 StagePlacementTests.Run(Check);
+ViewportNavigationTests.Run(Check);
 await TimelineEditingTests.RunAsync(Check);
 ResultRowTests.Run(Check);
 await EngineRunnerTests.RunAsync(Check);

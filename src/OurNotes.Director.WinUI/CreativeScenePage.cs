@@ -74,6 +74,8 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             var actor=document.Actors.OfType<JsonObject>().FirstOrDefault(a=>S(a,"id")==target.Id);
             return actor is null?target.Label:DisplayNames.Character(CreativeScene.Text(actor,"name",target.Label));
         };
+        viewport.ObjectWheelHint=target=>nativePlacement&&IsSourceActor(target.Id)
+            ?"滚轮前后移动所选人物":"滚轮缩放所选人物";
         viewport.Failed+=(_,error)=>ShowError(error.Message);viewport.ContextMenuFactory=ActorMenu;
         timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>{viewport.Pause();timeline.Position=seconds;scrubber.Request(seconds);};
         timeline.ClipSelected+=id=>
@@ -115,6 +117,12 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     Button Button(string text,Func<Task> action,string glyph,bool primary=false)=>StudioLayout.AsyncTool(text,()=>Safe(action),glyph,primary);
     async Task Safe(Func<Task> action){try{if(!disposed)await action();}catch(OperationCanceledException){}catch(Exception error){if(!disposed)ShowError(error.Message);}}
     void ShowError(string message){notice.Severity=InfoBarSeverity.Error;notice.Message=message;notice.IsOpen=true;}
+    void ClearSelection()
+    {
+        selectedActor=selectedClip=replaceAssetClip=null;
+        refreshing=true;try{viewport.SelectedTargetId=null;}finally{refreshing=false;}
+        timeline.Select(null);RefreshActors();BuildInspector();_=Safe(LoadAssetsAsync);
+    }
     void Refresh(){RefreshActors();timeline.Refresh(document,selectedClip);timeline.Position=playhead;BuildInspector();title.Text=(path is null?"未命名场景":Path.GetFileNameWithoutExtension(path))+(HasUnsavedChanges?" ●":"");}
     void RefreshActors()
     {

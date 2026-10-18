@@ -46,6 +46,14 @@ internal sealed partial class ClipTimeline
     public void MarkOut() => SetRange((workRange ?? TimelineRange.Full(length, framesPerSecond))
         .MarkOut(Math.Min(position, length)));
     public void ClearRange() { workRange = null; UpdateRangeLabel(); DrawRuler(); }
+    public void ResetProjectView()
+    {
+        // Two separate projects may use the same archive and language. The host knows
+        // when a document is replaced; source metadata alone cannot identify that change.
+        sourceKey = null; filteredActor = null; selected = null; fitPending = true;
+        IsPlaying = false; Position = 0; ClearRange();
+        scroll.ChangeView(0, 0, null, true);
+    }
     public void SetRange(TimelineRange range)
     {
         workRange = range.ClampTo(TimelineRange.Full(length, framesPerSecond));

@@ -15,8 +15,8 @@ internal sealed partial class CreativeScenePage
     {
         var native = new ToggleMenuFlyoutItem { Text = "拖动原作空间位置", IsChecked = nativePlacement };
         var overlay = new ToggleMenuFlyoutItem { Text = "拖动画面偏移（扩展）", IsChecked = !nativePlacement };
-        native.Click += (_, _) => { nativePlacement = true; stageGesture = null; BuildInspector(); };
-        overlay.Click += (_, _) => { nativePlacement = false; stageGesture = null; BuildInspector(); };
+        native.Click += (_, _) => { nativePlacement = true; stageGesture = null; viewport.RefreshNavigationHint(); BuildInspector(); };
+        overlay.Click += (_, _) => { nativePlacement = false; stageGesture = null; viewport.RefreshNavigationHint(); BuildInspector(); };
         menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(native); menu.Items.Add(overlay);
     }
     PlacementGesture StartPlacement(string actor)

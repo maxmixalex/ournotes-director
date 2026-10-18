@@ -10,6 +10,7 @@ NativeLogging.ConfigureConsole();
 var json = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 try
 {
+    SmokeGraphics.Configure();
     var options = new Dictionary<string, string>(); var positional = new List<string>();
     var flags = new HashSet<string> { "json", "with-voice", "overwrite", "help", "resume", "clean", "until-end", "debug", "no-deep", "loop", "no-background" };
     var allowed = new HashSet<string> { "archive", "band", "site", "lang", "speaker", "actor", "character", "kind", "adv", "model", "limit", "offset", "out", "cubism-sdk", "dll", "time", "times", "columns", "codec", "cineform-quality", "ffmpeg", "ffprobe", "start", "duration", "template", "gap", "silent-seconds", "audio", "subtitles", "script", "width", "height", "supersample", "speed", "sites", "languages", "concurrency", "retries", "animation", "framing", "fps", "project" };

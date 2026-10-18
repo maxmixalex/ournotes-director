@@ -299,7 +299,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
             {
                 bool visible = document.TransformAt(character.Key, document.Playhead).Visible;
                 var item = new ListViewItem { Tag = character.Key, Content = Ui.Text(character.Name + (visible ? "" : " · 已隐藏")) };
-                ToolTipService.SetToolTip(item, character.Supported ? "拖动摆放 · Ctrl+滚轮缩放角色 · 右键导出素材" : character.Error);
+                ToolTipService.SetToolTip(item, character.Supported ? "拖动摆放 · 普通滚轮缩放所选角色 · 右键导出素材" : character.Error);
                 StudioMenus.Context(item, () => { Select(character.Key); return document?.SelectedCharacterKey == character.Key; }, HomeObjectMenu);
                 objects.Items.Add(item);
             }

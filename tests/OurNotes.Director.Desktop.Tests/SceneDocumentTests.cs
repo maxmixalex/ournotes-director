@@ -278,6 +278,20 @@ public static class SceneDocumentTests
             check(!document.Validate().HasErrors && native.Adv == "selected-source" && native.Site == "jp" && native.Language == "ja",
                 "scene template agrees with native project reader: " + template.Key);
         }
+        foreach (var template in SceneTemplates.All.Where(template => template.Key != "story-patch"))
+        {
+            var document = SceneTemplates.Create(template.Key, new SceneSource("", "jp", "ja"), "selected-model", "selected-second-model");
+            string path = Path.Combine(folder, "library-" + template.Key + ".json");
+            document.Save(path);
+            var native = DirectorProject.Read(path);
+            check(!document.Validate().HasErrors && document.Source.IsLibrary && native.Adv == DirectorProject.LibrarySource
+                && native.Site == "jp" && native.Language == "ja",
+                "new material template uses the shared library through the native adapter: " + template.Key);
+            if (document.Kind == SceneDocumentKind.UnifiedProject)
+                check(document.Root["source"]?["adv"] is null && new[] { "initialize", "commands", "finalize" }
+                    .All(section => document.Root[section] is JsonArray),
+                    "library template has explicit performance sections without a source story: " + template.Key);
+        }
         var original = SceneTemplates.Create("story-patch", "42");
         check(!original.Root.ContainsKey("initialize") && !original.Root.ContainsKey("commands") && !original.Root.ContainsKey("finalize"),
             "scene story patch template inherits all original plot sections");
@@ -288,6 +302,9 @@ public static class SceneDocumentTests
         check(Throws<ArgumentException>(() => SceneTemplates.Create("duet-background", "42", "m")) &&
             Throws<ArgumentException>(() => SceneTemplates.Create("transparent-actor", "42")),
             "scene model-dependent templates require the actual UI model selection");
+        check(new[] { "", " ", DirectorProject.LibrarySource }.All(source =>
+                Throws<ArgumentException>(() => SceneTemplates.Create("story-patch", new SceneSource(source, "jp", "ja")))),
+            "only the original-story template requires a real source to inherit");
     }
 
     static SceneDocument Project(string properties, string? baseDirectory = null) => SceneDocument.Parse(

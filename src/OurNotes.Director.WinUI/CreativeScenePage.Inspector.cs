@@ -42,6 +42,11 @@ internal sealed partial class CreativeScenePage
             var start=Field("开始（秒）",N(clip,"start"),0,36000,v=>EditAsync(()=>document.MoveClip(id,v)));
             if(document.CanResize(clip))
             {var duration=Field("持续（秒）",N(clip,"duration"),1d/30,36000,v=>EditAsync(()=>document.ResizeClip(id,v)));StudioLayout.PairFields(inspector,start,duration);}
+            else if(kind=="expression"||kind=="motion"&&IsSourceActor(S(clip,"actor")))
+            {
+                double end=Math.Max(N(clip,"start")+1d/30,CreativeClipEditing.DisplayEnd(document,clip));
+                Help($"保持区间 {N(clip,"start"):0.###}–{end:0.###} 秒（{end-N(clip,"start"):0.###} 秒）");
+            }
             else Help($"持续 {N(clip,"duration"):0.###} 秒");
             if(BuildStagingClipInspector(clip))return;
             if(kind=="voice")
@@ -204,8 +209,14 @@ internal sealed partial class CreativeScenePage
     {
         var clipboard=Clipboard.GetContent();if(!clipboard.Contains(StandardDataFormats.Text))throw new ArgumentException("剪贴板没有 JSON。");string text=CreativeScene.UnwrapJson(await clipboard.GetTextAsync());
         bool creative=JsonNode.Parse(text)?["format"]?.ToString()==CreativeScene.Format;
-        var result=await EditJsonDialogAsync(creative?"粘贴场景":"导入原生项目",text,value=>{if(creative)CreativeScene.Parse(value);else SceneDocument.Parse(value,baseDirectory:directory);});
-        if(result is null)return;if(creative)await EditAsync(()=>{document=CreativeScene.Parse(result);selectedActor=selectedClip=null;});else await ImportNativeAsync(result,directory);
+        var result=await EditJsonDialogAsync(creative?"粘贴场景":"导入原生项目",text,value=>{if(creative)CreativeScene.Parse(value);else ParseNativeProject(value,directory);});
+        if(result is null)return;
+        if(creative)
+        {
+            var next=CreativeScene.Parse(result);if(next.ToJson()==document.ToJson())return;
+            await EditAsync(()=>{document=next;selectedActor=selectedClip=replaceAssetClip=null;playhead=0;timeline.ResetProjectView();});
+        }
+        else await ImportNativeAsync(result,directory);
     }
     async Task EditClipJsonAsync(string id)
     {
