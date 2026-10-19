@@ -257,10 +257,10 @@ public sealed class CreativeScene
             int end=ends[index];
             string label=t.Command is "Talk" or "Voice"?DialogueLabel(native,row,scene.Language):Text(row,"MotionName",Text(row,"ExpressionName",t.Command));
             var clip=NewClip(actor,kind,t.StartFrame/30d,Math.Max(1,end-t.StartFrame)/30d,row,label);
-            clip["sourcePerformance"]=true; scene.Clips.Add(clip);
+            clip["sourcePerformance"]=true; scene.Clips.Add((JsonNode)clip);
         }
         double tail=(timing.EndFrame.Value+1)/30d, contentEnd=scene.Clips.OfType<JsonObject>().Select(c=>Number(c,"start")+Number(c,"duration")).DefaultIfEmpty(0).Max();
-        if(tail>contentEnd+0.0001)scene.Clips.Add(NewClip("","hold",contentEnd,tail-contentEnd,new JsonObject{["cmd"]="Delay",["Frames"]=0},"结束停留"));
+        if(tail>contentEnd+0.0001)scene.Clips.Add((JsonNode)NewClip("","hold",contentEnd,tail-contentEnd,new JsonObject{["cmd"]="Delay",["Frames"]=0},"结束停留"));
         scene.Validate();return scene;
     }
     static string DialogueLabel(JsonObject root,JsonObject row,string language)
