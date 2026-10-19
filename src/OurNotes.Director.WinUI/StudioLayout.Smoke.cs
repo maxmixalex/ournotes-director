@@ -91,7 +91,12 @@ internal sealed partial class StudioLayout
             var item = menu.Items.OfType<MenuFlyoutItem>().First(entry => entry.Text == title);
             var peer = FrameworkElementAutomationPeer.CreatePeerForElement(item) ?? new MenuFlyoutItemAutomationPeer(item);
             if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke) throw new InvalidOperationException("窗口菜单缺少原生 Invoke 接口。");
-            invoke.Invoke(); await Task.Delay(35);
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            RoutedEventHandler clicked = (_, _) => completed.TrySetResult();
+            item.Click += clicked;
+            try { invoke.Invoke(); await completed.Task.WaitAsync(TimeSpan.FromSeconds(2)); }
+            finally { item.Click -= clicked; }
+            UpdateLayout();
         }
         finally { menu.Hide(); }
     }

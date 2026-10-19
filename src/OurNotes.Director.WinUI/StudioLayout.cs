@@ -186,14 +186,18 @@ internal sealed partial class StudioLayout : UserControl
 
     internal MenuFlyout CreateWindowMenu()
     {
+        // A flyout moves focus and restores it again before raising its command.
+        // The command belongs to the panel active when the menu was opened, not
+        // whichever monitor receives that later focus-restoration notification.
+        var targetPanel = active ?? ProgramMonitorPanel;
         var menu = new MenuFlyout();
         foreach (var panel in panels)
         {
-            var item = new ToggleMenuFlyoutItem { Text = panel.Title, IsChecked = panel == active };
+            var item = new ToggleMenuFlyoutItem { Text = panel.Title, IsChecked = panel == targetPanel };
             item.Click += (_, _) => FocusPanel(panel.Id); menu.Items.Add(item);
         }
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(StudioMenus.Item(maximized is null ? "最大化当前面板" : "恢复面板大小", () => ToggleMaximize(), shortcut: "Shift+`"));
+        menu.Items.Add(StudioMenus.Item(maximized is null ? "最大化当前面板" : "恢复面板大小", () => ToggleMaximize(targetPanel), shortcut: "Shift+`"));
         menu.Items.Add(StudioMenus.Item("恢复工作区布局", ResetLayout));
         return menu;
     }
