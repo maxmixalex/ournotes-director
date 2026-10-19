@@ -27,8 +27,8 @@ internal sealed partial class SettingsPage
         {
             int preference = int.Parse(item.Tag!.ToString()!, System.Globalization.CultureInfo.InvariantCulture);
             string label = preference switch { 1 => "节能", 2 => "高性能", _ => "由 Windows 选择" };
-            string? adapter = preference == 0 ? null : GpuPreviewSurface.PreferredAdapterName(preference);
-            item.Content = adapter is null ? label : label + " — " + adapter;
+            string? candidateAdapter = preference == 0 ? null : GpuPreviewSurface.PreferredAdapterName(preference);
+            item.Content = candidateAdapter is null ? label : label + " — " + candidateAdapter;
         }
         var viewports = _window.ActiveLayout is { } layout ? MainWindow.Descendants<NativeViewport>(layout).ToArray() : [];
         var viewport = viewports.FirstOrDefault(value => value.LastFrame is not null);
