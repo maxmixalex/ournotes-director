@@ -62,11 +62,47 @@ static class SceneInteractionNativeTests
             catch (ArgumentOutOfRangeException) { rejected = true; }
             Check(rejected && ReferenceEquals(final, session.LastFrame), "Invalid drawing budgets fail before altering a live native session");
             Check(File.ReadAllText(project) == saved, "No interaction rendering choice is written into the project or export settings");
+            await VerifyQueuedCancellationAsync(session, Check);
             report["ok"] = true;
             report["referenceWidth"] = 640; report["referenceHeight"] = 360;
             Console.WriteLine($"Passed {checks.Count} real scene interaction-quality and native-state checks.");
             return 0;
         }
         finally { File.WriteAllText(Path.Combine(output, "interaction-quality.json"), report.ToJsonString()); }
+    }
+
+    static async Task VerifyQueuedCancellationAsync(RealtimePreviewSession session, Action<bool, string> check)
+    {
+        int failures = 0;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        using var cancelled = new CancellationTokenSource();
+        void Failed(object? sender, Exception error) => Interlocked.Increment(ref failures);
+        void Frame(object? sender, PreviewFrame frame)
+        {
+            if (!entered.TrySetResult()) return;
+            if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Cancellation test did not release the native thread.");
+        }
+        session.Failed += Failed; session.FrameReady += Frame;
+        Task? drawing = null;
+        try
+        {
+            drawing = session.SeekAsync(session.LastFrame!.Time);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var request = session.SetScenePreviewScaleAsync(.25, cancelled.Token);
+            cancelled.Cancel(); release.Set();
+            await drawing;
+            bool rejected = false;
+            try { await request; } catch (OperationCanceledException) { rejected = true; }
+            await session.SynchronizeAsync();
+            check(rejected && request.IsCanceled && failures == 0 && session.LastFrame!.ScenePreviewScale == 1,
+                "Cancelling a queued interaction budget keeps full quality and reports cancellation without a renderer failure");
+        }
+        finally
+        {
+            release.Set();
+            session.FrameReady -= Frame; session.Failed -= Failed;
+            if (drawing is not null) await drawing;
+        }
     }
 }

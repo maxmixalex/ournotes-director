@@ -8,7 +8,7 @@ namespace OurNotes.Director.Core;
 public sealed class AdvPostFx
 {
     readonly OffscreenGl gl;readonly UnityShaderLibrary shaders;
-    readonly Dictionary<string,Surface> targets=[];
+    readonly Dictionary<(string Name,int Width,int Height,bool Hdr),Surface> targets=[];
     readonly Dictionary<string,uint> curves=[];
     readonly uint black,gray,depth;
     readonly Surface lut;
@@ -26,8 +26,12 @@ public sealed class AdvPostFx
     }
     Surface Target(string name,int w,int h,bool hdr=true)
     {
-        if(targets.TryGetValue(name,out var existing)){if(existing.Width!=w||existing.Height!=h)throw new InvalidOperationException("Post target size changed within a render");return existing;}
-        return targets[name]=hdr?gl.FloatSurface(w,h):gl.Surface(w,h);
+        // Scene scrubbing uses three bounded drawing sizes in the same GL context.
+        // Keep each effect's reference and interaction targets distinct, including
+        // their colour formats. Returning to full quality reuses the original FBO.
+        var key=(name,w,h,hdr);
+        if(targets.TryGetValue(key,out var existing))return existing;
+        return targets[key]=hdr?gl.FloatSurface(w,h):gl.Surface(w,h);
     }
     static float N(JsonNode node,string key)=>Actor.N(node[key]);
     static float[] V(JsonNode node,string key,bool color=false)=> (color?new[]{"r","g","b","a"}:new[]{"x","y","z","w"}).Select(k=>Actor.N(node[key]?[k])).ToArray();

@@ -388,6 +388,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 if(item is not null)
                 {
                     try{item.Action();item.Completion?.TrySetResult();}
+                    catch(OperationCanceledException exception) when(exception.CancellationToken.IsCancellationRequested)
+                    {
+                        // A queued resize/quality request cancelled before execution
+                        // is not a broken renderer or a reason to stop playback.
+                        item.Completion?.TrySetCanceled(exception.CancellationToken);
+                    }
                     catch(Exception exception){item.Completion?.TrySetException(exception);ReportFailure(exception);}
                     continue;
                 }

@@ -45,8 +45,13 @@ public sealed partial class NativeViewport
         RecordPreviewOperation("resize.end");
     }
 
-    public Task SetScenePreviewScaleAsync(double scale, CancellationToken cancellationToken = default) =>
-        session.SetScenePreviewScaleAsync(scale, cancellationToken);
+    public async Task SetScenePreviewScaleAsync(double scale, CancellationToken cancellationToken = default)
+    {
+        await session.SetScenePreviewScaleAsync(scale, cancellationToken);
+        // Even a fast settled frame must replace the temporary quality label;
+        // a paused monitor may never publish another frame after this one.
+        statusClock = 0;
+    }
 
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows, IsolatedActorTransform? transform)
     {
