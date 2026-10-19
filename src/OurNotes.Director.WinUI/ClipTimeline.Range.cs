@@ -52,6 +52,9 @@ internal sealed partial class ClipTimeline
         // when a document is replaced; source metadata alone cannot identify that change.
         // Project replacement must not enqueue a final seek into the new document.
         scrubbing = false;
+        dragging = null;
+        var previousDragBar = dragBar; dragBar = null;
+        previousDragBar?.ReleasePointerCaptures();
         canvas.ReleasePointerCaptures(); ruler.ReleasePointerCaptures();
         sourceKey = null; filteredActor = null; selected = null; fitPending = true; collapsedGroups.Clear();
         IsPlaying = false; Position = 0; ClearRange();

@@ -5,6 +5,16 @@ namespace OurNotes.Director.Core;
 
 public sealed partial class GpuPreviewSurface
 {
+    static int adapterPreference;
+    /// <summary>Configure before creating any render sessions. This only orders
+    /// compatible presentation adapters; WGL's rendering GPU is selected by the
+    /// Windows executable policy at process launch and is reported separately.</summary>
+    public static void ConfigureAdapterPreference(int preference)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(preference);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(preference, 2);
+        Volatile.Write(ref adapterPreference, preference);
+    }
     string? adapterName;
     public string AdapterName
     {
@@ -34,4 +44,6 @@ public sealed partial class GpuPreviewSurface
     static extern int OurNotesGpuAdapterName(nint surface, StringBuilder name, uint capacity);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode, ExactSpelling = true)]
     static extern int OurNotesGpuPreferredAdapter(uint preference, StringBuilder name, uint capacity);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    static extern int OurNotesGpuCreatePreferred(uint width, uint height, uint preference, out nint surface);
 }

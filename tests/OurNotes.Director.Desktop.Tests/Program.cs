@@ -24,6 +24,8 @@ ViewportNavigationTests.Run(Check);
 WorkspaceLayoutSettingsTests.Run(Check);
 await TimelineEditingTests.RunAsync(Check);
 EditorPerformanceTests.Run(Check);
+GpuPreferenceTests.Run(Check);
+CreativeSourceImporterTests.Run(Check);
 SceneInteractionPreviewTests.Run(Check);
 ResultRowTests.Run(Check);
 await EngineRunnerTests.RunAsync(Check);

@@ -7,6 +7,7 @@ namespace OurNotes.Director.Core;
 public sealed partial class GpuPreviewSurface : IDisposable
 {
     const string Library = "OurNotes.GpuPreview.dll";
+    const uint AbiVersion = 2;
     readonly object gate = new();
     readonly int owner = Environment.CurrentManagedThreadId;
     nint handle;
@@ -20,8 +21,8 @@ public sealed partial class GpuPreviewSurface : IDisposable
         if (!OperatingSystem.IsWindows()) { reason = "当前平台使用 OpenGL 像素显示"; return false; }
         try
         {
-            if (OurNotesGpuAbi() != 1) { reason = "GPU 显示组件版本不匹配"; return false; }
-            int hr = OurNotesGpuCreate((uint)width, (uint)height, out nint native);
+            if (OurNotesGpuAbi() != AbiVersion) { reason = "GPU 显示组件版本不匹配"; return false; }
+            int hr = OurNotesGpuCreatePreferred((uint)width, (uint)height, (uint)Volatile.Read(ref adapterPreference), out nint native);
             if (hr < 0)
             { reason = hr == unchecked((int)0x887A0004) ? "显卡驱动未提供 OpenGL / D3D11 共享纹理" : $"共享纹理初始化失败（0x{hr:X8}）"; return false; }
             surface = new(native, width, height); return true;
@@ -59,13 +60,13 @@ public sealed partial class GpuPreviewSurface : IDisposable
     // It deliberately does NOT report hardware or WGL interop coverage.
     public static GpuPreviewSurface CreateCompositionTest(int width, int height)
     {
+        if (OurNotesGpuAbi() != AbiVersion) throw new InvalidDataException("GPU 显示组件版本不匹配");
         Marshal.ThrowExceptionForHR(OurNotesGpuCreateTest((uint)width, (uint)height, out nint native));
         return new(native, width, height);
     }
     public uint ReadCompositionTestPixel()
     { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPixel(handle, out uint pixel)); return pixel; }
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern uint OurNotesGpuAbi();
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuCreate(uint width, uint height, out nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuPresent(nint surface, uint framebuffer, uint width, uint height);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuDestroy(nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern nint OurNotesGpuAcquireSwapChain(nint surface);

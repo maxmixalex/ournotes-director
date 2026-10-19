@@ -66,7 +66,7 @@ internal sealed partial class CreativeScenePage
         TimelineRange ClipRange()=>RangeForClip(document.Clip(id));
         menu.Items.Add(StudioMenus.Async("导出这一段…",()=>Safe(()=>ExportAsync("clip",ClipRange())),"\uE898"));
         if(S(clip,"actor").Length>0)menu.Items.Add(StudioMenus.Async("在 Live2D 中打开角色区间…",()=>Safe(()=>OpenActorInLive2DAsync(ClipRange())),"\uE8A7"));
-        menu.Items.Add(StudioMenus.Async("播放此处",()=>Safe(async()=>{await SeekAsync(N(document.Clip(id),"start"));viewport.Play();}),"\uE768"));
+        menu.Items.Add(StudioMenus.Async("播放此处",()=>Safe(async()=>{if(await SeekAfterScrubAsync(N(document.Clip(id),"start")))viewport.Play();}),"\uE768"));
         menu.Items.Add(StudioMenus.Async("在播放头分割",()=>Safe(()=>EditAsync(()=>{var result=CreativeClipEditing.Split(document,id,playhead);document=result.Scene;selectedClip=result.Selection;})),"\uE8C6",CreativeClipEditing.CanSplit(clip,playhead),"Ctrl+K"));
         menu.Items.Add(StudioMenus.Async("复制片段",()=>Safe(()=>EditAsync(()=>selectedClip=document.DuplicateClip(id))),"\uE8C8"));
         if(S(clip,"kind") is "motion" or "expression")menu.Items.Add(StudioMenus.Async("替换素材…",()=>Safe(()=>ChooseReplacementAsync(id)),"\uE8D2"));
@@ -129,16 +129,10 @@ internal sealed partial class CreativeScenePage
             string archivePath=window.Settings.ArchivePath;
             // Parsing, expansion and conversion all operate on private documents.
             // Neither file IO nor prefix-by-prefix JSON validation belongs on UI.
-            var expanded=await Task.Run(()=>
-            {
-                var project=ParseNativeProject(json,baseDirectory);
-                var value=StudioSceneDocument.FromSceneDocument(project);
-                var archive=new Archive(archivePath);value.ExpandInheritedSections(archive);value.ResolveSourceModels(archive);
-                return value;
-            });
+            var expanded=await Task.Run(()=>CreativeSourceImporter.Prepare(json,baseDirectory,new Archive(archivePath),cancellation.Token),cancellation.Token);
             RequireOwner();Mark("parseAndExpandMs");
-            var native=await Task.Run(()=>expanded.ToSceneDocument());
-            input=await Task.Run(()=>native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview")));
+            var native=expanded.Document;
+            input=await Task.Run(()=>native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview")),cancellation.Token);
             RequireOwner();Mark("snapshotMs");
             notice.Message="正在解析演出和真实语音时间…";
             var size=PreviewSize(native.Output.Width,native.Output.Height);
@@ -151,15 +145,7 @@ internal sealed partial class CreativeScenePage
             var timing=await importAnalysis;
             RequireOwner();Mark("nativeTimingMs");
             notice.Message="正在建立可编辑时间轴…";
-            var imported=await Task.Run(()=>
-            {
-                var value=CreativeScene.FromPerformance(native.Root,timing);
-                var actorIds=value.Actors.OfType<JsonObject>().Select(actor=>S(actor,"id")).ToHashSet(StringComparer.Ordinal);
-                foreach(var actor in expanded.Actors)
-                    if(!string.IsNullOrWhiteSpace(actor.Model)&&actorIds.Add(actor.Id))
-                        value.Actors.Add((JsonNode)new JsonObject{["id"]=actor.Id,["name"]=actor.Id,["model"]=actor.Model,["fromSource"]=true});
-                return value;
-            });
+            var imported=await Task.Run(()=>expanded.CreateScene(timing,cancellation.Token),cancellation.Token);
             RequireOwner();Mark("convertTimelineMs");
             document=imported;timeline.ResetProjectView();ResetProjectLibrary();path=null;directory=baseDirectory;savedText="";
             selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
@@ -316,15 +302,30 @@ internal sealed partial class CreativeScenePage
             await viewport.SeekAsync(target,cancellationToken);
         }
     }
+    async Task<bool> SeekAfterScrubAsync(double seconds)
+    {
+        var owner=document;
+        await scrubber.FlushAsync();
+        if(disposed||!ReferenceEquals(owner,document))return false;
+        await SeekAsync(seconds);
+        return !disposed&&ReferenceEquals(owner,document);
+    }
     async Task TogglePlayAsync()
     {
+        var owner=document;
         await scrubber.FlushAsync();
+        if(disposed||!ReferenceEquals(owner,document))return;
         if(viewport.IsPlaying){viewport.Pause();timeline.IsPlaying=false;return;}if(previewDirty||!viewport.HasCurrentSource)await ReloadAsync();if(!viewport.HasCurrentSource)return;
-        if(playhead<timeline.PlaybackStart||playhead>=timeline.PlaybackLastTime-1d/60)await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);timeline.IsPlaying=true;
+        if(disposed||!ReferenceEquals(owner,document))return;
+        if(playhead<timeline.PlaybackStart||playhead>=timeline.PlaybackLastTime-1d/60)await SeekAsync(timeline.PlaybackStart);
+        if(disposed||!ReferenceEquals(owner,document))return;
+        viewport.Play(timeline.WorkRange?.End);timeline.IsPlaying=true;
     }
     async Task ExportAsync(string kind,TimelineRange? rangeOverride=null)
     {
+        var owner=document;
         await scrubber.FlushAsync();
+        if(disposed||!ReferenceEquals(owner,document))return;
         viewport.Pause();
         var native=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);
         // This read-only view supplies shared export settings without invoking the old

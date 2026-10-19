@@ -17,6 +17,8 @@ public sealed partial class NativeViewport
     string? displayFailure;
     Windows.Foundation.Rect lastGpuRect;
     GpuPreviewSurface? scaledGpu;
+    internal string? PresentationAdapterName => gpuPanel.Visibility == Visibility.Visible ? attachedGpu?.AdapterName : null;
+    internal string? PresentationFailure => displayFailure ?? LastFrame?.PresentationFallback;
     void InitializeGpuPresentation()
     {
         surface.Children.Insert(surface.Children.IndexOf(overlay), gpuPanel);
@@ -74,6 +76,8 @@ public sealed partial class NativeViewport
     internal void RunGpuCompositionSmoke(Action<bool, string> check)
     {
         using var test = GpuPreviewSurface.CreateCompositionTest(64, 64);
+        check(!string.IsNullOrWhiteSpace(test.AdapterName) && test.AdapterName != "未取得 D3D11 设备名称",
+            "呈现设备名称由真实 D3D11 设备返回，不把请求的显卡名称当作当前设备");
         uint rgba = test.ReadCompositionTestPixel();
         test.SetDisplaySize(128, 96);
         check((rgba >> 24) == 255 && ((rgba >> 8) & 255) is >= 127 and <= 128 && ((rgba >> 16) & 255) is >= 191 and <= 192,

@@ -63,6 +63,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     public PreviewFrame? LastFrame=>Volatile.Read(ref lastFrame);
     public Func<PreviewTarget,string>? TargetLabel { get; set; }
     public bool IsPlaying=>session.IsPlaying;
+    public double ScenePreviewScale=>session.ScenePreviewScale;
     public bool HasCurrentSource{get;private set;}
     public string? SelectedTargetId
     {
@@ -156,7 +157,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     {
         RecordPreviewOperation("seek.begin");
         await session.SeekAsync(seconds,cancellationToken);
-        await AwaitPresentationAsync();
+        await AwaitPresentationAsync(cancellationToken);
         RecordPreviewOperation("seek.end");
     }
     public async Task PauseForEditingAsync()
@@ -193,16 +194,19 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await AwaitPresentationAsync();
         RecordPreviewOperation("transform.end", hasTransform: true);
     }
-    async Task AwaitPresentationAsync()
+    async Task AwaitPresentationAsync(CancellationToken cancellationToken=default)
     {
-        if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);
+        // A project change can discard this native frame before XAML presents it.
+        cancellationToken.ThrowIfCancellationRequested();
+        if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1,cancellationToken:cancellationToken);
     }
     public void Play(double? exclusiveEndSeconds=null){RecordPreviewOperation("play");session.Play(exclusiveEndSeconds);}
     public void Pause(){RecordPreviewOperation("pause");session.Pause();}
 
     /// <summary>Completes only after the raw native pixels have been copied into the XAML image.</summary>
-    public async Task<PreviewFrame> WaitForFrameAsync(long afterSequence=0,TimeSpan? timeout=null)
+    public async Task<PreviewFrame> WaitForFrameAsync(long afterSequence=0,TimeSpan? timeout=null,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var completion=new TaskCompletionSource<PreviewFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock(frameGate)
         {
@@ -210,7 +214,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             if(lastFrame is {} current&&current.Sequence>afterSequence)return current;
             waiters.Add((afterSequence,completion));
         }
-        try{return await completion.Task.WaitAsync(timeout??TimeSpan.FromSeconds(30));}
+        try{return await completion.Task.WaitAsync(timeout??TimeSpan.FromSeconds(30),cancellationToken);}
         finally{lock(frameGate)waiters.RemoveAll(waiter=>ReferenceEquals(waiter.Completion,completion));}
     }
 

@@ -29,6 +29,15 @@ internal sealed partial class ClipTimeline
             "真实轨道高度滑块调整纵向高度，不改变横向比例或项目数据");
         await App.CaptureCheckpointAsync("timeline-tall-tracks");
         heightSlider.Value = oldHeight; UpdateLayout();
+
+        var hidden = group.Items.First();
+        FilterActor(""); Select(hidden.Id); collapsedGroups.Add(group.GroupKey!);
+        UpdateLanes(); Draw(); FitSelection();
+        await Task.Delay(60); UpdateLayout();
+        check(filteredActor is null && !collapsedGroups.Contains(group.GroupKey!)
+            && IsSelectedLaneVisible && IsSelectionVisible && WorkRange == range && items.Length == itemCount,
+            "显示所选片段解除排除它的角色筛选并展开父组，横向与纵向都能看到所选片段，入出点保持不变");
+        Select(selection); Fit(); scroll.ChangeView(null, 0, null, true); Draw();
     }
     internal (FrameworkElement Element, double StartX, double EndX, double EndTime) ScrubCoordinates(double start, double end)
     {

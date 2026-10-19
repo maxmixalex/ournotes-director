@@ -190,8 +190,25 @@ public sealed class AdvAudio
         }
         foreach(var name in names)ChangeVolume(name,volume);
     }
-    public static AdvCue Decode(Archive archive,string site,JsonNode manifest,JsonNode episode,long soundId,string ffmpeg="ffmpeg")
+    public static AdvCue Decode(Archive archive,string site,JsonNode manifest,JsonNode episode,long soundId,string ffmpeg="ffmpeg",CancellationToken cancellationToken=default)
+        =>Decode(archive,site,manifest,episode,soundId,ffmpeg,cancellationToken,long.MaxValue);
+
+    internal static Func<Func<long,CancellationToken,long,AdvCue>> IndependentDecoder(Archive archive,string site,JsonNode manifest,JsonNode episode,string ffmpeg)
     {
+        // Freeze exactly the resources already loaded by this native interpreter.
+        // Each worker gets independent JsonNode lazy state, without reading a newer
+        // manifest or concurrently materializing a playback-owned JSON object.
+        string manifestJson=manifest.ToJsonString(),episodeJson=episode.ToJsonString();
+        return ()=>
+        {
+            var workerManifest=JsonNode.Parse(manifestJson)!;var workerEpisode=JsonNode.Parse(episodeJson)!;
+            return (id,token,limit)=>Decode(archive,site,workerManifest,workerEpisode,id,ffmpeg,token,limit);
+        };
+    }
+
+    internal static AdvCue Decode(Archive archive,string site,JsonNode manifest,JsonNode episode,long soundId,string ffmpeg,CancellationToken cancellationToken,long maximumBytes)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         var sound=episode["sounds"]?[soundId.ToString(CultureInfo.InvariantCulture)]??throw new InvalidDataException("Sound absent from episode");
         if(sound["_isRandomPitch"]?.GetValue<bool>()==true)throw new NotSupportedException("Random pitch is not implemented by reference engine");
         var sheet=episode["cuesheets"]![Archive.S(sound,"_soundCueSheetID")]!;
@@ -205,17 +222,37 @@ public sealed class AdvAudio
         try
         {
             File.WriteAllBytes(temporary,encoded);
+            cancellationToken.ThrowIfCancellationRequested();
             var start=new ProcessStartInfo(ffmpeg){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             foreach(var a in new[]{"-v","error","-nostdin","-i",temporary,"-f","f32le","-ar","48000","-ac",channels.ToString(CultureInfo.InvariantCulture),"pipe:1"})start.ArgumentList.Add(a);
             using var process=Process.Start(start)??throw new IOException("FFmpeg did not start");
-            using var output=new MemoryStream();var read=process.StandardOutput.BaseStream.CopyToAsync(output);var error=process.StandardError.ReadToEndAsync();
-            try{read.GetAwaiter().GetResult();process.WaitForExit();if(process.ExitCode!=0)throw new IOException(error.GetAwaiter().GetResult());}
-            finally{if(!process.HasExited)process.Kill(true);}
+            using var output=new MemoryStream();var read=ReadPcm(process.StandardOutput.BaseStream,output,maximumBytes,cancellationToken);var error=process.StandardError.ReadToEndAsync();
+            try{read.GetAwaiter().GetResult();process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();cancellationToken.ThrowIfCancellationRequested();if(process.ExitCode!=0)throw new IOException(error.GetAwaiter().GetResult());}
+            finally
+            {
+                if(!process.HasExited)try{process.Kill(true);}catch(InvalidOperationException){ }
+                process.WaitForExit(); // Reap cancelled children before deleting their seekable input.
+                _=error.GetAwaiter().GetResult();
+            }
             var bytes=output.ToArray();if(bytes.Length==0||bytes.Length%(4*channels)!=0)throw new InvalidDataException("Empty or invalid decoded float PCM: "+error.GetAwaiter().GetResult());
             var pcm=new float[bytes.Length/4];Buffer.BlockCopy(bytes,0,pcm,0,bytes.Length);
             return new(soundId,sound["_category"]!.GetValue<int>(),pcm,channels,meta["loopStart"]?.GetValue<int>(),meta["loopEnd"]?.GetValue<int>());
         }
         finally{NativeTemporary.Delete(temporary);}
+    }
+    static async Task ReadPcm(Stream input,MemoryStream output,long maximumBytes,CancellationToken cancellationToken)
+    {
+        byte[] buffer=System.Buffers.ArrayPool<byte>.Shared.Rent(65536);
+        try
+        {
+            int count;
+            while((count=await input.ReadAsync(buffer.AsMemory(),cancellationToken).ConfigureAwait(false))>0)
+            {
+                if(output.Length>maximumBytes-count)throw new AdvAudioPrefetchLimitException();
+                output.Write(buffer,0,count);
+            }
+        }
+        finally{System.Buffers.ArrayPool<byte>.Shared.Return(buffer);}
     }
 }
 public sealed class AdvSound(int id,AdvCue cue,int frame,int startSample,bool repeat)

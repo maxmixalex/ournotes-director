@@ -97,7 +97,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             args.Data.SetData("OurNotes.SceneAsset",data.ToJsonString());args.Data.RequestedOperation=DataPackageOperation.Copy;
         };
         KeyDown+=(_,args)=>HandleWorkspaceKey(args);
-        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);else if(viewport.LastFrame is { ScenePreviewScale: < 1 })_=Safe(()=>SeekAsync(playhead));};
+        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);else if(viewport.ScenePreviewScale<1||viewport.LastFrame?.ScenePreviewScale<1)_=Safe(()=>SeekAsync(playhead));};
         Unloaded+=(_,_)=>Deactivate();Refresh();
     }
     internal void HandleWorkspaceKey(KeyRoutedEventArgs args)

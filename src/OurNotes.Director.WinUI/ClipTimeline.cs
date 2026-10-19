@@ -307,6 +307,9 @@ internal sealed partial class ClipTimeline : UserControl
             if(sourceKey!=requestedSource||selected!=requestedSelection||Math.Abs(scale-requestedScale)>1e-8)return;
             scroll.UpdateLayout();scroll.ChangeView(offset,null,null,true);Draw();
         });
+        // A selection may belong to a filtered actor, a collapsed group or a
+        // vertically hidden lane. Fitting time alone must not leave it invisible.
+        if (clip is not null) RevealSelection();
     }
     internal bool IsSelectionVisible
     {

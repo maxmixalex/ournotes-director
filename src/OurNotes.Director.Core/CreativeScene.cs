@@ -208,8 +208,9 @@ public sealed class CreativeScene
         var text=episode["text"]?.DeepClone() as JsonObject??new JsonObject();
         if(result["text"] is JsonObject extra)foreach(var(key,value)in extra)text[key]=value?.DeepClone();result["text"]=text;return result;
     }
-    public static CreativeScene FromPerformance(JsonObject native,NativePlaybackTiming timing)
+    public static CreativeScene FromPerformance(JsonObject native,NativePlaybackTiming timing,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if(!timing.IsComplete||timing.EndFrame is null)throw new InvalidOperationException("原剧情尚未解析完成，不能猜测语音时间。");
         var scene=Blank(native["source"]?["site"]?.ToString()??"intl",native["source"]?["language"]?.ToString()??"zh-Hans");
         scene.Root["source"]=native["source"]!.DeepClone();scene.Root["nativeOutput"]=native["output"]?.DeepClone();scene.Root["imported"]=true;scene.Canvas["content"]=SceneContent.Read(native["output"]?["content"]);
@@ -222,6 +223,7 @@ public sealed class CreativeScene
         var nextByTarget = new Dictionary<(string Actor, string Kind), int>();
         for (int index = entries.Length - 1; index >= 0;)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int first = index;
             while (first > 0 && entries[first - 1].Ordinal == entries[index].Ordinal) first--;
             for (int i = first; i <= index; i++)
@@ -247,6 +249,7 @@ public sealed class CreativeScene
         var actors = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < entries.Length; index++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var t = entries[index];
             if(native[t.Section] is not JsonArray section||t.Index<0||t.Index>=section.Count||section[t.Index] is not JsonObject data)continue;
             if(t.Command is "Delay" or "Wait" or "GoTo" or "ForceAuto" or "CancelDelay")continue;
@@ -261,6 +264,7 @@ public sealed class CreativeScene
         }
         double tail=(timing.EndFrame.Value+1)/30d, contentEnd=scene.Clips.OfType<JsonObject>().Select(c=>Number(c,"start")+Number(c,"duration")).DefaultIfEmpty(0).Max();
         if(tail>contentEnd+0.0001)scene.Clips.Add((JsonNode)NewClip("","hold",contentEnd,tail-contentEnd,new JsonObject{["cmd"]="Delay",["Frames"]=0},"结束停留"));
+        cancellationToken.ThrowIfCancellationRequested();
         scene.Validate();return scene;
     }
     static string DialogueLabel(JsonObject root,JsonObject row,string language)

@@ -72,6 +72,7 @@ public sealed class AdvStoryRenderer : IDisposable
     T Measure<T>(string name,Func<T> action){long start=Stopwatch.GetTimestamp();try{return action();}finally{milliseconds[name]=milliseconds.GetValueOrDefault(name)+Stopwatch.GetElapsedTime(start).TotalMilliseconds;}}
     void Measure(string name,Action action)=>Measure(name,()=>{action();return 0;});
     public IReadOnlyDictionary<string,double> Timings=>milliseconds;
+    internal Func<Func<long,CancellationToken,long,AdvCue>>? PrefetchAudio { get; }
     public AdvStoryRenderer(Archive archive,string site,string dll,string id,string language,int width,int height,string? script,string ffmpeg,int supersample=2,
         JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null,CancellationToken cancellationToken=default)
     {
@@ -112,7 +113,8 @@ public sealed class AdvStoryRenderer : IDisposable
             if(script is not null)Scene.ProjectDirectory=Path.GetDirectoryName(Path.GetFullPath(script))!;
             var rows=program.Initialize.Concat(program.Rows).Concat(program.Finalize).Where(r=>!r.Ignored).ToArray();
             foreach(var row in rows)DirectorValidation.Check(row);
-            Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg)};Audio.Bind(Player);
+            Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg,cancellationToken))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg,cancellationToken)};Audio.Bind(Player);
+            if(timingOnly)PrefetchAudio=AdvAudio.IndependentDecoder(archive,site,manifest,episode,ffmpeg);
             Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=playbackViewport is null ? viewportHeight<height : ActorIsolation.HasLetterbox(
                 playbackViewport["width"]!.GetValue<int>(),playbackViewport["height"]!.GetValue<int>(),playbackViewport["letterbox"]!.ToString()),MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
             Ui.AudioProjectDirectory=script is null?Environment.CurrentDirectory:Path.GetDirectoryName(Path.GetFullPath(script))!;Ui.AudioFfmpegPath=ffmpeg;

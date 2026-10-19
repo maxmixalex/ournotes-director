@@ -195,7 +195,9 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     }
     void SetDocument(HomeStudioDocument value, Metadata? data = null)
     {
-        scrubber.Cancel(); Pause(); viewport.InvalidateSource(); document = value; metadata = data; libraryKey = null; loadVersion++; editVersion++; previewLoaded = false; pendingPreview = null; selectedMarker = null;
+        // Project identity is distinct from its source homepage. Reset the old
+        // gesture before replacing the document so capture loss cannot seek it.
+        scrubber.Cancel(); timeline.ResetProjectView(); Pause(); viewport.InvalidateSource(); document = value; metadata = data; libraryKey = null; loadVersion++; editVersion++; previewLoaded = false; pendingPreview = null; selectedMarker = null;
         dragStart = dragValue = null; dragTarget = null; dragDocument = null;
         refreshing = true; previewOnly.IsChecked = false; refreshing = false;
         welcome.Visibility = Visibility.Collapsed; notice.IsOpen = false;
@@ -483,19 +485,38 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     }
     async Task SeekAsync(double time,CancellationToken cancellationToken=default)
     {
-        if (document is null) return; Pause(); document.Playhead = document.Snap(time); timeline.Position = document.Playhead;
+        cancellationToken.ThrowIfCancellationRequested();
+        var current = document; if (current is null) return;
+        double target = current.Snap(time);
+        Pause(); current.Playhead = target; timeline.Position = target;
         RefreshValues();
-        if (previewLoaded && !suppressPreview) { await ApplyPreviewAsync(); cancellationToken.ThrowIfCancellationRequested(); await viewport.SeekAsync(document.Playhead,cancellationToken); }
+        if (previewLoaded && !suppressPreview)
+        {
+            await ApplyPreviewAsync(); cancellationToken.ThrowIfCancellationRequested();
+            if (disposed || !ReferenceEquals(current, document)) return;
+            await viewport.SeekAsync(target,cancellationToken);
+        }
+    }
+    async Task<bool> SeekAfterScrubAsync(double time)
+    {
+        var current = document;
+        await scrubber.FlushAsync();
+        if (current is null || disposed || !ReferenceEquals(current, document)) return false;
+        await SeekAsync(time);
+        return !disposed && ReferenceEquals(current, document);
     }
     async Task TogglePlaybackAsync()
     {
+        var current = document;
         await scrubber.FlushAsync();
-        if (document is null) return;
+        if (current is null || disposed || !ReferenceEquals(current, document)) return;
         if (viewport.IsPlaying) { Pause(); return; }
         if (!previewLoaded) await ReloadPreviewAsync();
-        if (!previewLoaded) return;
+        if (!previewLoaded || disposed || !ReferenceEquals(current, document)) return;
         await ApplyPreviewAsync();
-        if (document.Playhead < timeline.PlaybackStart || document.Playhead >= timeline.PlaybackLastTime - .5 / document.Project.Output.Fps) await viewport.SeekAsync(timeline.PlaybackStart);
+        if (disposed || !ReferenceEquals(current, document)) return;
+        if (current.Playhead < timeline.PlaybackStart || current.Playhead >= timeline.PlaybackLastTime - .5 / current.Project.Output.Fps) await viewport.SeekAsync(timeline.PlaybackStart);
+        if (disposed || !ReferenceEquals(current, document)) return;
         playbackRequested = true; viewport.Play(timeline.WorkRange?.End); timeline.IsPlaying = true;
     }
     void OnFrame(PreviewFrame frame)
@@ -512,7 +533,11 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     }
 
     async Task ExportAsync()
-    { CommitDrag(); if (document is not null) { Pause(); await StudioExportDialog.ShowHomeAsync(window, document, document.Playhead, initialRange:timeline.WorkRange); } }
+    {
+        var current = document; await scrubber.FlushAsync();
+        if (current is null || disposed || !ReferenceEquals(current, document)) return;
+        CommitDrag(); Pause(); await StudioExportDialog.ShowHomeAsync(window, current, current.Playhead, initialRange:timeline.WorkRange);
+    }
     async Task ShowJsonAsync()
     {
         CommitDrag(); Pause();
@@ -632,10 +657,12 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
             string text = model.ToJson(); model.SetScene(background: false); model.Undo(); check(model.ToJson() == text, "主页编辑撤销保留完整项目");
             using var snapshot = model.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "smoke-inputs"));
             check(HomeProject.Read(snapshot.FilePath).EditState.Characters["alice"].Keys.Count == 2, "主页导出快照包含实际角色编排");
+            await RunTimelineHandoffSmokeAsync(check);
             if (Environment.GetEnvironmentVariable("OURNOTES_STUDIO_FIXTURE") is { Length: > 0 } fixture)
             {
                 archiveOverride = fixture; suppressPreview = false; metadata = ReadMetadata(fixture, model.Project.Source, "zh-Hans");
                 model.ResetCharacter("alice"); model.Playhead = .5; await ReloadPreviewAsync();
+                await viewport.RunPresentationCancellationSmokeAsync(check);
                 var before = viewport.LastFrame ?? throw new InvalidOperationException("主页原生预览没有呈现帧。");
                 var original = before.Targets.Single(t => t.Id == "alice");
                 check(viewport.HitTest(original.X + original.Width / 2, original.Y + original.Height / 2)?.Id == "alice", "主页画布按真实角色边界命中对象");

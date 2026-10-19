@@ -6,7 +6,8 @@ param(
     [string] $FixtureDirectory,
     [string] $RealSceneFixtureDirectory,
     [string] $OpenGLDriver,
-    [ValidateRange(10, 300)] [int] $TimeoutSeconds = 120
+    [ValidateRange(10, 900)] [int] $TimeoutSeconds = 120,
+    [ValidateRange(10, 300)] [int] $ProgressTimeoutSeconds = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,13 +84,47 @@ try {
     if ($null -eq $process) { throw 'The WinUI process could not be started.' }
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        $process.Kill($true)
-        $process.WaitForExit()
-        throw "The real WinUI smoke test did not complete in $TimeoutSeconds seconds."
+    # The complete suite contains several independent native scene and export
+    # phases. Track actual completed checks as well as its overall ceiling, so a
+    # hung operation is reported promptly and a growing suite retains all gates.
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $lastProgressAt = 0.0
+    $lastProgress = ''
+    $lastPhase = 'startup'
+    try {
+        while (-not $process.WaitForExit(500)) {
+            if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+                try {
+                    $progress = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+                    if ($null -ne $progress -and $progress.PSObject.Properties.Name -contains 'checks') {
+                        $lastPhase = if ($progress.PSObject.Properties.Name -contains 'phase') { [string]$progress.phase } else { 'unreported' }
+                        $signature = "$lastPhase/$(@($progress.checks).Count)"
+                        if ($signature -ne $lastProgress) {
+                            $lastProgress = $signature
+                            $lastProgressAt = $clock.Elapsed.TotalSeconds
+                            Write-Output ("WinUI progress {0:N1}s: {1}" -f $lastProgressAt, $signature)
+                        }
+                    }
+                }
+                # Only a complete, valid report counts as progress. A diagnostic
+                # writer from an older package may briefly replace its contents.
+                catch { }
+            }
+            if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+                throw "The complete WinUI suite exceeded $TimeoutSeconds seconds at $lastProgress."
+            }
+            if ($clock.Elapsed.TotalSeconds - $lastProgressAt -ge $ProgressTimeoutSeconds) {
+                throw "The WinUI suite made no check or phase progress for $ProgressTimeoutSeconds seconds at $lastProgress."
+            }
+        }
     }
-    $stdout.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stdout.log') -Encoding utf8NoBOM
-    $stderr.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stderr.log') -Encoding utf8NoBOM
+    finally {
+        if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+        # Preserve diagnostics on timeout too; previously the throw above lost
+        # the redirected renderer and export-worker output from a failed run.
+        $stdout.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stdout.log') -Encoding utf8NoBOM
+        $stderr.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stderr.log') -Encoding utf8NoBOM
+    }
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
         throw "WinUI exited with code $($process.ExitCode) before writing a Loaded/UI test report. See stderr.log."
     }

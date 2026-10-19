@@ -31,7 +31,7 @@ internal sealed partial class CreativeScenePage
             selectedActor = actor.Length == 0 ? null : actor; selectedClip = null; playhead = time;
             await ImportVoiceAsync();
         }), "\uE8D6"));
-        menu.Items.Add(StudioMenus.Async("从这里播放", () => Safe(async () => { await SeekAsync(time); viewport.Play(); }), "\uE768"));
+        menu.Items.Add(StudioMenus.Async("从这里播放", () => Safe(async () => { if(await SeekAfterScrubAsync(time))viewport.Play(); }), "\uE768"));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(StudioMenus.Async("插入原生指令…", () => Safe(() => InsertNativeClipAsync(actor, time)), "\uE943"));
         return menu;

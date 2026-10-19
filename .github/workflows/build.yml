@@ -115,11 +115,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Creative audio checks failed: $LASTEXITCODE" }
           & $test --preview-editing
           if ($LASTEXITCODE -ne 0) { throw "Preview editing checks failed: $LASTEXITCODE" }
+          & $test --story-analysis artifacts/real-scene-fixture artifacts/story-analysis
+          if ($LASTEXITCODE -ne 0) { throw "Story timing and decoder cancellation checks failed: $LASTEXITCODE" }
           & $test --stage-authoring artifacts/real-scene-fixture artifacts/staging-evidence
           if ($LASTEXITCODE -ne 0) { throw "Native staging authoring checks failed: $LASTEXITCODE" }
           & $test --live2d artifacts/real-scene-fixture artifacts/live2d-evidence
           if ($LASTEXITCODE -ne 0) { throw "Native Live2D workbench checks failed: $LASTEXITCODE" }
-          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 300
+          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 600 -ProgressTimeoutSeconds 90
       - name: Preserve actual window evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -130,6 +132,8 @@ jobs:
             artifacts/creative-audio/report.json
             artifacts/creative-audio/parallel-voice-mix.wav
             artifacts/creative-audio/range-31.mkv
+            artifacts/story-analysis/report.json
+            artifacts/story-analysis/cancelled-decoder/result.json
             artifacts/staging-evidence/*
             artifacts/live2d-evidence/*
           if-no-files-found: ignore

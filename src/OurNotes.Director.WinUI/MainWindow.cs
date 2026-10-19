@@ -232,26 +232,35 @@ public sealed partial class MainWindow : Window
     {if(!File.Exists(path)&&!Directory.Exists(path))throw new FileNotFoundException("文件不存在。",path);Process.Start(new ProcessStartInfo{FileName=Path.GetFullPath(path),UseShellExecute=true});}
     public async Task RunSmokeTestAsync(string reportPath)
     {
-        var checks=new JsonArray();var pages=new JsonArray();
-        void Save(bool ok=false,string? failed=null)=>DesktopSettings.AtomicWrite(reportPath,new JsonObject{["schema"]="ournotes-director/desktop-smoke/1",["ok"]=ok,["status"]=ok?"passed":failed is null?"running":"failed",["checks"]=checks.DeepClone(),["pages"]=pages.DeepClone(),["failedCheck"]=failed,["commands"]=CommandCatalog.All.Count}.ToJsonString(DesktopSettings.JsonOptions));
-        void Check(bool condition,string name){if(condition)checks.Add(name);Save(failed:condition?null:name);if(!condition)throw new InvalidOperationException(name);}
+        var checks=new JsonArray();var pages=new JsonArray();var measurements=new JsonArray();
+        var clock=Stopwatch.StartNew();double previousCheck=0;string phase="startup";
+        void Save(bool ok=false,string? failed=null)=>DesktopSettings.AtomicWrite(reportPath,new JsonObject{["schema"]="ournotes-director/desktop-smoke/1",["ok"]=ok,["status"]=ok?"passed":failed is null?"running":"failed",["checks"]=checks.DeepClone(),["pages"]=pages.DeepClone(),["failedCheck"]=failed,["commands"]=CommandCatalog.All.Count,["phase"]=phase,["elapsedMilliseconds"]=clock.Elapsed.TotalMilliseconds,["measurements"]=measurements.DeepClone()}.ToJsonString(DesktopSettings.JsonOptions));
+        void Check(bool condition,string name)
+        {
+            double now=clock.Elapsed.TotalMilliseconds;
+            measurements.Add((JsonNode)new JsonObject{["phase"]=phase,["name"]=name,["ok"]=condition,["elapsedMilliseconds"]=now,["sincePreviousCheckMilliseconds"]=now-previousCheck});
+            previousCheck=now;if(condition)checks.Add(name);Save(failed:condition?null:name);
+            if(!condition)throw new InvalidOperationException(name);
+        }
+        void Phase(string name){phase=name;Save();}
         bool real=Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE") is {Length:>0};
         Save();foreach(var key in new[]{"scenes","live2d","home"})
         {
-            Navigate(key);root.UpdateLayout();await Task.Delay(100);root.UpdateLayout();
+            Phase("layout/"+key);Navigate(key);root.UpdateLayout();await Task.Delay(100);root.UpdateLayout();
             Check(content.Content is FrameworkElement{ActualWidth:>0,ActualHeight:>0},key+"工作台完成原生布局");
             Check(ActiveLayout is not null,key+"工作台接入可操作停靠布局");
             await ActiveLayout!.RunLayoutSmokeAsync(this,Check,real);pages.Add(key);
         }
-        Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunSmokeTestAsync(Check);
-        Navigate("home");root.UpdateLayout();await Task.Delay(100);await Home.RunSmokeTestAsync(Check);
-        Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunSmokeTestAsync(Check);
+        Phase("models/scenes");Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunSmokeTestAsync(Check);
+        Phase("models/home");Navigate("home");root.UpdateLayout();await Task.Delay(100);await Home.RunSmokeTestAsync(Check);
+        Phase("models/live2d");Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunSmokeTestAsync(Check);
         if(real)
         {
-            Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunRealSmokeTestAsync(Check);
-            Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunRealSmokeTestAsync(Check);
-            await RunEditingInteractionSmokeAsync(Check);
+            Phase("native/scenes");Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunRealSmokeTestAsync(Check);
+            Phase("native/live2d");Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunRealSmokeTestAsync(Check);
+            Phase("editing-interaction");await RunEditingInteractionSmokeAsync(Check);
         }
+        Phase("packaged-engine");
         var help=await Engine.RunAsync(new EngineRequest("help","引擎检查",["help"],Path.GetDirectoryName(reportPath)!));Check(help.Success&&help.Json?["commands"] is JsonArray,"原生导出执行器可用");
         Navigate("scenes");ActiveLayout?.RestorePanels();CloseDrawer();root.UpdateLayout();Save(true);
     }

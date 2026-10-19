@@ -80,8 +80,9 @@ internal sealed partial class SettingsPage : UserControl
         if (reconnect && _window.Jobs.IsBusy) throw new InvalidOperationException("当前还有任务在处理。请等任务结束后再更换引擎。");
         Directory.CreateDirectory(output);
         int gpuPreference = int.Parse(Ui.Selected(gpuChoice), System.Globalization.CultureInfo.InvariantCulture);
-        bool gpuChanged = gpuPreference != GpuPreferencePolicy.Read(settings) || gpuPreference != (WindowsGpuPreference.ReadCurrentPreference() ?? 0) || reconnect;
-        if (gpuChanged) WindowsGpuPreference.Apply(gpuPreference, engine.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "advkit.exe") : engine);
+        string gpuEngine = engine.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "advkit.exe") : engine;
+        bool gpuChanged = !WindowsGpuPreference.MatchesTargets(gpuPreference, gpuEngine);
+        if (gpuChanged) WindowsGpuPreference.Apply(gpuPreference, gpuEngine);
         GpuPreferencePolicy.Store(settings, gpuPreference);
         settings.ArchivePath = archive.Length == 0 ? "" : Path.GetFullPath(archive); settings.OutputDirectory = output;
         settings.Site = Ui.Selected(_site); settings.Language = Ui.Selected(_language); settings.Theme = Ui.Selected(_theme);
@@ -89,6 +90,10 @@ internal sealed partial class SettingsPage : UserControl
         settings.CubismSdkPath = _tools["cubism"].Text.Trim(); settings.NativeLibraryPath = _tools["native"].Text.Trim();
         settings.Save(); _window.ApplySettings();
         if (reconnect) await _window.ReconnectEngineAsync();
-        _notice.Severity = InfoBarSeverity.Success; _notice.Title = "设置已保存"; _notice.Message = gpuChanged ? "显卡偏好已保存。重新启动应用后生效；当前渲染会话不受影响。" : "新的操作会使用这些设置。"; _notice.IsOpen = true;
+        RefreshGraphicsSettings();
+        _notice.Severity = InfoBarSeverity.Success; _notice.Title = "设置已保存";
+        _notice.Message = gpuPreference != WindowsGpuPreference.StartupPreference
+            ? "显卡偏好已保存。重新启动应用后生效。" : gpuChanged ? "编辑器和导出引擎的显卡偏好已保存。" : "新的操作会使用这些设置。";
+        _notice.IsOpen = true;
     }
 }

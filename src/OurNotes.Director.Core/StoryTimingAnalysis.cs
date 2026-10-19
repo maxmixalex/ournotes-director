@@ -16,9 +16,13 @@ public static class StoryTimingAnalysis
         var document = DirectorProject.Document(source.ProjectPath);
         string hash = Archive.Hash(Encoding.UTF8.GetBytes(document.ToJsonString()));
         cancellationToken.ThrowIfCancellationRequested();
+        var cache = new AdvCueCache();
         using var native = new AdvStoryRenderer(new Archive(source.ArchivePath), project.Site,
             source.CubismPath, project.Adv, project.Language, source.Width, source.Height,
-            source.ProjectPath, source.FfmpegPath, 1, document, true, new AdvCueCache(), cancellationToken);
+            source.ProjectPath, source.FfmpegPath, 1, document, true, cache, cancellationToken);
+        var voices = StoryAudioPrefetch.VoiceCandidates(native.Player.Program).ToArray();
+        using var prefetch = voices.Length == 0 ? null : new StoryAudioPrefetch(cache, voices, native.PrefetchAudio!, cancellationToken);
+        if (prefetch is not null) native.Audio.ResolveCue = prefetch.Get;
         return native.AnalyzeTiming(hash, progress, cancellationToken);
     }
 }

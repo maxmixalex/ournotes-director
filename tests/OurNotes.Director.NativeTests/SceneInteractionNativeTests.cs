@@ -63,12 +63,54 @@ static class SceneInteractionNativeTests
             Check(rejected && ReferenceEquals(final, session.LastFrame), "Invalid drawing budgets fail before altering a live native session");
             Check(File.ReadAllText(project) == saved, "No interaction rendering choice is written into the project or export settings");
             await VerifyQueuedCancellationAsync(session, Check);
+            await VerifyUnpublishedBudgetRecoveryAsync(session, Check);
             report["ok"] = true;
             report["referenceWidth"] = 640; report["referenceHeight"] = 360;
             Console.WriteLine($"Passed {checks.Count} real scene interaction-quality and native-state checks.");
             return 0;
         }
         finally { File.WriteAllText(Path.Combine(output, "interaction-quality.json"), report.ToJsonString()); }
+    }
+
+    static async Task VerifyUnpublishedBudgetRecoveryAsync(RealtimePreviewSession session, Action<bool, string> check)
+    {
+        var complete=session.LastFrame!;
+        byte[] pixels=complete.Pixels.Rgba.ToArray();
+        await session.SetScenePreviewScaleAsync(.25);
+        check(session.ScenePreviewScale==.25&&ReferenceEquals(complete,session.LastFrame)
+            &&complete.ScenePreviewScale==1,
+            "The active drawing budget remains observable before any reduced-quality frame is published");
+        using var cancelled=new CancellationTokenSource();cancelled.Cancel();
+        bool rejected=false;
+        try{await session.SeekAsync(complete.Time,cancelled.Token);}
+        catch(OperationCanceledException){rejected=true;}
+        check(rejected&&session.ScenePreviewScale==.25&&ReferenceEquals(complete,session.LastFrame),
+            "Cancelling between budget selection and seek leaves the displayed full-quality frame intact");
+        // Bound playback at this same frame to inspect its first restored image,
+        // rather than hiding a low-quality first frame behind later animation.
+        session.Play((complete.Frame+1)/30d);
+        await session.SynchronizeAsync();session.Pause();await session.SynchronizeAsync();
+        check(session.ScenePreviewScale==1&&session.LastFrame!.ScenePreviewScale==1
+            &&session.LastFrame.Frame==complete.Frame&&session.LastFrame.SessionId==complete.SessionId
+            &&session.LastFrame.Pixels.Rgba.SequenceEqual(pixels),
+            "Playback restores an unpublished cancelled budget before its first image, preserving exact full-quality native pixels");
+
+        await session.SetScenePreviewScaleAsync(.25);await session.SeekAsync(complete.Time);
+        var draft=session.LastFrame!;
+        await session.SetScenePreviewScaleAsync(1);
+        check(session.ScenePreviewScale==1&&draft.ScenePreviewScale==.25&&ReferenceEquals(draft,session.LastFrame),
+            "Restoring the drawing budget alone does not claim that displayed interaction pixels have already been replaced");
+        rejected=false;
+        try{await session.SeekAsync(complete.Time,cancelled.Token);}
+        catch(OperationCanceledException){rejected=true;}
+        check(rejected&&ReferenceEquals(draft,session.LastFrame),
+            "Cancellation after a full-quality budget restore retains the last real interaction frame until another draw");
+        session.Play((complete.Frame+1)/30d);
+        await session.SynchronizeAsync();session.Pause();await session.SynchronizeAsync();
+        check(session.ScenePreviewScale==1&&session.LastFrame!.ScenePreviewScale==1
+            &&session.LastFrame.Frame==complete.Frame&&session.LastFrame.SessionId==complete.SessionId
+            &&session.LastFrame.Pixels.Rgba.SequenceEqual(pixels),
+            "Playback replaces retained interaction pixels before its first image even when the native budget is already full quality");
     }
 
     static async Task VerifyQueuedCancellationAsync(RealtimePreviewSession session, Action<bool, string> check)

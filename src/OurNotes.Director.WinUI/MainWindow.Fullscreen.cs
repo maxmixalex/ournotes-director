@@ -60,14 +60,26 @@ public sealed partial class MainWindow
         foreach (var child in root.Children)
             if (!ReferenceEquals(child, content)) { fullscreenHidden.Add(child, child.Visibility); child.Visibility = Visibility.Collapsed; }
         Grid.SetRow(content, 0); Grid.SetRowSpan(content, root.RowDefinitions.Count);
+        AppWindow.Changed += OnFullscreenPresenterChanged;
         AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
         layout.ProgramMonitorPanel.FocusContent();
+    }
+
+    void OnFullscreenPresenterChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (!args.DidPresenterChange || !IsMonitorFullscreen
+            || sender.Presenter.Kind == AppWindowPresenterKind.FullScreen) return;
+        // The shell can restore the window independently of F1/Esc. Restore
+        // the editor chrome too instead of leaving an immersive normal window.
+        try { ExitMonitorFullscreen(); }
+        catch (Exception error) { SetStatus("无法恢复节目监视器窗口：" + error.Message); }
     }
 
     internal void ExitMonitorFullscreen()
     {
         if (fullscreenLayout is not { } layout) return;
         fullscreenLayout = null;
+        AppWindow.Changed -= OnFullscreenPresenterChanged;
         layout.ProgramMonitorPanel.SetImmersive(false);
         layout.RestorePanels();
         if (priorMaximizedPanel is { } previous) layout.ToggleMaximize(previous);
@@ -75,7 +87,7 @@ public sealed partial class MainWindow
         foreach (var (element, visibility) in fullscreenHidden) element.Visibility = visibility;
         fullscreenHidden.Clear(); priorMaximizedPanel = null;
         var presenter = priorPresenter; priorPresenter = null;
-        if (presenter is not null) AppWindow.SetPresenter(presenter);
+        if (presenter is not null && !ReferenceEquals(AppWindow.Presenter, presenter)) AppWindow.SetPresenter(presenter);
         layout.FocusActivePanel();
     }
 }

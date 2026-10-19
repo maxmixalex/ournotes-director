@@ -26,6 +26,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     int playFrom,rateFrames;
     int? playbackEndFrame;
     double measuredRate;
+    double scenePreviewScale=1;
     TimingJob? timingJob;
     readonly Dictionary<string,NativePlaybackTiming> timingCache=new(StringComparer.Ordinal);
     readonly List<Task> timingTasks=[];
@@ -34,6 +35,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     public event EventHandler<Exception>? Failed;
     public PreviewFrame? LastFrame=>Volatile.Read(ref lastFrame);
     public bool IsPlaying=>Volatile.Read(ref playRequested)!=0;
+    /// <summary>The active drawing budget, including a change whose next seek was
+    /// cancelled before it could publish pixels. LastFrame describes only pixels.</summary>
+    public double ScenePreviewScale=>Volatile.Read(ref scenePreviewScale);
     public NativePlaybackTiming? NativeTiming=>LastFrame?.Timing;
 
     public RealtimePreviewSession()
@@ -137,6 +141,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (renderer is not SceneState scene) throw new InvalidOperationException("Load a scene before changing its preview scale.");
             scene.SetScenePreviewScale(scale);
+            Volatile.Write(ref scenePreviewScale,scene.ScenePreviewScale);
         });
     }
 
@@ -195,7 +200,15 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         {
             RequireRenderer();
             if(Volatile.Read(ref playRequested)==0)return;
-            if(renderer is SceneState state&&(state.NeedsReplay||state.NativeFrame!=frame))Render(frame,[],replay:true);
+            if(renderer is SceneState state)
+            {
+                // Either half of a cancelled quality transition can remain:
+                // the budget may already differ, or the displayed pixels may.
+                bool restoreQuality=state.ScenePreviewScale!=1||LastFrame?.ScenePreviewScale!=1;
+                if(restoreQuality){state.SetScenePreviewScale(1);Volatile.Write(ref scenePreviewScale,1);}
+                if(restoreQuality||state.NeedsReplay||state.NativeFrame!=frame)Render(frame,[],replay:true);
+            }
+            if(Volatile.Read(ref playRequested)==0)return;
             playbackEndFrame=exclusiveEndSeconds is {} stop?Math.Min(renderer!.EndFrame,Math.Max(frame,checked((int)Math.Ceiling(stop*renderer.Fps-1e-8))-1)):null;
             playing=true;playFrom=frame;playClock=Stopwatch.GetTimestamp();
             if(!resumeAudio||PlaybackClock?.Resume()!=true)PlaybackClock?.Start(frame/(double)renderer!.Fps);
@@ -254,6 +267,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         PlaybackClock?.Pause();playing=false;Interlocked.Exchange(ref playRequested,0);
         CancelTiming();
         renderer?.Dispose();renderer=null;
+        Volatile.Write(ref scenePreviewScale,1);
         // A context must be created after the old context is disposed on this thread.
         // Creating both and disposing the old one could silently unbind the new WGL one.
         resumeAudio=false;playbackEndFrame=null;renderer=factory();renderer.Duration=duration;
@@ -325,6 +339,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             var replayed = new SceneState(source,document,project,cache){Duration=duration,Timing=timing};
             active=renderer=replayed;
             replayed.SetScenePreviewScale(previewScale);sessionId++;from=0;
+            Volatile.Write(ref scenePreviewScale,replayed.ScenePreviewScale);
         }
         if(isolationTransform is not null)((SceneState)active).SetIsolatedTransform(isolationTransform);
         var pixels=active.Render(next,edits,cancellationToken);

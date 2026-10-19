@@ -19,7 +19,6 @@ public sealed partial class MainWindow
         Navigate("scenes"); root.UpdateLayout(); await Task.Delay(100);
         if (Scene.LastStoryImportReport is { } importReport)
             OurNotes.Director.Desktop.Core.DesktopSettings.AtomicWrite(App.SmokeEvidencePath("story-import.json"), importReport.ToJsonString(OurNotes.Director.Desktop.Core.DesktopSettings.JsonOptions));
-        await Scene.RunTimelineInteractionSmokeAsync(check);
         foreach (string workspace in new[] { "scenes", "live2d", "home" })
         {
             Navigate(workspace); root.UpdateLayout(); await Task.Delay(100);
@@ -37,17 +36,44 @@ public sealed partial class MainWindow
                 && layout.ProgramMonitorPanel.IsMaximized && fullscreenHidden.Count > 0,
                 workspace + "：实际 F1 进入节目监视器全屏，隐藏编辑器外框");
             await App.CaptureCheckpointAsync(workspace + "-monitor-fullscreen");
-            await viewport.SendShellKeySmokeAsync(this, VirtualKey.Escape); root.UpdateLayout();
+            await viewport.SendShellKeySmokeAsync(this, (VirtualKey)192); root.UpdateLayout();
+            check(IsMonitorFullscreen && layout.MaximizedPanel == layout.ProgramMonitorPanel,
+                workspace + "：全屏内反引号不恢复被隐藏的其他面板");
+            await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1); root.UpdateLayout();
             check(!IsMonitorFullscreen && AppWindow.Presenter.Kind == originalPresenter.Kind
                 && layout.MaximizedPanel == originalMaximized && Grid.GetRow(content) == 2 && Grid.GetRowSpan(content) == 1,
-                workspace + "：实际 Esc 恢复窗口和先前面板布局");
+                workspace + "：再次 F1 恢复窗口和先前面板布局");
             check(viewport.LastFrame?.SessionId == session && viewport.LastFrame?.Frame == frame && !viewport.IsPlaying,
                 workspace + "：全屏来回保留原生渲染会话、暂停姿态和播放状态");
+
+            layout.RestorePanels(); layout.ToggleMaximize(layout.ProgramMonitorPanel);
+            viewport.Focus(FocusState.Keyboard);
+            await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
+            await viewport.SendShellKeySmokeAsync(this, VirtualKey.Escape); root.UpdateLayout();
+            check(!IsMonitorFullscreen && AppWindow.Presenter.Kind == originalPresenter.Kind
+                && layout.MaximizedPanel == layout.ProgramMonitorPanel,
+                workspace + "：从已最大化监视器进入全屏后，Esc 恢复先前最大化布局");
+            viewport.Focus(FocusState.Keyboard);
+            await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
+            AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+            await Task.Delay(70); root.UpdateLayout();
+            check(!IsMonitorFullscreen && fullscreenHidden.Count == 0
+                && layout.MaximizedPanel == layout.ProgramMonitorPanel && Grid.GetRow(content) == 2,
+                workspace + "：系统恢复普通窗口时同步恢复编辑器外框和先前面板布局");
+            layout.RestorePanels();
+            if (originalMaximized is not null) layout.ToggleMaximize(originalMaximized);
             layout.EffectControlsPanel.FocusContent();
             await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
             check(!IsMonitorFullscreen, workspace + "：焦点在检查器时 F1 不误触发节目监视器全屏");
+
+            // These controls are deliberately inside the monitor. Testing only
+            // inspector focus would not exercise the text-input exclusion.
+            if (workspace == "scenes") await VerifyMonitorTextFocusSmokeAsync(layout, viewport, check);
         }
+        Navigate("scenes"); root.UpdateLayout(); await Task.Delay(100);
+        await Scene.RunTimelineInteractionSmokeAsync(check);
         Navigate("settings"); root.UpdateLayout(); await Task.Delay(100);
+        WindowsGpuPreference.RunRegressionSmoke(check);
         string registryFixture = @"Software\OurNotes\DirectorTests\" + Guid.NewGuid().ToString("N");
         try
         {
@@ -65,5 +91,31 @@ public sealed partial class MainWindow
         check(Descendants<Microsoft.UI.Xaml.Controls.ComboBox>(drawerContent).Any(box => box.Header?.ToString() == "渲染显卡（重启后生效）"),
             "实际设置抽屉提供自动、节能、高性能显卡选择和当前设备诊断");
         await App.CaptureCheckpointAsync("graphics-settings"); CloseDrawer();
+    }
+
+    async Task VerifyMonitorTextFocusSmokeAsync(StudioLayout layout, NativeViewport viewport, Action<bool, string> check)
+    {
+        if (layout.ProgramMonitorPanel.SelectedContent is not Panel monitor)
+            throw new InvalidOperationException("节目监视器缺少可用的输入检查容器。");
+        var inputHost = new StackPanel { Width = 200, HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top };
+        Control[] inputs = [new TextBox(), new NumberBox(), new PasswordBox(), new RichEditBox(), new AutoSuggestBox()];
+        foreach (var input in inputs) inputHost.Children.Add(input);
+        monitor.Children.Add(inputHost);
+        try
+        {
+            root.UpdateLayout();
+            foreach (var input in inputs)
+            {
+                check(input.Focus(FocusState.Keyboard), input.GetType().Name + " 获得节目监视器内的实际键盘焦点");
+                await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
+                check(!IsMonitorFullscreen && !MonitorOwnsFocus(),
+                    "节目监视器内 " + input.GetType().Name + " 输入框的 F1 不误触发全屏");
+            }
+        }
+        finally
+        {
+            ExitMonitorFullscreen(); monitor.Children.Remove(inputHost); viewport.Focus(FocusState.Keyboard);
+        }
     }
 }

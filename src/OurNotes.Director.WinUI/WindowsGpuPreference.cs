@@ -1,18 +1,41 @@
 using Microsoft.Win32;
+using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 
 namespace OurNotes.Director.WinUI;
 
-internal static class WindowsGpuPreference
+internal static partial class WindowsGpuPreference
 {
     const string KeyPath = @"Software\Microsoft\DirectX\UserGpuPreferences";
+    // Capture at application startup, before any render session is created.
+    // Registry writes during this process cannot switch the WGL driver selected
+    // by Windows for this launch.
+    internal static int StartupPreference { get; private set; }
+    internal static string? StartupWarning { get; private set; }
+    internal static void Initialize()
+    {
+        try { StartupPreference = ReadCurrentPreference() ?? 0; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        { StartupWarning = "无法读取本次启动的显卡偏好：" + error.Message; }
+        GpuPreviewSurface.ConfigureAdapterPreference(StartupPreference);
+    }
     internal static int? ReadCurrentPreference()
     {
         if (Environment.ProcessPath is not { } path) return null;
         using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
         if (key?.GetValue(path) is not string text) return null;
-        var token = text.Split(';').LastOrDefault(value => value.Split('=', 2)[0].Trim().Equals("GpuPreference", StringComparison.OrdinalIgnoreCase));
-        return token?.Split('=', 2) is [_, var value] && int.TryParse(value, out int preference) && preference is >= 0 and <= 2 ? preference : 0;
+        return GpuPreferencePolicy.FromRegistryValue(text);
+    }
+    internal static bool MatchesTargets(int preference, string engine)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
+        return MatchesKey(key, GpuPreferencePolicy.Executables(Environment.ProcessPath, engine), preference);
+    }
+    internal static bool MatchesKey(RegistryKey? key, IReadOnlyList<string> paths, int preference)
+    {
+        var values = paths.Select(path => key?.GetValue(path, null, RegistryValueOptions.DoNotExpandEnvironmentNames)).ToArray();
+        return values.All(value => value is null or string)
+            && GpuPreferencePolicy.MatchesAll(values.Cast<string?>(), preference);
     }
     internal static void Apply(int preference, string engine)
     {

@@ -43,7 +43,7 @@ internal sealed partial class HomeStudioPage
             selectedMarker = null; Select(actor.Length == 0 ? SceneId : actor);
             _ = SafeAsync(async () =>
             {
-                await SeekAsync(time);
+                if (!await SeekAfterScrubAsync(time)) return;
                 if (kind == "motion") { ShowHomeAnimations(); animationHint.Text = "双击一个动作，从播放头开始。"; }
                 else AddKey();
             });
@@ -54,7 +54,8 @@ internal sealed partial class HomeStudioPage
             var menu = new MenuFlyout();
             menu.Items.Add(StudioMenus.Async(kind == "motion" ? "在这里开始动作…" : "在这里记录变化", async () =>
             {
-                selectedMarker = null; Select(actor.Length == 0 ? SceneId : actor); await SeekAsync(time);
+                selectedMarker = null; Select(actor.Length == 0 ? SceneId : actor);
+                if (!await SeekAfterScrubAsync(time)) return;
                 if (kind == "motion") ShowHomeAnimations(); else AddKey();
             }, "\uE710", document is not null));
             return menu;
@@ -102,7 +103,8 @@ internal sealed partial class HomeStudioPage
     MenuFlyout HomeClipMenu(string id)
     {
         var menu = new MenuFlyout(); if (!timelineItems.TryGetValue(id, out var item)) return menu;
-        menu.Items.Add(StudioMenus.Async("播放此处", async () => { await SeekAsync(item.Start); playbackRequested = true; viewport.Play(); }, "\uE768"));
+        menu.Items.Add(StudioMenus.Async("播放此处", async () =>
+        { if (await SeekAfterScrubAsync(item.Start)) { playbackRequested = true; viewport.Play(); } }, "\uE768"));
         if (item.Kind == "motion") menu.Items.Add(StudioMenus.Item("替换动作…", () => ShowHomeAnimations(), "\uE8D2"));
         if (item.Actor.Length > 0)
         {
