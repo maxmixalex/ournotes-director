@@ -27,6 +27,21 @@ public sealed class AdvStoryRenderer : IDisposable
     int outputWidth,outputHeight,supersample;
     readonly int viewportY;
     OffscreenGl.DrawingCanvas? previewCanvas;
+    OffscreenGl.DrawingCanvas? interactiveSceneCanvas;
+    /// <summary>Transient scene-only preview scale. Text/UI, native timing, captures,
+    /// hit testing and the exported project keep their reference dimensions.</summary>
+    public double ScenePreviewScale { get; private set; } = 1;
+    public void SetScenePreviewScale(double scale)
+    {
+        if (scale is not (1 or .5 or .25)) throw new ArgumentOutOfRangeException(nameof(scale));
+        if (isolateActor is not null && scale != 1)
+            throw new InvalidOperationException("Isolated models use their own adaptive presentation canvas.");
+        if (ScenePreviewScale == scale) return;
+        var next = scale == 1 ? null : gl.CreateDrawingCanvas(
+            Math.Max(16, (int)Math.Round(gl.Width * scale)), Math.Max(16, (int)Math.Round(gl.Height * scale)));
+        interactiveSceneCanvas?.Dispose(); interactiveSceneCanvas = next;
+        ScenePreviewScale = scale;
+    }
     readonly string? isolateActor;
     IsolatedActorTransform isolateTransform;
     readonly IsolatedActorCanvas? isolateCanvas;
@@ -58,8 +73,9 @@ public sealed class AdvStoryRenderer : IDisposable
     void Measure(string name,Action action)=>Measure(name,()=>{action();return 0;});
     public IReadOnlyDictionary<string,double> Timings=>milliseconds;
     public AdvStoryRenderer(Archive archive,string site,string dll,string id,string language,int width,int height,string? script,string ffmpeg,int supersample=2,
-        JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null)
+        JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         RenderDimensions.Validate(width,height,supersample);
         outputWidth=width;outputHeight=height;this.supersample=supersample;
         float target=width>height?2.1666667f:1.7777778f;int viewportHeight=height;
@@ -110,7 +126,9 @@ public sealed class AdvStoryRenderer : IDisposable
             Scene.TalkShakeGet=()=>Ui.ShakeOffset;Scene.TalkShakeSet=v=>Ui.ShakeOffset=v;
             Scene.StillShakeGet=()=>Stills.ShakeOffset;Scene.StillShakeSet=v=>Stills.ShakeOffset=v;
             if(Player.MissingCommands.Length>0)throw new NotSupportedException("Native story commands not connected: "+string.Join(", ",Player.MissingCommands));
+            cancellationToken.ThrowIfCancellationRequested();
             Scene.Preload(rows);
+            cancellationToken.ThrowIfCancellationRequested();
             foreach(var row in rows.Where(r=>r.Command=="Director.Parameter"))_=(Scene.Character(row.Text("TargetName"))??throw new ArgumentException("Unknown actor: "+row.Text("TargetName"))).ParameterValue(row.Text("Parameter"));
             Player.Prepare=p=>Ui.Prepare();Player.Start();
         }catch{Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
@@ -187,8 +205,21 @@ public sealed class AdvStoryRenderer : IDisposable
     }
     public Pixels ReadQueuedFrame()=>Measure("readbackAndResolve",gl.ReadQueued);
     void DrawOutputLetterbox(int width,int height,int viewportHeight){if(!charactersOnly)Ui.DrawLetterbox(width,height,viewportHeight);}
-    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor,isolateTransform,isolateCanvas));return;}if(charactersOnly){Measure("characters",Scene.DrawCharacters);Scene.ApplyDirectorGrade();return;}Measure("scene",Scene.Draw);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
-    public void Dispose(){Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
+    void Draw(bool clean){if(isolateActor is not null){Measure("isolatedActor",()=>Scene.DrawIsolatedActor(isolateActor,isolateTransform,isolateCanvas));return;}if(charactersOnly){Measure("characters",Scene.DrawCharacters);Scene.ApplyDirectorGrade();return;}Measure("scene",DrawScenePreview);if(Video.Visible||Stills.Visible)Measure("media",()=>Scene.DrawMedia(()=>{Video.Draw();Stills.Draw();},Stills.PostEffectSuppressed));Measure("frames",Frames.Draw);Measure("ui",()=>Ui.Draw(clean));if(!Scene.DirectorTransparent)Measure("finalPost",()=>Scene.FinalPost());Scene.ApplyDirectorGrade();}
+    void DrawScenePreview()
+    {
+        if (interactiveSceneCanvas is null) { Scene.Draw(); return; }
+        // Scale only the expensive 3D/background/DoF pass. Simulation (including
+        // render-dependent capture commands) is evaluated on the reference canvas.
+        // Preserve linear HDR until the ordinary final colour/alpha resolve.
+        OffscreenGl.GlSurface reduced;
+        using (gl.UseDrawingCanvas(interactiveSceneCanvas))
+        {
+            Scene.Draw(); reduced = gl.CurrentSurface;
+        }
+        gl.CopySurface(reduced, gl.CurrentSurface, linear: true);
+    }
+    public void Dispose(){interactiveSceneCanvas?.Dispose();Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
     public static object Contact(Archive archive,string site,string dll,string id,string language,string? script,string output,int width,int height,double[] times,int columns,bool clean,bool overwrite,string ffmpeg,int supersample=2)
     {
         if(times.Length is <1 or >64||times.Any(t=>!double.IsFinite(t)||t<0||t>36000))throw new ArgumentException("Contact needs 1..64 times within ten hours");

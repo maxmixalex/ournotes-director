@@ -22,6 +22,10 @@ public sealed partial class MainWindow
     {
         if (args.Handled || dialogOpen || drawer.Visibility == Visibility.Visible
             || VisualTreeHelper.GetOpenPopupsForXamlRoot(root.XamlRoot).Any(p => p.IsOpen && p.Child is { } child && !Descendants<ToolTip>(child).Any())) return;
+        // The workspace maximize shortcut must not reveal other panels inside
+        // an immersive monitor; F1/Esc own restoring the previous layout.
+        if (IsMonitorFullscreen && args.Key == (VirtualKey)192)
+        { args.Handled = true; return; }
         if (args.Key is not (VirtualKey.F1 or VirtualKey.Escape)) return;
         if (new[] { VirtualKey.Control, VirtualKey.Menu, VirtualKey.Shift }.Any(key =>
             (InputKeyboardSource.GetKeyStateForCurrentThread(key) & CoreVirtualKeyStates.Down) != 0)) return;
@@ -38,7 +42,7 @@ public sealed partial class MainWindow
         for (var element = FocusManager.GetFocusedElement(root.XamlRoot) as DependencyObject;
             element is not null; element = VisualTreeHelper.GetParent(element))
         {
-            if (element is TextBox or NumberBox or PasswordBox) return false;
+            if (element is TextBox or NumberBox or PasswordBox or RichEditBox or AutoSuggestBox) return false;
             if (ReferenceEquals(element, monitor)) return true;
         }
         return false;

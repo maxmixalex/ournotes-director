@@ -45,6 +45,9 @@ public sealed partial class NativeViewport
         RecordPreviewOperation("resize.end");
     }
 
+    public Task SetScenePreviewScaleAsync(double scale, CancellationToken cancellationToken = default) =>
+        session.SetScenePreviewScaleAsync(scale, cancellationToken);
+
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows, IsolatedActorTransform? transform)
     {
         RecordPreviewOperation("edits.begin", rows.Count, transform is not null);

@@ -4,7 +4,11 @@ try
 {
     if (args.Length == 2 && args[0] == "--preview-quality") return PreviewQualityNativeTests.RunGraphics(args[1]);
     if (args.Length == 3 && args[0] == "--live2d") return await Live2DNativeTests.RunAsync(args[1], args[2]);
-    if(args.Length==3&&args[0]=="--stage-authoring")return await CreativeStagingNativeTests.RunAsync(args[1],args[2]);
+    if(args.Length==3&&args[0]=="--stage-authoring")
+    {
+        int staged = await CreativeStagingNativeTests.RunAsync(args[1],args[2]);
+        return staged != 0 ? staged : await SceneInteractionNativeTests.RunAsync(args[1],args[2]);
+    }
     if (args.Length == 1 && args[0] == "--preview-editing") return await PreviewEditingTests.RunAsync();
     if (args.Length == 3 && args[0] == "--creative-audio") return await CreativeAudioTests.RunAsync(args[1],args[2]);
     if (args.Length == 2 && args[0] == "--runtime-package") return RuntimeDependencyTests.Run(args[1]);

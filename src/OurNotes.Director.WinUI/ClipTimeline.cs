@@ -48,6 +48,14 @@ internal sealed partial class ClipTimeline : UserControl
     bool fitPending = true, drawing, scrubbing, playing;
     public event Action? PlayRequested;
     public event Action<double>? SeekRequested;
+    public event Action? ScrubCompleted;
+    public bool IsScrubbing => scrubbing;
+    void EndScrub()
+    {
+        if (!scrubbing) return;
+        scrubbing = false;
+        ScrubCompleted?.Invoke();
+    }
     public event Action<string>? ClipSelected;
     public event Action<string, double, bool>? ClipEdited;
     public event Action<string, double>? ClipTrimmed;
@@ -144,8 +152,9 @@ internal sealed partial class ClipTimeline : UserControl
             { SeekRequested?.Invoke(At(args.GetCurrentPoint(canvas).Position.X)); args.Handled = true; } };
         canvas.PointerReleased += (_, args) =>
         { if (scrubbing && canvas.PointerCaptures?.Any(p => p.PointerId == args.Pointer.PointerId) == true)
-            { SeekRequested?.Invoke(At(args.GetCurrentPoint(canvas).Position.X)); scrubbing = false; canvas.ReleasePointerCapture(args.Pointer); args.Handled = true; } };
-        canvas.PointerCaptureLost += (_, _) => scrubbing = false;
+            { SeekRequested?.Invoke(At(args.GetCurrentPoint(canvas).Position.X)); EndScrub(); canvas.ReleasePointerCapture(args.Pointer); args.Handled = true; } };
+        canvas.PointerCaptureLost += (_, _) => EndScrub();
+        canvas.PointerCanceled += (_, _) => EndScrub();
         canvas.DoubleTapped += (_, args) =>
         {
             if (args.Handled) return; var p = args.GetPosition(canvas); var lane = LaneAt(p.Y);
@@ -170,8 +179,10 @@ internal sealed partial class ClipTimeline : UserControl
         ruler.PointerPressed += (_, args) =>
         { if (args.GetCurrentPoint(ruler).Properties.IsLeftButtonPressed) { scrubbing = true; ruler.CapturePointer(args.Pointer); Scrub(args); } };
         ruler.PointerMoved += (_, args) => { if (scrubbing) Scrub(args); };
-        ruler.PointerReleased += (_, args) => { if (scrubbing) { Scrub(args); scrubbing = false; ruler.ReleasePointerCapture(args.Pointer); } };
-        ruler.PointerCaptureLost += (_, _) => scrubbing = false;
+        ruler.PointerReleased += (_, args) => { if (scrubbing) { Scrub(args); EndScrub(); ruler.ReleasePointerCapture(args.Pointer); } };
+        ruler.PointerCaptureLost += (_, _) => EndScrub();
+        ruler.PointerCanceled += (_, _) => EndScrub();
+        Unloaded += (_, _) => { scrubbing = false; canvas.ReleasePointerCaptures(); ruler.ReleasePointerCaptures(); };
         KeyDown += (_, args) =>
         {
             if (args.Handled || TextInput(args.OriginalSource as DependencyObject)) return;

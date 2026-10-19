@@ -25,6 +25,7 @@ internal sealed partial class CreativeScenePage
             ["readbackMs"] = completed.Performance?.ReadbackMilliseconds,
             ["gcPauseMs"] = completed.Performance?.Diagnostics?.GcPauseMilliseconds,
             ["shaderMs"] = completed.Performance?.Diagnostics?.ShaderCompilationMilliseconds,
+            ["scenePreviewScale"] = completed.ScenePreviewScale,
             ["framesWhileHeld"] = samples.Count
         };
         DesktopSettings.AtomicWrite(App.SmokeEvidencePath("timeline-scrub-settled.json"), settled.ToJsonString(DesktopSettings.JsonOptions));
@@ -34,7 +35,8 @@ internal sealed partial class CreativeScenePage
         var hashes = samples.Where(sample => sample.Pixels is not null).Select(sample => sample.Pixels).Distinct().Count();
         check(hashes >= 4, "时间轴拖动的原生像素确实变化，不只是播放头或时间码变化");
         check(viewport.LastFrame!.Frame == (int)Math.Round(points.EndTime * 30) && !viewport.IsPlaying
-            && document.ToJson() == saved, "松手后定位到最后一个输入帧并保持暂停，不改写项目");
+            && completed.ScenePreviewScale == 1 && document.ToJson() == saved,
+            "松手后定位到最后一个输入帧并恢复完整画质，保持暂停且不改写项目");
         var values = new JsonArray(samples.Select(sample => (JsonNode)new JsonObject { ["timeMs"] = sample.Milliseconds,
             ["frame"] = sample.Frame, ["session"] = sample.Session, ["playing"] = sample.Playing, ["pixels"] = sample.Pixels }).ToArray());
         DesktopSettings.AtomicWrite(App.SmokeEvidencePath("timeline-scrub.json"), new JsonObject

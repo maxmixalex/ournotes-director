@@ -117,8 +117,14 @@ internal sealed partial class CreativeScenePage
         {
             scrubber.Cancel(); await scrubber.FlushAsync(); SaveDraft();viewport.Pause();
             var owner=document; long ownerVersion=loadVersion;
+            string ownerText=owner.ToJson(), archiveSetting=window.Settings.ArchivePath,
+                ffmpegSetting=window.Settings.FFmpegPath, coreSetting=window.Settings.NativeLibraryPath,
+                sdkSetting=window.Settings.CubismSdkPath;
             void RequireOwner()
-            { cancellation.Token.ThrowIfCancellationRequested();if(disposed||!ReferenceEquals(document,owner)||loadVersion!=ownerVersion)throw new OperationCanceledException("原剧情导入的目标项目已更改。"); }
+            { cancellation.Token.ThrowIfCancellationRequested();if(disposed||!ReferenceEquals(document,owner)||loadVersion!=ownerVersion
+                ||owner.ToJson()!=ownerText||window.Settings.ArchivePath!=archiveSetting
+                ||window.Settings.FFmpegPath!=ffmpegSetting||window.Settings.NativeLibraryPath!=coreSetting
+                ||window.Settings.CubismSdkPath!=sdkSetting)throw new OperationCanceledException("原剧情导入的目标项目已更改。"); }
             notice.Severity=InfoBarSeverity.Informational;notice.Message="正在读取原剧情和素材索引…";notice.IsOpen=true;
             string archivePath=window.Settings.ArchivePath;
             // Parsing, expansion and conversion all operate on private documents.
@@ -289,9 +295,26 @@ internal sealed partial class CreativeScenePage
     }
     async Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
-        viewport.Pause();if(previewDirty)await ReloadAsync();playhead=Math.Clamp(seconds,0,document.Duration);timeline.Position=playhead;timeline.IsPlaying=false;
         cancellationToken.ThrowIfCancellationRequested();
-        if(viewport.HasCurrentSource)await viewport.SeekAsync(playhead,cancellationToken);
+        var owner = document;
+        viewport.Pause();
+        if(previewDirty)await ReloadAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        if(disposed || !ReferenceEquals(owner, document)) return;
+        double target=Math.Clamp(seconds,0,document.Duration);
+        playhead=target;timeline.Position=target;timeline.IsPlaying=false;
+        if(viewport.HasCurrentSource)
+        {
+            var last = viewport.LastFrame;
+            double quality = SceneInteractionPreview.Scale(timeline.IsScrubbing, last?.Device ?? "",
+                last?.Performance?.SceneMilliseconds ?? 0, last?.ScenePreviewScale ?? 1);
+            if (document.Root["nativeOutput"]?["isolateActor"] is not null
+                || SceneContent.Read(document.Canvas["content"]) == "characters") quality = 1;
+            await viewport.SetScenePreviewScaleAsync(quality, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if(disposed || !ReferenceEquals(owner, document)) return;
+            await viewport.SeekAsync(target,cancellationToken);
+        }
     }
     async Task TogglePlayAsync()
     {

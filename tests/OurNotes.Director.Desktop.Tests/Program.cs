@@ -24,6 +24,7 @@ ViewportNavigationTests.Run(Check);
 WorkspaceLayoutSettingsTests.Run(Check);
 await TimelineEditingTests.RunAsync(Check);
 EditorPerformanceTests.Run(Check);
+SceneInteractionPreviewTests.Run(Check);
 ResultRowTests.Run(Check);
 await EngineRunnerTests.RunAsync(Check);
 Console.WriteLine($"Passed {count} desktop command, JSON document, result and task execution checks.");

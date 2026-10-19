@@ -300,6 +300,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(frame.IsPlaying==statusPlaying&&Stopwatch.GetElapsedTime(statusClock).TotalMilliseconds<100)return;
         statusClock=Stopwatch.GetTimestamp();statusPlaying=frame.IsPlaying;diagnosticFailure=false;
         string mode=frame.IsGpuPresented?"GPU 直连":frame.PresentationFallback is not null?"兼容显示":"像素显示";
+        if (frame.ScenePreviewScale < 1) mode += $" · 交互预览 {frame.ScenePreviewScale:0%}";
         string text=$"{mode}  ·  {(frame.IsPlaying?"播放中":"已暂停")}  ·  {TimeSpan.FromSeconds(frame.Time):mm\\:ss\\.ff}";
         if(status.Text!=text)status.Text=text;
     }

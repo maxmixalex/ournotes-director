@@ -18,7 +18,7 @@ public static class StoryTimingAnalysis
         cancellationToken.ThrowIfCancellationRequested();
         using var native = new AdvStoryRenderer(new Archive(source.ArchivePath), project.Site,
             source.CubismPath, project.Adv, project.Language, source.Width, source.Height,
-            source.ProjectPath, source.FfmpegPath, 1, document, true, new AdvCueCache());
+            source.ProjectPath, source.FfmpegPath, 1, document, true, new AdvCueCache(), cancellationToken);
         return native.AnalyzeTiming(hash, progress, cancellationToken);
     }
 }

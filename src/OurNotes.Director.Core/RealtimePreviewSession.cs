@@ -126,6 +126,20 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         return UpdateState(update=>update.StagePositions[actor]=new(actor,slot,position,expectedSession,expectedFrame));
     }
 
+    /// <summary>Changes a transient scene drawing budget without drawing an extra
+    /// old frame. The next normal seek publishes the requested native pose.</summary>
+    public Task SetScenePreviewScaleAsync(double scale, CancellationToken cancellationToken = default)
+    {
+        if (scale is not (1 or .5 or .25)) throw new ArgumentOutOfRangeException(nameof(scale));
+        cancellationToken.ThrowIfCancellationRequested();
+        return Enqueue(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (renderer is not SceneState scene) throw new InvalidOperationException("Load a scene before changing its preview scale.");
+            scene.SetScenePreviewScale(scale);
+        });
+    }
+
     public Task SynchronizeAsync()=>Enqueue(()=>{});
 
     public Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
@@ -306,8 +320,11 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             // Native ADV has a stateful interpreter and physics. Reconstruct only for
             // a backward seek; normal playback and live edits retain models/context.
             var source=scene.Source;double duration=active.Duration;var document=scene.Document;var project=scene.Project;var cache=scene.CueCache;var timing=scene.Timing;
+            double previewScale = scene.ScenePreviewScale;
             renderer=null;active.Dispose();
-            active=renderer=new SceneState(source,document,project,cache){Duration=duration,Timing=timing};sessionId++;from=0;
+            var replayed = new SceneState(source,document,project,cache){Duration=duration,Timing=timing};
+            active=renderer=replayed;
+            replayed.SetScenePreviewScale(previewScale);sessionId++;from=0;
         }
         if(isolationTransform is not null)((SceneState)active).SetIsolatedTransform(isolationTransform);
         var pixels=active.Render(next,edits,cancellationToken);
@@ -348,7 +365,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         var scene=active as SceneState;
         var result=new PreviewFrame(++sequence,sessionId,frame,frame/(double)active.Fps,pixels,targets??LastFrame?.Targets??[],
             milliseconds,playing?measuredRate:0,playing,active.Device,active.Duration,scene?.Source.DurationMode??PreviewDurationMode.Fixed,
-            scene?.Timing,performance??LastFrame?.Performance,lips??LastFrame?.LipSync,animations??LastFrame?.ActorAnimations,active.GpuSurface,active.GpuFallbackReason);
+            scene?.Timing,performance??LastFrame?.Performance,lips??LastFrame?.LipSync,animations??LastFrame?.ActorAnimations,active.GpuSurface,active.GpuFallbackReason)
+            { ScenePreviewScale = changed ? scene?.ScenePreviewScale ?? 1 : LastFrame?.ScenePreviewScale ?? 1 };
         Volatile.Write(ref lastFrame,result);
         FrameReady?.Invoke(this,result);
     }
@@ -547,6 +565,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public AdvCueCache CueCache{get;}
         public NativePlaybackTiming? Timing{get;set;}
         public ScenePreviewSource Source{get;private set;}
+        public double ScenePreviewScale => native.ScenePreviewScale;
+        public void SetScenePreviewScale(double scale) => native.SetScenePreviewScale(scale);
         public bool NeedsReplay{get;private set;}
         public override int Fps=>30;
         public override string Device=>native.Device;

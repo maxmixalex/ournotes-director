@@ -73,6 +73,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             ?"滚轮前后移动所选人物":"滚轮缩放所选人物";
         viewport.Failed+=(_,error)=>ShowError(error.Message);viewport.ContextMenuFactory=ActorMenu;
         timeline.PlayRequested+=()=>_=Safe(TogglePlayAsync);timeline.SeekRequested+=seconds=>{viewport.Pause();timeline.Position=seconds;scrubber.Request(seconds);};
+        timeline.ScrubCompleted += () => { if (IsLoaded && !disposed) scrubber.Request(timeline.Position); };
         timeline.ClipSelected+=id=>
         {
             string? previousActor=selectedActor;selectedClip=id;selectedActor=S(document.Clip(id),"actor");replaceAssetClip=null;viewport.Pause();
@@ -96,7 +97,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             args.Data.SetData("OurNotes.SceneAsset",data.ToJsonString());args.Data.RequestedOperation=DataPackageOperation.Copy;
         };
         KeyDown+=(_,args)=>HandleWorkspaceKey(args);
-        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);};
+        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);else if(viewport.LastFrame is { ScenePreviewScale: < 1 })_=Safe(()=>SeekAsync(playhead));};
         Unloaded+=(_,_)=>Deactivate();Refresh();
     }
     internal void HandleWorkspaceKey(KeyRoutedEventArgs args)
@@ -156,6 +157,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     }
     async Task EditAsync(Action action,bool reload=true)
     {
+        importCancellation?.Cancel();
         viewport.Pause();string before=document.ToJson();string? previousSelection=selectedClip;
         try{action();document.Validate();}catch{document=CreativeScene.Parse(before);selectedClip=previousSelection;Refresh();throw;}
         if(document.ToJson()==before)return;undo.Push(before);redo.Clear();previewDirty=true;SaveDraft();Refresh();

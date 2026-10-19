@@ -119,6 +119,7 @@ public sealed partial class NativeViewport
                     {
                         ["timeMs"] = measured.Time, ["frame"] = measured.Frame.Frame, ["session"] = measured.Frame.SessionId,
                         ["playing"] = measured.Frame.IsPlaying, ["pixels"] = sample?.Pixels, ["held"] = sample is not null,
+                        ["scenePreviewScale"] = measured.Frame.ScenePreviewScale,
                         ["renderMs"] = measured.Frame.RenderMilliseconds, ["queueMs"] = measured.Queue,
                         ["presentationMs"] = measured.Presentation, ["simulationMs"] = p?.SimulationMilliseconds,
                         ["sceneMs"] = p?.SceneMilliseconds, ["readbackMs"] = p?.ReadbackMilliseconds,
