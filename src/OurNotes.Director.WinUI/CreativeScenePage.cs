@@ -185,7 +185,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         foreach(var row in assetRows.Where(row=>row.SearchText.Contains(query,StringComparison.OrdinalIgnoreCase)))
         {var item=new ListViewItem{Tag=row,Content=new TextBlock{Text=row.Title,TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=false},HorizontalContentAlignment=HorizontalAlignment.Stretch};ToolTipService.SetToolTip(item,row.Subtitle);assets.Items.Add(item);}
     }
-    public void Deactivate(){scrubber.Cancel();viewport.Pause();SaveDraft();}
+    public void Deactivate(){importCancellation?.Cancel();scrubber.Cancel();viewport.Pause();SaveDraft();}
     public void SaveDraft()
     {
         if(disposed||!HasUnsavedChanges)return;
@@ -193,5 +193,9 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         catch(Exception error)when(error is IOException or UnauthorizedAccessException){ShowError("草稿未保存："+error.Message);}
     }
     public async ValueTask DisposeAsync()
-    {if(disposed)return;scrubber.Cancel();SaveDraft();disposed=true;assetRequest?.Cancel();loadVersion++;await loadGate.WaitAsync();try{await viewport.DisposeAsync();previewInput?.Dispose();}finally{loadGate.Release();assetRequest?.Dispose();}}
+    {if(disposed)return;importCancellation?.Cancel();scrubber.Cancel();SaveDraft();disposed=true;assetRequest?.Cancel();loadVersion++;
+        // The import owns its snapshot until the dedicated native worker exits.
+        // Its caller observes any analysis error; shutdown must still release the viewport.
+        if(importAnalysis is {} analysis)try{await analysis;}catch(Exception){ }
+        await loadGate.WaitAsync();try{await viewport.DisposeAsync();previewInput?.Dispose();}finally{loadGate.Release();assetRequest?.Dispose();}}
 }

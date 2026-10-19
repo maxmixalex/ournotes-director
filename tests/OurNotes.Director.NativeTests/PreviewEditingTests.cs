@@ -62,7 +62,24 @@ static class PreviewEditingTests
             var last = await ended.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Check(last.Frame == 5 && maximum == 5 && !session.IsPlaying,
                 "Native playback stops at the selected exclusive out boundary, without overshooting the work area");
-            Console.WriteLine($"Passed {checks} native seek cancellation, recovery and playback-range checks.");
+            var timing=await session.ResolveSceneTimingAsync().WaitAsync(TimeSpan.FromSeconds(20));
+            var pose=session.LastFrame!;
+            var independent=await Task.Factory.StartNew(()=>StoryTimingAnalysis.Analyze(new(root,path,"","",128,96,2000)),
+                CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default).WaitAsync(TimeSpan.FromSeconds(20));
+            Check(independent.IsComplete&&independent.ProjectHash==timing.ProjectHash&&independent.EndFrame==timing.EndFrame
+                &&independent.Duration==timing.Duration&&independent.Commands.SequenceEqual(timing.Commands),
+                "Standalone import analysis matches background preview analysis command-for-command, including actual end frame");
+            Check(session.LastFrame!.SessionId==pose.SessionId&&session.LastFrame.Frame==pose.Frame
+                &&session.LastFrame.Pixels.Rgba.SequenceEqual(pose.Pixels.Rgba),
+                "Standalone analysis does not replace the existing program monitor or move its paused pose");
+            using(var cancelled=new CancellationTokenSource())
+            {
+                cancelled.Cancel();bool stopped=false;
+                try{StoryTimingAnalysis.Analyze(new(root,"missing-project.json","",""),cancelled.Token);}
+                catch(OperationCanceledException){stopped=true;}
+                Check(stopped,"A cancelled import is rejected before file IO or native resource initialization");
+            }
+            Console.WriteLine($"Passed {checks} native seek cancellation, recovery, playback-range and story-analysis checks.");
             return 0;
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }

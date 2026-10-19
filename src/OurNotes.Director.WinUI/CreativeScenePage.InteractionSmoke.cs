@@ -15,6 +15,19 @@ internal sealed partial class CreativeScenePage
         var points = timeline.ScrubCoordinates(.1, Math.Min(2.2, document.Duration));
         var samples = await viewport.SendTimelineScrubSmokeAsync(window, points.Element, points.StartX, points.EndX);
         await scrubber.FlushAsync();
+        var completed = viewport.LastFrame!;
+        var settled = new JsonObject
+        {
+            ["frame"] = completed.Frame, ["session"] = completed.SessionId,
+            ["renderMs"] = completed.RenderMilliseconds,
+            ["simulationMs"] = completed.Performance?.SimulationMilliseconds,
+            ["sceneMs"] = completed.Performance?.SceneMilliseconds,
+            ["readbackMs"] = completed.Performance?.ReadbackMilliseconds,
+            ["gcPauseMs"] = completed.Performance?.Diagnostics?.GcPauseMilliseconds,
+            ["shaderMs"] = completed.Performance?.Diagnostics?.ShaderCompilationMilliseconds,
+            ["framesWhileHeld"] = samples.Count
+        };
+        DesktopSettings.AtomicWrite(App.SmokeEvidencePath("timeline-scrub-settled.json"), settled.ToJsonString(DesktopSettings.JsonOptions));
         check(samples.Select(sample => sample.Frame).Distinct().Count() >= 4
             && samples.All(sample => !sample.Playing && sample.Session == session),
             "暂停时持续按住真实时间轴标尺拖动，松手前节目监视器呈现至少四个不同的原生帧");

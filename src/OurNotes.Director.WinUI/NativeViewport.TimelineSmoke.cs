@@ -40,7 +40,7 @@ public sealed partial class NativeViewport
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Presented(object? sender, PreviewFrame frame)
         {
-            if (!held || frame.RenderMilliseconds <= 0) return;
+            if (frame.RenderMilliseconds <= 0) return;
             double at = clock.Elapsed.TotalMilliseconds;
             string? pixels = null;
             if (frame.Pixels.ByteLength > 0)
@@ -48,7 +48,7 @@ public sealed partial class NativeViewport
                 for (int row = 0; row < frame.Pixels.Height; row++) hash.AppendData(frame.Pixels.GetRgbaRow(row));
                 pixels = Convert.ToHexString(hash.GetHashAndReset());
             }
-            samples.Add(new(at, frame.Frame, frame.SessionId, frame.IsPlaying, pixels));
+            if (held) samples.Add(new(at, frame.Frame, frame.SessionId, frame.IsPlaying, pixels));
             performance.Add((at, frame with { Pixels = new(frame.Pixels.Width, frame.Pixels.Height, []) },
                 PresentationQueueMilliseconds, PresentationMilliseconds));
         }
@@ -93,7 +93,14 @@ public sealed partial class NativeViewport
         {
             held = false; releasedAt = clock.Elapsed.TotalMilliseconds;
             SendSmokeInput(new() { Flags = 0x0004 });
-            try { await released.Task.WaitAsync(TimeSpan.FromSeconds(3)); }
+            try
+            {
+                await released.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                // Observe the first in-flight draw even when a slow driver finishes
+                // it only after mouse-up. These extra frames never count as held input.
+                await session.SynchronizeAsync().WaitAsync(TimeSpan.FromSeconds(30));
+                await AwaitPresentationAsync();
+            }
             finally
             {
                 ruler.RemoveHandler(PointerPressedEvent, pressedHandler);
@@ -104,13 +111,14 @@ public sealed partial class NativeViewport
                 // Preserve observations before the caller's assertions. A failing
                 // scrub must retain its input, render and presentation evidence.
                 var frames = new JsonArray();
-                for (int i = 0; i < samples.Count; i++)
+                foreach (var measured in performance)
                 {
-                    var sample = samples[i]; var measured = performance[i]; var p = measured.Frame.Performance;
+                    var p = measured.Frame.Performance;
+                    var sample = samples.FirstOrDefault(value => value.Milliseconds == measured.Time);
                     frames.Add((JsonNode)new JsonObject
                     {
-                        ["timeMs"] = sample.Milliseconds, ["frame"] = sample.Frame, ["session"] = sample.Session,
-                        ["playing"] = sample.Playing, ["pixels"] = sample.Pixels,
+                        ["timeMs"] = measured.Time, ["frame"] = measured.Frame.Frame, ["session"] = measured.Frame.SessionId,
+                        ["playing"] = measured.Frame.IsPlaying, ["pixels"] = sample?.Pixels, ["held"] = sample is not null,
                         ["renderMs"] = measured.Frame.RenderMilliseconds, ["queueMs"] = measured.Queue,
                         ["presentationMs"] = measured.Presentation, ["simulationMs"] = p?.SimulationMilliseconds,
                         ["sceneMs"] = p?.SceneMilliseconds, ["readbackMs"] = p?.ReadbackMilliseconds,
