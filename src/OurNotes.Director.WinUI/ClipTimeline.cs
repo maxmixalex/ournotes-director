@@ -18,13 +18,14 @@ internal sealed record TimelineItem(string Id, string Actor, string Kind, string
     double Start, double End, bool CanMove = true, bool CanResize = false, bool CanTrim = false,
     bool IsKey = false, bool Enabled = true, float[]? Waveform = null,
     double AudioIn = 0, double AudioDuration = 0, double SourceDuration = 0);
-internal sealed record TimelineLane(string Actor, string Kind, string Label, IReadOnlyList<TimelineItem> Items);
+internal sealed record TimelineLane(string Actor, string Kind, string Label, IReadOnlyList<TimelineItem> Items, string? GroupKey = null, bool IsGroup = false);
 
 /// <summary>Shared, viewport-virtualized timeline. The owner edits the actual project;
 /// this control holds only read-only display data, never a second editable scene.</summary>
 internal sealed partial class ClipTimeline : UserControl
 {
-    const double RowHeight = 36;
+    double rowHeight = 36;
+    double RowHeight => rowHeight;
     readonly Canvas canvas = new() { Background = Brush(0, 0, 0, 0) };
     readonly Canvas labels = new(), ruler = new();
     readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -100,7 +101,8 @@ internal sealed partial class ClipTimeline : UserControl
         transport.Children.Add(controls); transport.Children.Add(navigation); Grid.SetColumn(navigation, 1);
         transport.SizeChanged += (_, _) => { bool narrow = transport.ActualWidth < 580; time.MinWidth = narrow ? 64 : 139; time.MaxWidth = narrow ? 72 : double.PositiveInfinity; time.TextTrimming = TextTrimming.CharacterEllipsis; zoom.Visibility = transport.ActualWidth < 500 ? Visibility.Collapsed : Visibility.Visible; };
         root.Children.Add(transport); Grid.SetColumnSpan(transport, 2);
-        root.Children.Add(trackFilter);Grid.SetRow(trackFilter,1);
+        var trackHeader = CreateTrackHeader();
+        root.Children.Add(trackHeader);Grid.SetRow(trackHeader,1);
         ToolTipService.SetToolTip(trackFilter,"只看某个角色的轨道，不改变场景内容");
         trackFilter.Click+=(_,_)=>
         {
@@ -116,6 +118,9 @@ internal sealed partial class ClipTimeline : UserControl
                 string label=group.First().Label.Split(" · ")[0];
                 Option(group.Key.Length==0?"场景 / 镜头":label,group.Key);
             }
+            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(StudioMenus.Item("展开全部分组", () => SetAllGroupsCollapsed(false)));
+            menu.Items.Add(StudioMenus.Item("收起全部分组", () => SetAllGroupsCollapsed(true)));
             menu.ShowAt(trackFilter);
         };
         root.Children.Add(ruler); Grid.SetRow(ruler, 1); Grid.SetColumn(ruler, 1);
@@ -128,8 +133,19 @@ internal sealed partial class ClipTimeline : UserControl
         canvas.PointerPressed += (_, args) =>
         {
             if (args.Handled) return; var p = args.GetCurrentPoint(canvas);
-            if (p.Properties.IsLeftButtonPressed) { SeekRequested?.Invoke(At(p.Position.X)); args.Handled = true; }
+            if (p.Properties.IsLeftButtonPressed)
+            {
+                scrubbing = true; canvas.CapturePointer(args.Pointer);
+                SeekRequested?.Invoke(At(p.Position.X)); args.Handled = true;
+            }
         };
+        canvas.PointerMoved += (_, args) =>
+        { if (scrubbing && canvas.PointerCaptures?.Any(p => p.PointerId == args.Pointer.PointerId) == true)
+            { SeekRequested?.Invoke(At(args.GetCurrentPoint(canvas).Position.X)); args.Handled = true; } };
+        canvas.PointerReleased += (_, args) =>
+        { if (scrubbing && canvas.PointerCaptures?.Any(p => p.PointerId == args.Pointer.PointerId) == true)
+            { SeekRequested?.Invoke(At(args.GetCurrentPoint(canvas).Position.X)); scrubbing = false; canvas.ReleasePointerCapture(args.Pointer); args.Handled = true; } };
+        canvas.PointerCaptureLost += (_, _) => scrubbing = false;
         canvas.DoubleTapped += (_, args) =>
         {
             if (args.Handled) return; var p = args.GetPosition(canvas); var lane = LaneAt(p.Y);
@@ -181,18 +197,24 @@ internal sealed partial class ClipTimeline : UserControl
             else return;
             args.Handled = true;
         };
-        PointerWheelChanged += (_, args) =>
+        AddHandler(PointerWheelChangedEvent, new PointerEventHandler((_, args) =>
         {
             if ((Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) == 0) return;
-            var pointer = args.GetCurrentPoint(scroll); double x = Math.Clamp(pointer.Position.X, 0, scroll.ActualWidth);
+            var pointer = args.GetCurrentPoint(scroll);
+            if ((Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0)
+            {
+                SetRowHeight(RowHeight * Math.Pow(1.15, pointer.Properties.MouseWheelDelta / 120d), pointer.Position.Y);
+                args.Handled = true; return;
+            }
+            double x = Math.Clamp(pointer.Position.X, 0, scroll.ActualWidth);
             double anchor = (scroll.HorizontalOffset + x) / scale; zoom.Value = Math.Clamp(scale * Math.Pow(1.15, pointer.Properties.MouseWheelDelta / 120d), zoom.Minimum, zoom.Maximum);
             scroll.UpdateLayout(); scroll.ChangeView(Math.Max(0, anchor * scale - x), null, null, true); args.Handled = true;
-        };
+        }), true);
     }
     static bool TextInput(DependencyObject? node)
     { for (; node is not null; node = VisualTreeHelper.GetParent(node)) if (node is TextBox or NumberBox) return true; return false; }
     TimelineLane? LaneAt(double y)
-    { int index = (int)Math.Floor(y / RowHeight); return index >= 0 && index < lanes.Count ? lanes[index] : null; }
+    { int index = (int)Math.Floor(y / RowHeight); return index >= 0 && index < lanes.Count && !lanes[index].IsGroup ? lanes[index] : null; }
     void Scrub(PointerRoutedEventArgs args)
     { SeekRequested?.Invoke(At(args.GetCurrentPoint(ruler).Position.X + scroll.HorizontalOffset)); args.Handled = true; }
     static string ClipLabel(JsonObject clip)
@@ -202,9 +224,10 @@ internal sealed partial class ClipTimeline : UserControl
     }
     public void Refresh(CreativeScene document, string? selectedClip)
     {
+        var displayEnds = CreativeClipSpans.Calculate(document);
         var clipViews = document.Clips.OfType<JsonObject>().Where(c => S(c, "kind") != "setup").Select(c => new TimelineItem(
             S(c, "id"), S(c, "actor"), S(c, "kind"), ClipLabel(c),
-            N(c, "start"), Math.Max(N(c, "start") + 1d / 30, CreativeClipEditing.DisplayEnd(document, c)),
+            N(c, "start"), Math.Max(N(c, "start") + 1d / 30, displayEnds[S(c, "id")]),
             CanResize: document.CanResize(c), CanTrim: CreativeClipEditing.CanTrim(c), Enabled: c["enabled"]?.GetValue<bool>() != false,
             Waveform: (c["waveform"] as JsonArray)?.Select(v => float.TryParse(v?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? f : 0).ToArray(),
             AudioIn: N(c["data"]!.AsObject(), "AudioIn"), AudioDuration: N(c["data"]!.AsObject(), "AudioDuration", N(c, "duration")), SourceDuration: N(c, "sourceDuration"))).ToArray();
@@ -230,7 +253,7 @@ internal sealed partial class ClipTimeline : UserControl
     {
         if (!double.IsFinite(duration) || duration <= 0 || fps <= 0) throw new ArgumentException("时间轴范围无效。");
         bool changedProject=sourceKey!=identity;
-        if (changedProject) { sourceKey = identity; fitPending = true; filteredActor=null; }
+        if (changedProject) { sourceKey = identity; fitPending = true; filteredActor=null; collapsedGroups.Clear(); }
         length = duration; framesPerSecond = fps; allLanes = tracks; items = tracks.SelectMany(t => t.Items).ToArray(); selected = selection;
         if(filteredActor is not null&&!allLanes.Any(l=>l.Actor==filteredActor))filteredActor=null;
         ValidateRange(changedProject);
@@ -239,7 +262,7 @@ internal sealed partial class ClipTimeline : UserControl
     }
     void UpdateLanes()
     {
-        lanes=filteredActor is null?allLanes:allLanes.Where(l=>l.Actor==filteredActor).ToArray();
+        lanes = BuildGroupedLanes(filteredActor is null ? allLanes : allLanes.Where(l => l.Actor == filteredActor).ToArray());
         trackFilter.Content=filteredActor is null?"全部轨道":filteredActor.Length==0?"场景 / 镜头":allLanes.First(l=>l.Actor==filteredActor).Label.Split(" · ")[0];
     }
     internal void FilterActor(string? actor)
@@ -249,6 +272,7 @@ internal sealed partial class ClipTimeline : UserControl
     public void RevealActor(string? actor)
     {
         if(actor is null)return;
+        if (collapsedGroups.Remove("actor:" + actor)) { UpdateLanes(); Draw(); }
         if(filteredActor is not null){FilterActor(actor);return;}
         int index=lanes.ToList().FindIndex(l=>l.Actor==actor);
         if(index>=0)scroll.ChangeView(null,index*RowHeight,null);
@@ -256,6 +280,7 @@ internal sealed partial class ClipTimeline : UserControl
     public void FitSelection()
     {
         var clip=items.FirstOrDefault(c=>c.Id==selected);
+        if (clip is not null) ExpandForClip(clip);
         double start=clip?.Start??Math.Max(0,position-3),end=clip?.End??Math.Min(length,position+3);
         double span=Math.Max(1,end-start),padding=span*.12;
         scale=Math.Clamp((Math.Max(100,scroll.ActualWidth)-24)/(span+padding*2),zoom.Minimum,zoom.Maximum);
@@ -309,7 +334,8 @@ internal sealed partial class ClipTimeline : UserControl
             for (int row = first; row <= last; row++)
             {
                 canvas.Children.Add(new Line { X1 = left, X2 = right, Y1 = (row + 1) * RowHeight, Y2 = (row + 1) * RowHeight, Stroke = Brush(40, 128, 128, 128), IsHitTestVisible = false });
-                foreach (var item in lanes[row].Items.Where(c => c.Start * scale < right + 20 && c.End * scale > left - 20)) DrawClip(item, row, left, right);
+                if (lanes[row].IsGroup) DrawGroupSummary(lanes[row], row, left, right);
+                else foreach (var item in lanes[row].Items.Where(c => c.Start * scale < right + 20 && c.End * scale > left - 20)) DrawClip(item, row, left, right);
             }
             playhead.Y1 = top; playhead.Y2 = bottom; canvas.Children.Add(playhead); Position = position; DrawLabels(first, last); DrawRuler();
         }
@@ -342,14 +368,14 @@ internal sealed partial class ClipTimeline : UserControl
                     double t = (visibleStart - fullStart + i * actualWidth / (count - 1)) / Math.Max(1e-9, fullEnd - fullStart);
                     double sourceTime = clip.AudioIn + Math.Clamp(t, 0, 1) * clip.AudioDuration;
                     int index = Math.Clamp((int)Math.Floor(sourceTime / clip.SourceDuration * peaks.Length), 0, peaks.Length - 1);
-                    wave.Points.Add(new(i * actualWidth / (count - 1), 24 - Math.Clamp(peaks[index], 0, 1) * 11));
+                    wave.Points.Add(new(i * actualWidth / (count - 1), (RowHeight - 12) * (1 - Math.Clamp(peaks[index], 0, 1) * .5)));
                 }
                 body.Children.Add(wave);
             }
             body.Children.Add(new TextBlock { Text = clip.Label, FontSize = 11, Foreground = Brush(255, 248, 249, 251), TextTrimming = TextTrimming.CharacterEllipsis, IsHitTestVisible = false });
             bar.Child = body;
         }
-        Canvas.SetLeft(bar, visibleStart); Canvas.SetTop(bar, row * RowHeight + (clip.IsKey ? 16 : 4)); canvas.Children.Add(bar); bars[clip.Id] = bar;
+        Canvas.SetLeft(bar, visibleStart); Canvas.SetTop(bar, row * RowHeight + (clip.IsKey ? (RowHeight - 10) / 2 : 3)); canvas.Children.Add(bar); bars[clip.Id] = bar;
         ToolTipService.SetToolTip(bar, $"{clip.Label}\n{clip.Start:0.###}–{clip.End:0.###} 秒" + (clip.CanTrim ? " · 拖两端裁剪" : clip.CanMove ? " · 拖动安排时间" : " · 原始动作"));
         bar.PointerPressed += (_, args) =>
         {
@@ -388,9 +414,8 @@ internal sealed partial class ClipTimeline : UserControl
         labels.Children.Clear(); labels.Clip = new RectangleGeometry { Rect = new(0, 0, 164, Math.Max(0, scroll.ActualHeight)) };
         for (int i = first; i <= last; i++)
         {
-            var lane = lanes[i]; var button = new Button { Content = new TextBlock { Text = lane.Label, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis },
-                Width = 162, Height = RowHeight - 1, HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = Brush(0, 0, 0, 0), BorderThickness = new(0), Padding = new(10, 0, 5, 0) };
-            ToolTipService.SetToolTip(button, lane.Label + " · 点击添加演出"); button.Click += (_, _) => AddRequested?.Invoke(lane.Actor, lane.Kind, position);
+            var lane = lanes[i];
+            var button = CreateLaneLabel(lane);
             Canvas.SetTop(button, i * RowHeight - scroll.VerticalOffset); labels.Children.Add(button);
         }
     }

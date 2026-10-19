@@ -5,7 +5,8 @@
 #define NOMINMAX
 #include <windows.h>
 #include <d3d11.h>
-#include <dxgi1_3.h>
+#include <dxgi1_6.h>
+#include <cwchar>
 #include <wrl/client.h>
 #include <GL/gl.h>
 #include <memory>
@@ -211,4 +212,30 @@ API HRESULT __cdecl OurNotesGpuTestPixel(Surface* s, uint32_t* rgba) noexcept {
     s->context->CopyResource(staging.Get(), s->shared.Get()); D3D11_MAPPED_SUBRESOURCE mapped{};
     hr = s->context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped); if (FAILED(hr)) return hr;
     std::memcpy(rgba, mapped.pData, 4); s->context->Unmap(staging.Get(), 0); return S_OK;
+}
+
+// Query without opening a GL context. This is the OS preference order, not a
+// fabricated report of the active rendering device.
+API HRESULT __cdecl OurNotesGpuPreferredAdapter(UINT preference, wchar_t* name, UINT capacity) noexcept {
+    if (!name || capacity < 128 || preference > 2) return E_INVALIDARG;
+    name[0] = 0;
+    ComPtr<IDXGIFactory6> factory;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory)); if (FAILED(hr)) return hr;
+    for (UINT index = 0; ; ++index) {
+        ComPtr<IDXGIAdapter1> adapter;
+        hr = factory->EnumAdapterByGpuPreference(index, static_cast<DXGI_GPU_PREFERENCE>(preference), IID_PPV_ARGS(&adapter));
+        if (FAILED(hr)) return hr;
+        DXGI_ADAPTER_DESC1 description{}; hr = adapter->GetDesc1(&description); if (FAILED(hr)) return hr;
+        if (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+        std::wmemcpy(name, description.Description, 128); name[127] = 0; return S_OK;
+    }
+}
+API HRESULT __cdecl OurNotesGpuAdapterName(Surface* s, wchar_t* name, UINT capacity) noexcept {
+    if (!s || !name || capacity < 128) return E_INVALIDARG;
+    name[0] = 0;
+    ComPtr<IDXGIDevice> dxgi; ComPtr<IDXGIAdapter> adapter;
+    HRESULT hr = s->device.As(&dxgi); if (FAILED(hr)) return hr;
+    hr = dxgi->GetAdapter(&adapter); if (FAILED(hr)) return hr;
+    DXGI_ADAPTER_DESC description{}; hr = adapter->GetDesc(&description); if (FAILED(hr)) return hr;
+    std::wmemcpy(name, description.Description, 128); name[127] = 0; return S_OK;
 }

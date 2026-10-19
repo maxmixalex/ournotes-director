@@ -50,7 +50,7 @@ internal sealed partial class ClipTimeline
     {
         // Two separate projects may use the same archive and language. The host knows
         // when a document is replaced; source metadata alone cannot identify that change.
-        sourceKey = null; filteredActor = null; selected = null; fitPending = true;
+        sourceKey = null; filteredActor = null; selected = null; fitPending = true; collapsedGroups.Clear();
         IsPlaying = false; Position = 0; ClearRange();
         scroll.ChangeView(0, 0, null, true);
     }

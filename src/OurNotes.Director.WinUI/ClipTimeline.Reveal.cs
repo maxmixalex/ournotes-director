@@ -14,9 +14,10 @@ internal sealed partial class ClipTimeline
             if (selected != id || sourceKey != project || id is null) return;
             var clip = items.FirstOrDefault(item => item.Id == id);
             if (clip is null) return;
+            ExpandForClip(clip);
             if (filteredActor is not null && clip.Actor != filteredActor)
             { filteredActor = null; UpdateLanes(); Draw(); }
-            int index = lanes.ToList().FindIndex(lane => lane.Items.Any(item => item.Id == id));
+            int index = lanes.ToList().FindIndex(lane => !lane.IsGroup && lane.Items.Any(item => item.Id == id));
             if (index < 0) return;
             scroll.UpdateLayout();
             double top = index * RowHeight, bottom = top + RowHeight;
@@ -35,7 +36,7 @@ internal sealed partial class ClipTimeline
     {
         get
         {
-            int index = lanes.ToList().FindIndex(lane => lane.Items.Any(item => item.Id == selected));
+            int index = lanes.ToList().FindIndex(lane => !lane.IsGroup && lane.Items.Any(item => item.Id == selected));
             return index >= 0 && index * RowHeight >= scroll.VerticalOffset - 1
                 && (index + 1) * RowHeight <= scroll.VerticalOffset + scroll.ViewportHeight + 1;
         }

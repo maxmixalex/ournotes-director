@@ -96,26 +96,65 @@ internal sealed partial class CreativeScenePage
         if(chosen is null)return;
         await ImportNativeAsync(SceneTemplates.Create("story-patch",new SceneSource(chosen.Value,window.Settings.Site,window.Settings.Language)).Text,Environment.CurrentDirectory);
     }
+    bool importingStory;
+    internal JsonObject? LastStoryImportReport { get; private set; }
     async Task ImportNativeAsync(string json,string baseDirectory)
     {
-        var project=ParseNativeProject(json,baseDirectory);
+        if(importingStory)throw new InvalidOperationException("正在打开另一段原剧情，请稍候。");
         if(!Directory.Exists(window.Settings.ArchivePath))throw new DirectoryNotFoundException("请先选择已下载的素材库。");
-        if(!await ConfirmReplaceAsync())return;scrubber.Cancel();SaveDraft();viewport.Pause();notice.Severity=InfoBarSeverity.Informational;notice.Message="正在解析原剧情的演出和语音时间…";notice.IsOpen=true;
-        var expanded=StudioSceneDocument.FromSceneDocument(project);
-        await Task.Run(()=>{var archive=new Archive(window.Settings.ArchivePath);expanded.ExpandInheritedSections(archive);expanded.ResolveSourceModels(archive);});
-        var native=expanded.ToSceneDocument();var input=native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview"));
+        if(!await ConfirmReplaceAsync())return;
+        importingStory=true;
+        var total=System.Diagnostics.Stopwatch.StartNew();
+        var stages=new JsonObject();
+        var stage=System.Diagnostics.Stopwatch.StartNew();
+        void Mark(string name){stages[name]=stage.Elapsed.TotalMilliseconds;stage.Restart();}
+        SceneSnapshot? input=null;
         try
         {
-            var size=PreviewSize(native.Output.Width,native.Output.Height);await viewport.LoadSceneAsync(Source(input.FilePath,size.Width,size.Height,36000,PreviewDurationMode.Automatic));
-            var timing=await viewport.ResolveSceneTimingAsync();var imported=CreativeScene.FromPerformance(native.Root,timing);
-            foreach(var a in expanded.Actors)
-                if(!string.IsNullOrWhiteSpace(a.Model)&&!imported.Actors.OfType<JsonObject>().Any(actor=>S(actor,"id")==a.Id))
-                    imported.Actors.Add((JsonNode)new JsonObject{["id"]=a.Id,["name"]=a.Id,["model"]=a.Model,["fromSource"]=true});
-            document=imported;timeline.ResetProjectView();ResetProjectLibrary();path=null;directory=baseDirectory;savedText="";selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
-            Refresh();SaveDraft();notice.IsOpen=false;
+            scrubber.Cancel(); await scrubber.FlushAsync(); SaveDraft();viewport.Pause();
+            var owner=document; long ownerVersion=loadVersion;
+            void RequireOwner()
+            { if(disposed||!ReferenceEquals(document,owner)||loadVersion!=ownerVersion)throw new OperationCanceledException("原剧情导入的目标项目已更改。"); }
+            notice.Severity=InfoBarSeverity.Informational;notice.Message="正在读取原剧情和素材索引…";notice.IsOpen=true;
+            string archivePath=window.Settings.ArchivePath;
+            // Parsing, expansion and conversion all operate on private documents.
+            // Neither file IO nor prefix-by-prefix JSON validation belongs on UI.
+            var expanded=await Task.Run(()=>
+            {
+                var project=ParseNativeProject(json,baseDirectory);
+                var value=StudioSceneDocument.FromSceneDocument(project);
+                var archive=new Archive(archivePath);value.ExpandInheritedSections(archive);value.ResolveSourceModels(archive);
+                return value;
+            });
+            RequireOwner();Mark("parseAndExpandMs");
+            var native=await Task.Run(()=>expanded.ToSceneDocument());
+            input=await Task.Run(()=>native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview")));
+            RequireOwner();Mark("snapshotMs");
+            notice.Message="正在解析演出和真实语音时间…";
+            var size=PreviewSize(native.Output.Width,native.Output.Height);
+            await viewport.LoadSceneAsync(Source(input.FilePath,size.Width,size.Height,36000,PreviewDurationMode.Automatic));
+            RequireOwner();Mark("initialRendererMs");
+            var timing=await viewport.ResolveSceneTimingAsync();RequireOwner();Mark("nativeTimingMs");
+            notice.Message="正在建立可编辑时间轴…";
+            var imported=await Task.Run(()=>
+            {
+                var value=CreativeScene.FromPerformance(native.Root,timing);
+                var actorIds=value.Actors.OfType<JsonObject>().Select(actor=>S(actor,"id")).ToHashSet(StringComparer.Ordinal);
+                foreach(var actor in expanded.Actors)
+                    if(!string.IsNullOrWhiteSpace(actor.Model)&&actorIds.Add(actor.Id))
+                        value.Actors.Add((JsonNode)new JsonObject{["id"]=actor.Id,["name"]=actor.Id,["model"]=actor.Model,["fromSource"]=true});
+                return value;
+            });
+            RequireOwner();Mark("convertTimelineMs");
+            document=imported;timeline.ResetProjectView();ResetProjectLibrary();path=null;directory=baseDirectory;savedText="";
+            selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
+            Refresh();SaveDraft();Mark("bindTimelineMs");
+            await ReloadAsync();Mark("editablePreviewMs");notice.IsOpen=false;
+            LastStoryImportReport=new JsonObject { ["schema"]="ournotes-director/story-import/1",["totalMs"]=total.Elapsed.TotalMilliseconds,
+                ["commands"]=timing.Commands.Count,["clips"]=document.Clips.Count,["stages"]=stages };
+            App.TraceStartup("Story import: "+LastStoryImportReport.ToJsonString());
         }
-        finally{input.Dispose();}
-        await ReloadAsync();
+        finally {input?.Dispose();importingStory=false;}
     }
     static SceneDocument ParseNativeProject(string json,string baseDirectory)
     {

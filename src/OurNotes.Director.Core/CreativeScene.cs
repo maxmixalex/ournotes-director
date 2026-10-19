@@ -216,26 +216,51 @@ public sealed class CreativeScene
         scene.Root["originalProject"]=native.DeepClone();scene.Root["text"]=native["text"]?.DeepClone();
         scene.Canvas["width"]=native["output"]?["width"]?.DeepClone()??JsonValue.Create(1920);scene.Canvas["height"]=native["output"]?["height"]?.DeepClone()??JsonValue.Create(1080);
         var entries=timing.Commands.OrderBy(t=>t.Ordinal).ToArray();
-        foreach(var t in entries)
+        // Compute successors once. Import must not scan the remaining performance,
+        // validate every growing prefix, or look up every newly appended clip.
+        var ends = new int[entries.Length];
+        var nextByTarget = new Dictionary<(string Actor, string Kind), int>();
+        for (int index = entries.Length - 1; index >= 0;)
         {
-            if(native[t.Section] is not JsonArray section||t.Index>=section.Count||section[t.Index] is not JsonObject data)continue;
+            int first = index;
+            while (first > 0 && entries[first - 1].Ordinal == entries[index].Ordinal) first--;
+            for (int i = first; i <= index; i++)
+            {
+                var entry = entries[i]; ends[i] = entry.EndFrame ?? entry.StartFrame + 1;
+                if (Kind(entry.Command) is not ("motion" or "expression")
+                    || native[entry.Section] is not JsonArray rows || entry.Index < 0 || entry.Index >= rows.Count
+                    || rows[entry.Index] is not JsonObject row) continue;
+                ends[i] = nextByTarget.GetValueOrDefault((Text(row, "TargetName"), Kind(entry.Command)), timing.EndFrame.Value);
+            }
+            // Equal ordinals cannot be each other's successor. Reverse assignment
+            // retains the first stable entry for a later ordinal, as before.
+            for (int i = index; i >= first; i--)
+            {
+                var entry = entries[i];
+                if (Kind(entry.Command) is ("motion" or "expression")
+                    && native[entry.Section] is JsonArray rows && entry.Index >= 0 && entry.Index < rows.Count
+                    && rows[entry.Index] is JsonObject row)
+                    nextByTarget[(Text(row, "TargetName"), Kind(entry.Command))] = entry.StartFrame;
+            }
+            index = first - 1;
+        }
+        var actors = new HashSet<string>(StringComparer.Ordinal);
+        for (int index = 0; index < entries.Length; index++)
+        {
+            var t = entries[index];
+            if(native[t.Section] is not JsonArray section||t.Index<0||t.Index>=section.Count||section[t.Index] is not JsonObject data)continue;
             if(t.Command is "Delay" or "Wait" or "GoTo" or "ForceAuto" or "CancelDelay")continue;
             var row=(JsonObject)data.DeepClone();row["cmd"]=t.Command;row.Remove("AtFrame");
             string actor=Text(row,"TargetName"),kind=Kind(t.Command);
-            if(t.Command=="Character"&&actor.Length>0&&Text(row,"Model").Length>0&&!scene.Actors.OfType<JsonObject>().Any(a=>Text(a,"id")==actor))
+            if(t.Command=="Character"&&actor.Length>0&&Text(row,"Model").Length>0&&actors.Add(actor))
                 scene.Actors.Add((JsonNode)new JsonObject{["id"]=actor,["name"]=actor,["model"]=Text(row,"Model"),["fromSource"]=true});
-            int end=t.EndFrame??t.StartFrame+1;
-            if(kind is "motion" or "expression")
-            {
-                var next=entries.FirstOrDefault(n=>n.Ordinal>t.Ordinal&&Kind(n.Command)==kind&&native[n.Section]?[n.Index] is JsonObject r&&Text(r,"TargetName")==actor);
-                end=next?.StartFrame??timing.EndFrame.Value;
-            }
+            int end=ends[index];
             string label=t.Command is "Talk" or "Voice"?DialogueLabel(native,row,scene.Language):Text(row,"MotionName",Text(row,"ExpressionName",t.Command));
-            string id=scene.AddClip(actor,kind,t.StartFrame/30d,Math.Max(1,end-t.StartFrame)/30d,row,label);
-            scene.Clip(id)["sourcePerformance"]=true;
+            var clip=NewClip(actor,kind,t.StartFrame/30d,Math.Max(1,end-t.StartFrame)/30d,row,label);
+            clip["sourcePerformance"]=true; scene.Clips.Add(clip);
         }
         double tail=(timing.EndFrame.Value+1)/30d, contentEnd=scene.Clips.OfType<JsonObject>().Select(c=>Number(c,"start")+Number(c,"duration")).DefaultIfEmpty(0).Max();
-        if(tail>contentEnd+0.0001)scene.AddClip("","hold",contentEnd,tail-contentEnd,new JsonObject{["cmd"]="Delay",["Frames"]=0},"结束停留");
+        if(tail>contentEnd+0.0001)scene.Clips.Add(NewClip("","hold",contentEnd,tail-contentEnd,new JsonObject{["cmd"]="Delay",["Frames"]=0},"结束停留"));
         scene.Validate();return scene;
     }
     static string DialogueLabel(JsonObject root,JsonObject row,string language)

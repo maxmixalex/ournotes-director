@@ -11,6 +11,16 @@ internal sealed class WorkspacePanel : UserControl
 {
     sealed record PanelTab(string Id, string Title, FrameworkElement Element, Button Button);
     readonly Border frame = new();
+    Border headerFrame = null!;
+    Visibility savedToolbarVisibility;
+    bool immersive;
+    internal void SetImmersive(bool value)
+    {
+        if (immersive == value) return; immersive = value;
+        if (value) { savedToolbarVisibility = toolbar.Visibility; toolbar.Visibility = Visibility.Collapsed; }
+        else toolbar.Visibility = savedToolbarVisibility;
+        headerFrame.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+    }
     readonly StackPanel tabs = new() { Orientation = Orientation.Horizontal, Spacing = 0 };
     readonly Grid pages = new();
     readonly Border toolbar = new() { Visibility = Visibility.Collapsed, Padding = new(6, 3, 6, 3) };
@@ -53,7 +63,7 @@ internal sealed class WorkspacePanel : UserControl
         ToolTipService.SetToolTip(menu, "面板菜单 · 双击标签或按 ` 最大化");
         menu.Click += (_, _) => { Activated?.Invoke(this); CreateMenu().ShowAt(menu); };
         header.Children.Add(menu); Grid.SetColumn(menu, 1);
-        var headerFrame = new Border { Child = header, Style = (Style)Application.Current.Resources["WorkspaceHeaderStyle"] };
+        headerFrame = new Border { Child = header, Style = (Style)Application.Current.Resources["WorkspaceHeaderStyle"] };
         headerFrame.DoubleTapped += (_, args) => { Activated?.Invoke(this); MaximizeRequested?.Invoke(this); args.Handled = true; };
         root.Children.Add(headerFrame);
         root.Children.Add(toolbar); Grid.SetRow(toolbar, 1);

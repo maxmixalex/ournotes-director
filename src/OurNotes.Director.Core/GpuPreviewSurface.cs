@@ -4,7 +4,7 @@ namespace OurNotes.Director.Core;
 
 /// <summary>Owns the WGL/D3D interop registration on its creating render thread. A UI consumer
 /// acquires an independent COM reference, so a late frame cannot access a destroyed GL surface.</summary>
-public sealed class GpuPreviewSurface : IDisposable
+public sealed partial class GpuPreviewSurface : IDisposable
 {
     const string Library = "OurNotes.GpuPreview.dll";
     readonly object gate = new();

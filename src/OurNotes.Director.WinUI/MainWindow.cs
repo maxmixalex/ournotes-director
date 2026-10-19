@@ -13,7 +13,7 @@ using Windows.UI;
 
 namespace OurNotes.Director.WinUI;
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     internal new static MainWindow? Current { get; private set; }
     internal DesktopSettings Settings { get; }
@@ -77,10 +77,11 @@ public sealed class MainWindow : Window
         root.SizeChanged+=(_,_)=>drawer.Width=Math.Min(820,Math.Max(320,root.ActualWidth-90));
         root.ActualThemeChanged+=(_,_)=>StyleDrawer();
         root.KeyDown+=(_,args)=>HandleShellShortcut(args);
+        root.PreviewKeyDown+=OnMonitorFullscreenKey;
         Content=root;ApplySettings();Navigate("scenes");
         AppWindow.Closing+=async(_,args)=>
         {
-            if(closeApproved)return;args.Cancel=true;if(closing)return;closing=true;
+            if(closeApproved)return;ExitMonitorFullscreen();args.Cancel=true;if(closing)return;closing=true;
             try
             {
                 bool dirty=scene?.HasUnsavedChanges==true||home?.HasUnsavedChanges==true||live2d?.HasUnsavedChanges==true;
@@ -108,6 +109,7 @@ public sealed class MainWindow : Window
     }
     internal void Navigate(string key)
     {
+        ExitMonitorFullscreen();
         if(key=="start")key="scenes";
         if(key is "scenes" or "home" or "live2d")
         {
@@ -145,6 +147,7 @@ public sealed class MainWindow : Window
     void HandleShellShortcut(KeyRoutedEventArgs args)
     {
         if(args.Handled||drawer.Visibility==Visibility.Visible||dialogOpen)return;
+        if(IsMonitorFullscreen && args.Key == (Windows.System.VirtualKey)192){args.Handled=true;return;}
         if(ActiveLayout?.HandleShortcut(args)==true)return;
         var focused=FocusManager.GetFocusedElement(root.XamlRoot) as DependencyObject;
         bool shell=false;
@@ -164,7 +167,7 @@ public sealed class MainWindow : Window
             "diagnostics"=>new CommandPage(this,CommandGroup.Diagnostics),_=>throw new ArgumentException("未知工具："+key)};tools[key]=page;return page;
     }
     internal void ShowDrawer(string key,string title,FrameworkElement child)
-    {drawerKey=key;drawerTitle.Text=title;drawerContent.Content=child;StyleDrawer();drawer.Width=Math.Min(820,Math.Max(320,root.ActualWidth-90));drawer.Visibility=Visibility.Visible;}
+    {ExitMonitorFullscreen();drawerKey=key;drawerTitle.Text=title;drawerContent.Content=child;StyleDrawer();drawer.Width=Math.Min(820,Math.Max(320,root.ActualWidth-90));drawer.Visibility=Visibility.Visible;}
     internal void CloseDrawer(){bool visible=drawer.Visibility==Visibility.Visible;drawer.Visibility=Visibility.Collapsed;drawerContent.Content=null;drawerKey=null;if(visible)ActiveLayout?.FocusActivePanel();}
     internal void ShowResourceManager()
     {
@@ -247,6 +250,7 @@ public sealed class MainWindow : Window
         {
             Navigate("scenes");root.UpdateLayout();await Task.Delay(100);await Scene.RunRealSmokeTestAsync(Check);
             Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunRealSmokeTestAsync(Check);
+            await RunEditingInteractionSmokeAsync(Check);
         }
         var help=await Engine.RunAsync(new EngineRequest("help","引擎检查",["help"],Path.GetDirectoryName(reportPath)!));Check(help.Success&&help.Json?["commands"] is JsonArray,"原生导出执行器可用");
         Navigate("scenes");ActiveLayout?.RestorePanels();CloseDrawer();root.UpdateLayout();Save(true);
