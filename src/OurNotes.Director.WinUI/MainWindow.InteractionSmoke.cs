@@ -17,6 +17,9 @@ public sealed partial class MainWindow
     async Task RunEditingInteractionSmokeAsync(Action<bool, string> check)
     {
         Navigate("scenes"); root.UpdateLayout(); await Task.Delay(100);
+        // The legacy SceneStudioPage is no longer the active scene workspace.
+        // Exercise the real native composition bridge from the actual smoke route.
+        Descendants<NativeViewport>(ActiveLayout!.ProgramMonitorPanel).Single().RunGpuCompositionSmoke(check);
         if (Scene.LastStoryImportReport is { } importReport)
             OurNotes.Director.Desktop.Core.DesktopSettings.AtomicWrite(App.SmokeEvidencePath("story-import.json"), importReport.ToJsonString(OurNotes.Director.Desktop.Core.DesktopSettings.JsonOptions));
         foreach (string workspace in new[] { "scenes", "live2d", "home" })

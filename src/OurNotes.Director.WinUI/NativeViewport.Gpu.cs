@@ -93,6 +93,7 @@ public sealed partial class NativeViewport
         check((rgba >> 24) == 255 && ((rgba >> 8) & 255) is >= 127 and <= 128 && ((rgba >> 16) & 255) is >= 191 and <= 192,
             "独立 WARP 检查：D3D11 交换链生成真实像素，不冒充硬件互操作验证");
         nint borrowed = test.AcquireSwapChain();
+        nint previous = attachedGpu?.AcquireSwapChain() ?? 0;
         try
         {
             var panel = ((WinRT.IWinRTObject)gpuPanel).NativeObject;
@@ -100,6 +101,18 @@ public sealed partial class NativeViewport
                 "原生 WinUI SwapChainPanel 接受独立 COM 引用的交换链");
             check(GpuPreviewSurface.AttachPanel(panel.ThisPtr, 0) >= 0, "交换链可在窗口线程解除绑定");
         }
-        finally { GpuPreviewSurface.ReleaseSwapChain(borrowed); }
+        finally
+        {
+            try
+            {
+                var panel = ((WinRT.IWinRTObject)gpuPanel).NativeObject;
+                Marshal.ThrowExceptionForHR(GpuPreviewSurface.AttachPanel(panel.ThisPtr, previous));
+            }
+            finally
+            {
+                GpuPreviewSurface.ReleaseSwapChain(previous);
+                GpuPreviewSurface.ReleaseSwapChain(borrowed);
+            }
+        }
     }
 }
