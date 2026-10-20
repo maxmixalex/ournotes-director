@@ -21,7 +21,7 @@ public sealed partial class Live2DDocument
         // never a second copy of the source scene's time-varying action tracks.
         // Preserve the rest of the original performance and its exact timing.
         var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>();
-        if (selectedMotionOnly)
+        if (selectedMotionOnly && OwnRows().Any(row => Text(row, "cmd") is "Motion" or "Expression"))
             sourceRows = sourceRows.Where(row => !(Text(row, "TargetName") == ActorId
                 && Text(row, "cmd") is "Motion" or "Expression" or "In"));
         project["commands"] = new JsonArray(sourceRows.Concat(OwnRows()).OrderBy(Frame)

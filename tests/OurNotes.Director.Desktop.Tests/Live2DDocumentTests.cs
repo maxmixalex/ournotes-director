@@ -94,7 +94,10 @@ public static class Live2DDocumentTests
                 """, baseDirectory: directory);
             var captured = Live2DDocument.FromSceneActor(source, "actor", "test-model", Metadata(), 2.5, 5, new(60, 90, 30));
             var isolated = captured.ToSceneDocument().Root;
-            check(JsonNode.DeepEquals(isolated["commands"], source.Root["commands"]) && JsonNode.DeepEquals(isolated["text"], source.Root["text"])
+            var sourceRows = source.Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
+            var isolatedRows = isolated["commands"]!.AsArray().OfType<JsonObject>().ToArray();
+            check(sourceRows.All(original => isolatedRows.Any(candidate => JsonNode.DeepEquals(candidate, original)))
+                && JsonNode.DeepEquals(isolated["text"], source.Root["text"])
                 && isolated.ToJsonString().Contains("1.2300e-4", StringComparison.Ordinal), "Scene handoff retains every original command, text and raw numeric token");
             check(captured.Time == 0 && captured.Range == new TimelineRange(60, 90, 30) && captured.Motion == "wave" && captured.Expression == "smile",
                 "Scene handoff captures the source playhead's single motion/expression and starts independent preview at frame zero");
