@@ -15,17 +15,21 @@ public sealed class AdvFrames : IDisposable
         public AdvFrameTexts? Text;public AdvCanvasLayout? Layout;public AdvFrameLayout Modifiers=null!;public int LastLayoutFrame=-1;
     }
     readonly Archive archive;readonly string site;readonly JsonNode manifest,document,ui;
-    readonly AdvLoop loop;readonly AdvTweens tweens;readonly OffscreenGl gl;readonly UnityShaderLibrary shaders;readonly AdvAnimRecords records;
+    readonly AdvLoop loop;readonly AdvTweens tweens;readonly OffscreenGl gl;readonly UnityShaderLibrary? shaders;readonly AdvAnimRecords records;readonly bool timingOnly;
     readonly Dictionary<string,Frame> frames=[];readonly List<Frame> ordered=[];readonly Dictionary<string,uint> textures=[];
-    readonly AdvCanvasImages images;readonly float width,height;
+    readonly AdvCanvasImages? images;readonly float width,height;
     AdvCanvasTexts? textRenderer;readonly string language;
     public Func<string,string>? Localize{get;set;}
     readonly AdvRandom particleRandom=new(0x55495053);
     public int VisibleCount=>ordered.Count(f=>f.Active);
     public object Snapshot()=>JsonOutput.Object(("canvas", JsonOutput.Object(("width", width), ("height", height))), ("items", frames.Select(p=>JsonOutput.Object(("name", p.Key), ("active", p.Value.Active), ("alpha", p.Value.Group.Alpha), ("animationTime", p.Value.Main?.NormalizedTime), ("particles", p.Value.Particles?.Snapshot()), ("texts", p.Value.Text?.Texts.ToDictionary(t=>t.Key.Path,t=>t.Value.Text))))));
-    public AdvFrames(Archive archive,string site,JsonNode manifest,JsonNode definition,string language,AdvLoop loop,AdvTweens tweens,OffscreenGl gl,int renderScale=1)
+    public AdvFrames(Archive archive,string site,JsonNode manifest,JsonNode definition,string language,AdvLoop loop,AdvTweens tweens,OffscreenGl gl,int renderScale=1,bool timingOnly=false)
     {
-        this.archive=archive;this.site=site;this.manifest=manifest;this.loop=loop;this.tweens=tweens;this.gl=gl;this.language=language;shaders=new(archive,site,manifest);images=new(archive,site,manifest,gl);
+        this.archive=archive;this.site=site;this.manifest=manifest;this.loop=loop;this.tweens=tweens;this.gl=gl;this.language=language;this.timingOnly=timingOnly;
+        // Timing analysis needs the native animator state and waits, not fonts,
+        // particle shaders or GPU image upload infrastructure. The real preview
+        // builds those resources once after timing has completed.
+        shaders=timingOnly?null:new(archive,site,manifest);images=timingOnly?null:new(archive,site,manifest,gl);
         string file=Archive.S(definition,"frames");document=file==""?new JsonObject{["frames"]=new JsonObject()}:JsonNode.Parse(archive.Logical(site,manifest,file))!;records=new(document);
         ui=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"ui"),language))!;
         var scaler=ui["nodes"]!.AsArray().First(n=>Archive.S(n!,"path")=="UIAdvWidget/FrameCanvas")!["canvasScaler"]!;
@@ -41,11 +45,12 @@ public sealed class AdvFrames : IDisposable
             foreach(var record in doc["nodes"]!.AsArray().OfType<JsonNode>()){string path=Archive.S(record,"path");int cut=path.LastIndexOf('/');frame.Nodes[path]=new(record,cut<0?null:frame.Nodes[path[..cut]]);}
             frame.Root=frame.Nodes.Values.First();var adv=frame.Root.Component("AdvFrame")??throw new InvalidDataException("Frame has no AdvFrame component");frame.Group=frame.Nodes[Archive.S(adv["_canvasGroup"]!,"gameObject")];
             frame.Modifiers=new(frame.Nodes.Values);
-            if(frame.Nodes.Values.Any(n=>n.Component("TextMeshProUGUI") is not null||n.Component("RubyTextMeshProUGUI") is not null||n.Component("RubyEmojiTextMeshProUGUI") is not null)){
+            if(!timingOnly&&frame.Nodes.Values.Any(n=>n.Component("TextMeshProUGUI") is not null||n.Component("RubyTextMeshProUGUI") is not null||n.Component("RubyEmojiTextMeshProUGUI") is not null)){
                 textRenderer??=new(archive,site,manifest,language,gl);frame.Text=new(frame.Nodes,textRenderer.Fonts,textRenderer.Fonts["frameTexts"]?[name],language);
                 frame.Layout=new(frame.Nodes.Values,n=>frame.Text.Texts.TryGetValue(n,out var text)&&text.Enabled?text.PreferredSize(n.Width):null);
             }
-            if(frame.Nodes.Values.Any(n=>n.Component("ParticleSystem") is not null))frame.Particles=new(frame.Nodes,particleRandom,width,height,Actor.N(ui["uiCamera"]?["camera"]?["orthographic size"],5),gl,shaders,Texture);
+            if(!timingOnly&&frame.Nodes.Values.Any(n=>n.Component("ParticleSystem") is not null))
+                frame.Particles=new(frame.Nodes,particleRandom,width,height,Actor.N(ui["uiCamera"]?["camera"]?["orthographic size"],5),gl,shaders!,Texture);
             foreach(var node in frame.Nodes.Values){var a=node.Component("Animator");if(a?["m_Controller"] is null)continue;
                 var animator=new AdvCanvasAnimator(node,a,records,b=>frame.Nodes.TryGetValue(node.Path+(b.Path==""?"":"/"+b.Path),out var target)?target.Bind(b):null);frame.Animators.Add(animator);
                 if(adv["_animator"]?["gameObject"]?.ToString()==node.Path){frame.Main=animator.Animator;animator.KeepStateOnDisable=true;}
@@ -93,6 +98,6 @@ public sealed class AdvFrames : IDisposable
         AdvanceRenderState();var globals=textRenderer is null?null:AdvCanvasTexts.OrthographicGlobals(width,height,gl.Width,gl.Height);foreach(var frame in ordered){if(!frame.Active)continue;
             foreach(var node in frame.Nodes.Values){if(!node.ActiveInHierarchy)continue;if(node.Image is not null)Image(node);if(frame.Text?.Texts.TryGetValue(node,out var text)==true)textRenderer!.Draw(node,text,globals!,1);if(node.Component("UIParticle") is not null)frame.Particles?.Draw(node);}}
     }
-    public void AdvanceRenderState(){foreach(var frame in ordered){frame.Modifiers.SetActive(frame.Active);if(frame.LastLayoutFrame!=loop.Frame){frame.Modifiers.Update();frame.LastLayoutFrame=loop.Frame;}if(frame.Layout is not null)frame.Layout.Layout(width,height);else foreach(var node in frame.Nodes.Values)node.Layout(width,height);frame.Particles?.Update(frame.Active,loop.Frame,(float)loop.DeltaTime);}}
-    public void Dispose(){images.Dispose();shaders.Dispose();textRenderer?.Dispose();}
+    public void AdvanceRenderState(){if(timingOnly)return;foreach(var frame in ordered){frame.Modifiers.SetActive(frame.Active);if(frame.LastLayoutFrame!=loop.Frame){frame.Modifiers.Update();frame.LastLayoutFrame=loop.Frame;}if(frame.Layout is not null)frame.Layout.Layout(width,height);else foreach(var node in frame.Nodes.Values)node.Layout(width,height);frame.Particles?.Update(frame.Active,loop.Frame,(float)loop.DeltaTime);}}
+    public void Dispose(){images?.Dispose();shaders?.Dispose();textRenderer?.Dispose();}
 }

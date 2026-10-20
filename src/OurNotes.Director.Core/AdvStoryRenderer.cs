@@ -121,7 +121,7 @@ public sealed class AdvStoryRenderer : IDisposable
             Ui.ResolveCharacter=Scene.Character;
             Ui.ShowingCharacters=()=>Scene.VisibleActors;
             Scene.ForegroundItem=()=>Ui.Chat is {Visible:true} chat?new(chat.SortingOrder,chat.PlaneDistance*chat.PlaneDistance,()=>chat.Draw(Scene.Camera)):null;
-            Frames=new(archive,site,manifest,definition,language,Loop,tweens,gl,supersample){Localize=Ui.Localize};Frames.Bind(Player);Frames.Preload(rows);
+            Frames=new(archive,site,manifest,definition,language,Loop,tweens,gl,supersample,timingOnly){Localize=Ui.Localize};Frames.Bind(Player);Frames.Preload(rows);
             Stills=new(archive,site,manifest,definition,language,Loop,tweens,gl,rows);Stills.Bind(Player);
             Video=new(archive,site,manifest,definition,settings,Loop,tweens,Audio,Ui,gl,ffmpeg){TimingOnly=timingOnly};Video.Bind(Player);
             AdvAlphaCommands.Bind(Player,Loop,Stills.SetAlpha,Video.SetAlpha);
