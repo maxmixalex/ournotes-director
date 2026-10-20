@@ -101,10 +101,10 @@ public static class Live2DDocumentTests
                 && isolated.ToJsonString().Contains("1.2300e-4", StringComparison.Ordinal), "Scene handoff retains every original command, text and raw numeric token");
             check(captured.Time == 0 && captured.Range == new TimelineRange(60, 90, 30) && captured.Motion == "wave" && captured.Expression == "smile",
                 "Scene handoff captures the source playhead's single motion/expression and starts independent preview at frame zero");
-            var single = captured.ToSceneDocument(selectedMotionOnly: true).Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
-            check(single.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Motion") == 1
-                && single.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Expression") == 1
-                && single.Where(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() is "Motion" or "Expression")
+            var selectedCommands = captured.ToSceneDocument(selectedMotionOnly: true).Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
+            check(selectedCommands.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Motion") == 1
+                && selectedCommands.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Expression") == 1
+                && selectedCommands.Where(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() is "Motion" or "Expression")
                     .All(row => row["AtFrame"]!.GetValue<int>() == 0),
                 "Independent Live2D preview/export compiles one selected motion and expression at frame zero");
             check(isolated["output"]?["playbackViewport"]?["letterbox"]?.ToString() == "game", "Isolation preserves the source opening-wait viewport");
