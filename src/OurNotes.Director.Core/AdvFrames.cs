@@ -92,7 +92,7 @@ public sealed class AdvFrames : IDisposable
     {
         string path=Archive.S(desc,"texture");if(!textures.TryGetValue(path,out uint value))textures[path]=value=gl.Upload(Png.Decode(archive.Logical(site,manifest,path)));return value;
     }
-    void Image(AdvCanvasNode node)=>images.Image(node,width,height);
+    void Image(AdvCanvasNode node)=>images!.Image(node,width,height);
     public void Draw()
     {
         AdvanceRenderState();var globals=textRenderer is null?null:AdvCanvasTexts.OrthographicGlobals(width,height,gl.Width,gl.Height);foreach(var frame in ordered){if(!frame.Active)continue;
