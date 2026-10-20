@@ -126,7 +126,8 @@ public static class Live2DDocumentTests
             check(dependencyRows.Any(row => row["AudioPath"]?.ToString() == Path.Combine(directory, "voice.wav"))
                 && dependencyRows.Any(row => row["Values"]?["backgroundImage"]?["path"]?.ToString() == Path.Combine(directory, "background.png")),
                 "Embedded source audio and images remain resolved after saving the model elsewhere");
-            captured.SetDuration(2); check(captured.Time == 2 && captured.Range!.EndFrameExclusive == 61, "Duration edits clamp the playhead/range without deleting source commands");
+            captured.Time = 2.5; captured.SetDuration(2);
+            check(captured.Time == 2 && captured.Range!.EndFrameExclusive == 61, "Duration edits clamp the playhead/range without deleting source commands");
             Reject(() => captured.SetParameter("missing", 0), "A workbench cannot author invented model parameters");
             Reject(() => captured.SetParameter("ParamAngleX", 31), "A parameter cannot exceed its real Cubism range");
             Reject(() => captured.SetTransform(new(Scale: 0)), "Zero-scale isolated output is rejected");
