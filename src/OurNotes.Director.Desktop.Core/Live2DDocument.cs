@@ -319,7 +319,10 @@ public sealed partial class Live2DDocument
     string? CurrentAnimation(string command, string field, string defaultField)
     {
         string? result = root["metadata"]?[defaultField]?.GetValue<string>();
-        foreach (var row in ActiveRows())
+        bool ownsChoice = OwnRows().Any(row => Text(row, "cmd") == command
+            || command == "Expression" && Text(row, "cmd") == "Motion");
+        var rows = ownsChoice ? OwnRows().Where(row => Frame(row) <= FrameAt(Time)).OrderBy(Frame) : ActiveRows();
+        foreach (var row in rows)
         {
             string kind = Text(row, "cmd");
             if ((kind == command || kind == "In" || command == "Expression" && kind == "Motion")
@@ -329,18 +332,28 @@ public sealed partial class Live2DDocument
     }
     void SetAnimation(string command, string field, string choices, string? value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            Change(next => RemoveEdits(next, row => Text(row, "cmd") == command && Frame(row) == FrameAt(Time))); return;
-        }
-        if (root["metadata"]?[choices] is JsonArray available && !available.Any(item =>
-            (item is JsonObject ? Text(item, "id") : item?.GetValue<string>()) == value))
+        EnsureEditablePerformance();
+        if (command is not ("Motion" or "Expression")) throw new ArgumentOutOfRangeException(nameof(command));
+        if (!string.IsNullOrWhiteSpace(value)
+            && root["metadata"]?[choices] is JsonArray available
+            && !available.Any(item => (item is JsonObject ? Text(item, "id") : item?.GetValue<string>()) == value))
             throw new ArgumentException("模型不包含所选" + (command == "Motion" ? "动作：" : "表情：") + value);
-        var row = new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId, [field] = value, ["MotionFadeIn"] = 0 };
-        // Motion's native empty-expression behavior resets to the default. Preserve the
-        // currently selected source expression when replacing only its motion.
-        if (command == "Motion" && Expression is { Length: > 0 } expression) row["ExpressionName"] = expression;
-        SetEdit(row);
+
+        // This workbench deliberately edits one motion and one expression, not a
+        // second timeline. A selection replaces the previous choice at frame zero;
+        // complex, time-varying performances belong in the Scene workbench.
+        string? other = command == "Motion" ? Expression : Motion;
+        var row = string.IsNullOrWhiteSpace(value) ? null
+            : new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId, [field] = value,
+                ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
+        if (row is not null && other is { Length: > 0 })
+            row[command == "Motion" ? "ExpressionName" : "MotionName"] = other;
+        Change(next =>
+        {
+            RemoveEdits(next, previous => Text(previous, "cmd") == command);
+            next["time"] = 0;
+            if (row is not null) next["edits"]!.AsArray().Add(row.DeepClone());
+        });
     }
     void SetEdit(JsonObject row)
     {

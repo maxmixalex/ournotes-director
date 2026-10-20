@@ -16,13 +16,14 @@ public sealed partial class Live2DDocument
         if (root["output"]?["isolateCanvas"] is { } canvas) output["isolateCanvas"] = canvas.DeepClone();
         else output.Remove("isolateCanvas");
         project["output"] = output;
-        if (OwnRows().Any())
-        {
-            EnsureEditablePerformance();
-            var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>();
-            project["commands"] = new JsonArray(sourceRows.Concat(OwnRows()).OrderBy(Frame)
-                .Select(row => (JsonNode)row.DeepClone()).ToArray());
-        }
+        if (OwnRows().Any()) EnsureEditablePerformance();
+        // The independent Live2D workbench has one selected motion/expression,
+        // never a second copy of the source scene's time-varying action tracks.
+        // Preserve the rest of the original performance and its exact timing.
+        var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>().Where(row =>
+            !(Text(row, "TargetName") == ActorId && Text(row, "cmd") is "Motion" or "Expression" or "In"));
+        project["commands"] = new JsonArray(sourceRows.Concat(OwnRows()).OrderBy(Frame)
+            .Select(row => (JsonNode)row.DeepClone()).ToArray());
         // Extend a scheduled source only when the user extended the document. Existing
         // later commands stay intact when the export range is shorter than the source.
         if (project["commands"] is JsonArray commands && commands.OfType<JsonObject>().All(row => row["AtFrame"] is not null)
