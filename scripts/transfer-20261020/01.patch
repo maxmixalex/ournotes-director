@@ -1,0 +1,257 @@
+diff --git a/native/GpuPreview/GpuPreview.cpp b/native/GpuPreview/GpuPreview.cpp
+index 60c80ce..ddb3184 100644
+--- a/native/GpuPreview/GpuPreview.cpp
++++ b/native/GpuPreview/GpuPreview.cpp
+@@ -167,7 +167,7 @@ HRESULT CreateSurface(UINT width, UINT height, UINT preference, Surface** result
+ }
+ }
+ #define API extern "C" __declspec(dllexport)
+-API unsigned __cdecl OurNotesGpuAbi() noexcept { return 2; }
++API unsigned __cdecl OurNotesGpuAbi() noexcept { return 3; }
+ API HRESULT __cdecl OurNotesGpuCreate(UINT width, UINT height, Surface** result) noexcept {
+     return CreateSurface(width, height, 0, result);
+ }
+@@ -205,6 +205,22 @@ API HRESULT __cdecl OurNotesGpuScaleSwapChain(IDXGISwapChain* swap, float x, flo
+     DXGI_MATRIX_3X2_F matrix{}; matrix._11 = x; matrix._22 = y;
+     return composition->SetMatrixTransform(&matrix);
+ }
++// The managed surface gate serializes this call with render-thread presentation
++// and destruction. Only D3D is touched here; WGL ownership remains on its thread.
++API HRESULT __cdecl OurNotesGpuSetDisplaySize(Surface* s, float x, float y) noexcept {
++    if (!s || !s->swap || !s->shared || !s->back) return E_INVALIDARG;
++    HRESULT hr = OurNotesGpuScaleSwapChain(s->swap.Get(), x, y);
++    if (FAILED(hr)) return hr;
++    // SetMatrixTransform is latched by the NEXT Present. Re-copy the retained
++    // texture because flip-sequential Present rotates buffers; presenting an old
++    // back buffer without copying it may show blank/stale content while paused.
++    s->context->CopyResource(s->back.Get(), s->shared.Get());
++    return s->swap->Present(0, 0);
++}
++API HRESULT __cdecl OurNotesGpuTestPresentCount(Surface* s, UINT* count) noexcept {
++    if (!s || !s->testOnly || !s->IsOwner() || !count) return E_INVALIDARG;
++    return s->swap->GetLastPresentCount(count);
++}
+ API HRESULT __cdecl OurNotesGpuAttachPanel(IUnknown* panel, IDXGISwapChain* swap) noexcept {
+     if (!panel) return E_POINTER;
+     ComPtr<IWinUISwapChainPanelNative> native;
+diff --git a/src/OurNotes.Director.Core/GpuPreviewSurface.cs b/src/OurNotes.Director.Core/GpuPreviewSurface.cs
+index bc4fe46..ee33440 100644
+--- a/src/OurNotes.Director.Core/GpuPreviewSurface.cs
++++ b/src/OurNotes.Director.Core/GpuPreviewSurface.cs
+@@ -7,7 +7,7 @@ namespace OurNotes.Director.Core;
+ public sealed partial class GpuPreviewSurface : IDisposable
+ {
+     const string Library = "OurNotes.GpuPreview.dll";
+-    const uint AbiVersion = 2;
++    const uint AbiVersion = 3;
+     readonly object gate = new();
+     readonly int owner = Environment.CurrentManagedThreadId;
+     nint handle;
+@@ -46,9 +46,16 @@ public sealed partial class GpuPreviewSurface : IDisposable
+     public static void ReleaseSwapChain(nint swapChain) { if (swapChain != 0) OurNotesGpuReleaseSwapChain(swapChain); }
+     public void SetDisplaySize(double width, double height)
+     {
+-        nint swap = AcquireSwapChain(); if (swap == 0) return;
+-        try { Marshal.ThrowExceptionForHR(OurNotesGpuScaleSwapChain(swap, (float)(width / Width), (float)(height / Height))); }
+-        finally { ReleaseSwapChain(swap); }
++        if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
++            throw new ArgumentOutOfRangeException(nameof(width));
++        // Serialize D3D-only re-presentation with native drawing and destruction.
++        // The native entry point makes no WGL calls and does not evaluate animation.
++        lock (gate)
++        {
++            if (handle == 0) return;
++            Marshal.ThrowExceptionForHR(OurNotesGpuSetDisplaySize(handle,
++                (float)(width / Width), (float)(height / Height)));
++        }
+     }
+     public static int AttachPanel(nint panel, nint swapChain) => OurNotesGpuAttachPanel(panel, swapChain);
+     public void Dispose()
+@@ -64,6 +71,8 @@ public sealed partial class GpuPreviewSurface : IDisposable
+         Marshal.ThrowExceptionForHR(OurNotesGpuCreateTest((uint)width, (uint)height, out nint native));
+         return new(native, width, height);
+     }
++    public uint ReadCompositionTestPresentCount()
++    { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPresentCount(handle, out uint count)); return count; }
+     public uint ReadCompositionTestPixel()
+     { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPixel(handle, out uint pixel)); return pixel; }
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern uint OurNotesGpuAbi();
+@@ -71,8 +80,9 @@ public sealed partial class GpuPreviewSurface : IDisposable
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuDestroy(nint surface);
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern nint OurNotesGpuAcquireSwapChain(nint surface);
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuReleaseSwapChain(nint swapChain);
+-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuScaleSwapChain(nint swapChain, float x, float y);
++    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuSetDisplaySize(nint surface, float x, float y);
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuAttachPanel(nint panel, nint swapChain);
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuCreateTest(uint width, uint height, out nint surface);
++    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPresentCount(nint surface, out uint count);
+     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPixel(nint surface, out uint rgba);
+ }
+diff --git a/src/OurNotes.Director.Desktop.Core/Live2DDocument.Compilation.cs b/src/OurNotes.Director.Desktop.Core/Live2DDocument.Compilation.cs
+index 8ed8c54..988b066 100644
+--- a/src/OurNotes.Director.Desktop.Core/Live2DDocument.Compilation.cs
++++ b/src/OurNotes.Director.Desktop.Core/Live2DDocument.Compilation.cs
+@@ -10,23 +10,18 @@ public sealed partial class Live2DDocument
+     public SceneDocument ToSceneDocument(bool selectedMotionOnly = false)
+     {
+         Validate();
+-        var project = root["performance"]?.DeepClone() as JsonObject ?? Standalone();
++        bool singleSelection = selectedMotionOnly && HasExactSelectionSchedule;
++        var project = singleSelection ? SelectedPerformance()
++            : root["performance"]?.DeepClone() as JsonObject ?? Standalone();
+         var output = ActorIsolation.Output(project["output"] as JsonObject, ActorId, Width, Height);
+         output["isolateTransform"] = root["transform"]!.DeepClone();
+         if (root["output"]?["isolateCanvas"] is { } canvas) output["isolateCanvas"] = canvas.DeepClone();
+         else output.Remove("isolateCanvas");
+         project["output"] = output;
+         if (OwnRows().Any()) EnsureEditablePerformance();
+-        // The independent Live2D workbench has one selected motion/expression,
+-        // never a second copy of the source scene's time-varying action tracks.
+-        // Preserve the rest of the original performance and its exact timing.
+         var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>();
+-        bool hasNativeSchedule = root["performance"]?["commands"] is JsonArray sourceCommands
+-            && sourceCommands.OfType<JsonObject>().All(row => row["AtFrame"] is not null);
+-        if (selectedMotionOnly && hasNativeSchedule)
+-            sourceRows = sourceRows.Where(row => !(Text(row, "TargetName") == ActorId
+-                && Text(row, "cmd") is "Motion" or "Expression" or "In"));
+-        project["commands"] = new JsonArray(sourceRows.Concat(OwnRows()).OrderBy(Frame)
++        var edits = singleSelection ? SelectedEditRows() : OwnRows();
++        project["commands"] = new JsonArray(sourceRows.Concat(edits).OrderBy(Frame)
+             .Select(row => (JsonNode)row.DeepClone()).ToArray());
+         // Extend a scheduled source only when the user extended the document. Existing
+         // later commands stay intact when the export range is shorter than the source.
+diff --git a/src/OurNotes.Director.Desktop.Core/Live2DDocument.Selection.cs b/src/OurNotes.Director.Desktop.Core/Live2DDocument.Selection.cs
+new file mode 100644
+index 0000000..ecf43c1
+--- /dev/null
++++ b/src/OurNotes.Director.Desktop.Core/Live2DDocument.Selection.cs
+@@ -0,0 +1,41 @@
++using System.Text.Json.Nodes;
++using OurNotes.Director.Core;
++
++namespace OurNotes.Director.Desktop.Core;
++
++public sealed partial class Live2DDocument
++{
++    // One canonical project for preview, live-edit commits, canvas analysis and
++    // export. ToSceneDocument(false) remains the lossless source-recovery path.
++    public SceneDocument ToWorkbenchSceneDocument() => ToSceneDocument(selectedMotionOnly: true);
++    public SceneSnapshot CreateWorkbenchSnapshot(string directory)
++        => ToWorkbenchSceneDocument().CreateSnapshot(directory);
++
++    bool HasExactSelectionSchedule => root["performance"] is not JsonObject performance
++        || performance["commands"] is JsonArray rows
++            && rows.OfType<JsonObject>().All(row => row["AtFrame"] is not null);
++
++    JsonObject SelectedPerformance()
++    {
++        var project = Standalone();
++        // Use the original archive as a material source where available. No
++        // inherited episode is executed: initialize/finalize are explicitly empty.
++        // This also works with small archives that have no separate library pack.
++        if (root["performance"] is JsonObject performance)
++            project["source"] = performance["source"]!.DeepClone();
++        return project;
++    }
++
++    IEnumerable<JsonObject> SelectedEditRows()
++    {
++        foreach (var row in OwnRows())
++            if (Text(row, "cmd") is not ("Motion" or "Expression")) yield return row;
++        // The baseline Director.Actor makes the model visible without retaining
++        // source In/Out/costume/camera tracks. Removing In alone hides the actor.
++        yield return new JsonObject { ["cmd"] = "Motion", ["TargetName"] = ActorId,
++            ["MotionName"] = Motion ?? "", ["ExpressionName"] = Expression ?? "",
++            ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
++        yield return new JsonObject { ["cmd"] = "Expression", ["TargetName"] = ActorId,
++            ["ExpressionName"] = Expression ?? "", ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
++    }
++}
+diff --git a/src/OurNotes.Director.Desktop.Core/Live2DDocument.cs b/src/OurNotes.Director.Desktop.Core/Live2DDocument.cs
+index e476d4d..8929437 100644
+--- a/src/OurNotes.Director.Desktop.Core/Live2DDocument.cs
++++ b/src/OurNotes.Director.Desktop.Core/Live2DDocument.cs
+@@ -142,8 +142,7 @@ public sealed partial class Live2DDocument
+             string? selectedExpression = document.Expression;
+             if (selectedMotion is { Length: > 0 }) document.SetMotion(selectedMotion);
+             if (selectedExpression is { Length: > 0 }) document.SetExpression(selectedExpression);
+-            // Selection is singular, but opening a scene actor retains its cursor;
+-            // only an explicit action change restarts the independent preview.
++            // Opening a scene actor preserves its cursor and marked interval.
+             document.Time = playhead;
+         }
+         document.undo.Clear(); document.redo.Clear();
+@@ -320,9 +319,12 @@ public sealed partial class Live2DDocument
+         ? new[] { "initialize", "commands", "finalize" }.SelectMany(section => performance[section]?.AsArray().OfType<JsonObject>() ?? []) : [];
+     bool Controller(string key)
+     {
+-        bool value = true, director = !IsCapturedPerformance;
++        bool value = true, director = HasExactSelectionSchedule;
+         bool? nativeLoop = null;
+-        foreach (var row in ActiveRows().Where(row => Text(row, "cmd") == "Director.Actor"))
++        // The single-model projection starts with director controls, not the
++        // source scene's stage/animation controller history.
++        var rows = director ? OwnRows().Where(row => Frame(row) <= FrameAt(Time)).OrderBy(Frame) : ActiveRows();
++        foreach (var row in rows.Where(row => Text(row, "cmd") == "Director.Actor"))
+         {
+             if (row["Values"]?["animation"] is JsonValue mode) director = mode.ToString() == "director";
+             if ((row["Values"]?["controls"]?[key] ?? row["Values"]?[key]) is JsonValue flag && flag.TryGetValue<bool>(out bool parsed)) value = parsed;
+@@ -333,11 +335,16 @@ public sealed partial class Live2DDocument
+     }
+     string? CurrentAnimation(string command, string field, string defaultField)
+     {
++        // Independent selections are properties, not keyframes. Old saved projects
++        // may still contain multiple rows: the latest authored choice wins even
++        // when the user moves the transport back before that row's old timestamp.
++        var own = OwnRows().LastOrDefault(row => Text(row, "cmd") == command);
++        if (own is not null) return Text(own, field, Text(root["metadata"], defaultField));
++        if (command == "Expression" && OwnRows().LastOrDefault(row => Text(row, "cmd") == "Motion")
++            is { } motion && motion["ExpressionName"] is JsonValue embedded)
++            return embedded.GetValue<string>();
+         string? result = root["metadata"]?[defaultField]?.GetValue<string>();
+-        bool ownsChoice = OwnRows().Any(row => Text(row, "cmd") == command
+-            || command == "Expression" && Text(row, "cmd") == "Motion");
+-        var rows = ownsChoice ? OwnRows().Where(row => Frame(row) <= FrameAt(Time)).OrderBy(Frame) : ActiveRows();
+-        foreach (var row in rows)
++        foreach (var row in ActiveRows())
+         {
+             string kind = Text(row, "cmd");
+             if ((kind == command || kind == "In" || command == "Expression" && kind == "Motion")
+@@ -349,25 +356,26 @@ public sealed partial class Live2DDocument
+     {
+         EnsureEditablePerformance();
+         if (command is not ("Motion" or "Expression")) throw new ArgumentOutOfRangeException(nameof(command));
++        string defaultField = command == "Motion" ? "defaultMotion" : "defaultExpression";
++        value = string.IsNullOrWhiteSpace(value) ? root["metadata"]?[defaultField]?.GetValue<string>() : value;
+         if (!string.IsNullOrWhiteSpace(value)
+             && root["metadata"]?[choices] is JsonArray available
+             && !available.Any(item => (item is JsonObject ? Text(item, "id") : item?.GetValue<string>()) == value))
+             throw new ArgumentException("模型不包含所选" + (command == "Motion" ? "动作：" : "表情：") + value);
+ 
+-        // This workbench deliberately edits one motion and one expression, not a
+-        // second timeline. A selection replaces the previous choice at frame zero;
+-        // complex, time-varying performances belong in the Scene workbench.
+-        string? other = command == "Motion" ? Expression : Motion;
+-        var row = string.IsNullOrWhiteSpace(value) ? null
+-            : new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId, [field] = value,
+-                ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
+-        if (row is not null && command == "Motion" && other is { Length: > 0 })
+-            row["ExpressionName"] = other;
++        var row = new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId,
++            [field] = value ?? "", ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
++        if (command == "Motion") row["ExpressionName"] = Expression ?? "";
+         Change(next =>
+         {
+             RemoveEdits(next, previous => Text(previous, "cmd") == command);
+-            next["time"] = 0;
+-            if (row is not null) next["edits"]!.AsArray().Add(row.DeepClone());
++            // A global choice must not move the cursor or move parameter edits to
++            // frame zero. Explicit transport controls own seeking/restarting.
++            if (command == "Expression")
++                foreach (var motion in next["edits"]!.AsArray().OfType<JsonObject>()
++                    .Where(previous => Text(previous, "cmd") == "Motion"))
++                    motion["ExpressionName"] = value ?? "";
++            next["edits"]!.AsArray().Add(row.DeepClone());
+         });
+     }
+     void SetEdit(JsonObject row)
