@@ -99,8 +99,8 @@ public static class Live2DDocumentTests
             check(sourceRows.All(original => isolatedRows.Any(candidate => JsonNode.DeepEquals(candidate, original)))
                 && JsonNode.DeepEquals(isolated["text"], source.Root["text"])
                 && isolated.ToJsonString().Contains("1.2300e-4", StringComparison.Ordinal), "Scene handoff retains every original command, text and raw numeric token");
-            check(captured.Time == 0 && captured.Range == new TimelineRange(60, 90, 30) && captured.Motion == "wave" && captured.Expression == "smile",
-                "Scene handoff captures the source playhead's single motion/expression and starts independent preview at frame zero");
+            check(captured.Time == 2.5 && captured.Range == new TimelineRange(60, 90, 30) && captured.Motion == "wave" && captured.Expression == "smile",
+                "Scene handoff captures one motion/expression while retaining the source cursor and marked interval");
             var selectedCommands = captured.ToSceneDocument(selectedMotionOnly: true).Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
             check(selectedCommands.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Motion") == 1
                 && selectedCommands.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Expression") == 1

@@ -140,10 +140,11 @@ public sealed partial class Live2DDocument
         {
             string? selectedMotion = document.Motion;
             string? selectedExpression = document.Expression;
-            document.Time = 0;
             if (selectedMotion is { Length: > 0 }) document.SetMotion(selectedMotion);
             if (selectedExpression is { Length: > 0 }) document.SetExpression(selectedExpression);
-            document.Time = 0;
+            // Selection is singular, but opening a scene actor retains its cursor;
+            // only an explicit action change restarts the independent preview.
+            document.Time = playhead;
         }
         document.undo.Clear(); document.redo.Clear();
         document.Validate();
