@@ -3,7 +3,11 @@
 try
 {
     if (await StoryTimingAnalysisTests.HandleDecoderWorkerAsync(args) is {} workerExit) return workerExit;
-    if (args.Length == 3 && args[0] == "--story-analysis") return await StoryTimingAnalysisTests.RunAsync(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--story-analysis")
+    {
+        int timing = await StoryTimingAnalysisTests.RunAsync(args[1], args[2]);
+        return timing != 0 ? timing : StoryTimingResourceTests.Run(args[1], args[2]);
+    }
     if (args.Length == 2 && args[0] == "--preview-quality") return PreviewQualityNativeTests.RunGraphics(args[1]);
     if (args.Length == 3 && args[0] == "--live2d") return await Live2DNativeTests.RunAsync(args[1], args[2]);
     if(args.Length==3&&args[0]=="--stage-authoring")

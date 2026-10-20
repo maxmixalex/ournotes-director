@@ -20,8 +20,11 @@ public sealed unsafe partial class Actor
     public float ParameterValue(string id)=>ids.TryGetValue(id,out int index)?Values[index]:throw new ArgumentException("Unknown model parameter: "+id);
     readonly JsonNode gameModel,gamePrefab;
     GameActorDrawing? gameDrawing;
+    bool timingAnimation;
+    internal bool HasGameDrawingResources => gameDrawing is not null || textures.Length > 0;
+    internal void EnableGameTiming() { timingAnimation = true; InitializeGameAnimation(); }
     public ActorDrawingWork DrawingWork=>gameDrawing?.DrawingWork??new(0,0,0);
-    public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl){gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();}
+    public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl){timingAnimation=false;gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();}
     bool HasEditorOverlay=>EditorOffsetX!=0||EditorOffsetY!=0||EditorScale!=1;
     float[] OverlayProjection(float[] projection)
     {
@@ -40,7 +43,7 @@ public sealed unsafe partial class Actor
     public void DrawGame(IReadOnlyDictionary<string,float[]> globals)=>(gameDrawing??throw new InvalidOperationException("Game materials not initialized")).Draw(OverlayGlobals(globals),renderOpacity*Spec.Opacity);
     internal void DrawGameIsolated(IReadOnlyDictionary<string,float[]> globals)=>(gameDrawing??throw new InvalidOperationException("Game materials not initialized")).Draw(globals,renderOpacity*Spec.Opacity);
     public IReadOnlyList<AdvRenderItem> GameDrawItems(IReadOnlyDictionary<string,float[]> globals,int baseOrder)=>(gameDrawing??throw new InvalidOperationException("Game materials not initialized")).Items(OverlayGlobals(globals),renderOpacity*Spec.Opacity,baseOrder);
-    public void ToggleRim(float[] color,float shadow){if(gameDrawing is null)throw new InvalidOperationException("Game materials not initialized");gameDrawing.RimEnabled=!gameDrawing.RimEnabled;gameDrawing.RimColor=color;gameDrawing.ShadowIntensity=Math.Clamp(shadow,0,1);}
+    public void ToggleRim(float[] color,float shadow){if(timingAnimation)return;if(gameDrawing is null)throw new InvalidOperationException("Game materials not initialized");gameDrawing.RimEnabled=!gameDrawing.RimEnabled;gameDrawing.RimColor=color;gameDrawing.ShadowIntensity=Math.Clamp(shadow,0,1);}
     public bool GameLighting{get=>gameDrawing?.LightingEnabled??false;set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
     public void SetDirectorTint(float[] tint,float brightness){if(gameDrawing is null)throw new InvalidOperationException("Game drawing not initialized");gameDrawing.DirectorTint=tint;gameDrawing.DirectorBrightness=brightness;}
     public PreviewTarget? PreviewBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,OverlayProjection(viewProjection));

@@ -72,8 +72,10 @@ public sealed partial class AdvScene : IDisposable
             var address="Character/Live2D/"+row.Text("TargetAssetName");
             string id=row.Text("Model") is {Length:>0} explicitModel?explicitModel:definition["models"]?[address]?.GetValue<string>()??throw new InvalidDataException("Model address absent from story: "+address);
             bool customSeed=row.Data["Seed"] is not null;
-            var actor=new Actor(archive,site,dll,new(){Name=key.Item1,Model=id},gl,customSeed?uint.Parse(row.Text("Seed"),CultureInfo.InvariantCulture):722,customSeed?null:shakeRandom);
-            actor.EnableGameDrawing(archive,site,gl);
+            var actor=new Actor(archive,site,dll,new(){Name=key.Item1,Model=id},TimingOnly?null:gl,customSeed?uint.Parse(row.Text("Seed"),CultureInfo.InvariantCulture):722,customSeed?null:shakeRandom);
+            // Timing uses the same native model, motion metadata and four warmup
+            // steps, but does not decode textures or allocate drawing/mask meshes.
+            if(TimingOnly)actor.EnableGameTiming();else actor.EnableGameDrawing(archive,site,gl);
             var ch=actor.Prefab.Find("Live2DCharacter").Component;
             actor.Prefab.Root.Position=AdvPrefab.Vector(ch["BasePosition"]);actor.Prefab.Root.Scale=new(Actor.N(ch["BaseScale"],1));actor.Prefab.Root.Rotation=Quaternion.Identity;
             actors.Add(key,actor);
@@ -229,7 +231,17 @@ public sealed partial class AdvScene : IDisposable
         yield return Tween(key,()=>from,to,seconds,AdvEase.OutQuad,v=>slotAlpha[i]=v);if(fadeSerial[i]==serial)slotAlpha[i]=to;
     }
     readonly int[] fadeSerial=new int[5];
-    public void AdvanceRenderState(){post.AdvanceCamera(Camera,loop.Frame);if(pendingCapture is not null)Draw();}
+    public void AdvanceRenderState()
+    {
+        post.AdvanceCamera(Camera,loop.Frame);
+        if(pendingCapture is null)return;
+        if(!TimingOnly){Draw();return;}
+        // A native Stage fade waits for capture, then the next Update. Timing
+        // needs that exact wait boundary, not the captured GPU pixels. Resolve
+        // the same waiter at the same phase without drawing invisible models.
+        var wait=pendingCapture;pendingCapture=null;
+        loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));
+    }
     public Action? DrawForeground{get;set;}
     public Func<AdvRenderItem?>? ForegroundItem{get;set;}
     public void Draw()

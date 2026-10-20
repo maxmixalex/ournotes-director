@@ -31,7 +31,7 @@ internal sealed partial class Live2DStudioPage
         await FlushEditsAsync(); await SeekAsync(0);
         SelectInspector("controls"); UpdateLayout();
         var transform = current.Transform;
-        var commands = current.ToSceneDocument().Root["commands"]!.DeepClone();
+        var commands = current.ToWorkbenchSceneDocument().Root["commands"]!.DeepClone();
         actorCanvasMultiplier.Value = 1.15;
         fitActorCanvasButton!.StartBringIntoView();
         Task previous = actorCanvasTask;
@@ -45,7 +45,7 @@ internal sealed partial class Live2DStudioPage
             && canvas.ReferenceWidth == 320 && canvas.ReferenceHeight == 480
             && widthBox.Value == current.Width && heightBox.Value == current.Height,
             "侧栏按 1.15 倍设置完整动作画布，同时更新宽高并保存原始参考坐标");
-        check(current.Transform == transform && JsonNode.DeepEquals(commands, current.ToSceneDocument().Root["commands"]),
+        check(current.Transform == transform && JsonNode.DeepEquals(commands, current.ToWorkbenchSceneDocument().Root["commands"]),
             "调整画布保留原始人物变换和包含前后不同姿态的完整动作历史");
         var full = TimelineRange.Full(current.Duration, 30);
         bool contained = true;
@@ -75,7 +75,7 @@ internal sealed partial class Live2DStudioPage
         {
             ["framesAnalyzed"] = full.FrameCount, ["referenceWidth"] = 320, ["referenceHeight"] = 480,
             ["sidebarMultiplier"] = 1.15, ["exportMultiplier"] = 1.25,
-            ["sidebarOutput"] = current.ToSceneDocument().Root["output"]!.DeepClone(), ["exports"] = new JsonArray()
+            ["sidebarOutput"] = current.ToWorkbenchSceneDocument().Root["output"]!.DeepClone(), ["exports"] = new JsonArray()
         };
         string id = Guid.NewGuid().ToString("N");
         string picture = App.SmokeEvidencePath("live2d-actor-canvas-" + id + ".png");
@@ -153,7 +153,7 @@ internal sealed partial class Live2DStudioPage
         var crop = ActorIsolation.ReadCanvas(queued.Root["output"]?["isolateCanvas"], document!.ActorId);
         check(crop is not null && crop.ReferenceWidth == 320 && crop.ReferenceHeight == 480
             && queued.Root["output"]?["isolateActor"]?.ToString() == document.ActorId
-            && JsonNode.DeepEquals(queued.Root["commands"], document.ToSceneDocument().Root["commands"]),
+            && JsonNode.DeepEquals(queued.Root["commands"], document.ToWorkbenchSceneDocument().Root["commands"]),
             "仅角色 " + kind + " 快照使用原始参考画布与完整动作，不叠加上一次裁剪");
         File.Copy(job.Request.Arguments[2], App.SmokeEvidencePath("live2d-actor-canvas-export-" + kind + ".project.json"), true);
         return job;
