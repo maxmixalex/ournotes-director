@@ -10,6 +10,20 @@ param(
     [ValidateRange(10, 300)] [int] $ProgressTimeoutSeconds = 90
 )
 
+# The GUI atomically replaces this report after every check. A normal
+# Get-Content read handle can deny deletion on Windows and make that rename fail.
+function Open-SmokeReportReader([string] $Path) {
+    $sharing = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, $sharing)
+    try { return [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true) }
+    catch { $stream.Dispose(); throw }
+}
+function Read-SmokeReport([string] $Path) {
+    $reader = Open-SmokeReportReader $Path
+    try { return $reader.ReadToEnd() }
+    finally { $reader.Dispose() }
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not $IsWindows) { throw 'The real WinUI smoke test requires a Windows desktop session.' }
@@ -21,6 +35,22 @@ $scratch = Join-Path ([IO.Path]::GetTempPath()) ('ournotes-desktop-smoke-' + [Gu
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $process = $null
 try {
+    # Exercise the exact reader while a writer replaces the destination. The
+    # held reader sees a complete old report; a new reader sees the new one.
+    $probe = Join-Path $scratch 'atomic-report-probe.json'
+    $replacement = "$probe.next"
+    [IO.File]::WriteAllText($probe, '{"phase":"before"}')
+    [IO.File]::WriteAllText($replacement, '{"phase":"after"}')
+    $heldReader = Open-SmokeReportReader $probe
+    try {
+        [IO.File]::Move($replacement, $probe, $true)
+        if ($heldReader.ReadToEnd() -ne '{"phase":"before"}' -or (Read-SmokeReport $probe) -ne '{"phase":"after"}') {
+            throw 'The progress reader did not preserve complete atomic report snapshots.'
+        }
+    }
+    finally { $heldReader.Dispose() }
+    Remove-Item -LiteralPath $probe
+    Write-Output 'Passed atomic report replacement with a held progress-reader handle.'
     if ($PSCmdlet.ParameterSetName -eq 'Package') {
         $Package = (Resolve-Path -LiteralPath $Package).Path
         $Directory = Join-Path $scratch 'extracted package'
@@ -95,7 +125,7 @@ try {
         while (-not $process.WaitForExit(500)) {
             if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
                 try {
-                    $progress = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+                    $progress = Read-SmokeReport $reportPath | ConvertFrom-Json
                     if ($null -ne $progress -and $progress.PSObject.Properties.Name -contains 'checks') {
                         $lastPhase = if ($progress.PSObject.Properties.Name -contains 'phase') { [string]$progress.phase } else { 'unreported' }
                         $signature = "$lastPhase/$(@($progress.checks).Count)"
