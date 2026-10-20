@@ -103,27 +103,62 @@ public sealed partial class MainWindow
     async Task VerifyPlayingFullscreenSmokeAsync(string workspace, NativeViewport viewport, Action<bool, string> check)
     {
         var before = viewport.LastFrame!;
+        var transportClock = System.Diagnostics.Stopwatch.StartNew();
+        var transport = new System.Text.Json.Nodes.JsonObject
+        { ["schema"] = "ournotes-director/fullscreen-transport/1", ["workspace"] = workspace, ["beforeSeek"] = Frame(before) };
+        void SaveTransport() => OurNotes.Director.Desktop.Core.DesktopSettings.AtomicWrite(
+            App.SmokeEvidencePath(workspace + "-monitor-playing.json"),
+            transport.ToJsonString(OurNotes.Director.Desktop.Core.DesktopSettings.JsonOptions));
         try
         {
             await viewport.SeekAsync(0);
             var start = viewport.LastFrame!;
+            transport["afterSeek"] = Frame(start);
+            // A backward seek reconstructs the stateful scene interpreter and
+            // starts a new session. F1 must preserve this post-seek session.
             viewport.Play();
             var playing = await Advance(start);
+            transport["playingBeforeFullscreen"] = Frame(playing);
             viewport.Focus(FocusState.Keyboard); await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
             root.UpdateLayout();
             var fullscreen = await Advance(playing);
             await viewport.WaitForGpuLayoutAsync();
-            check(IsMonitorFullscreen && viewport.IsPlaying && fullscreen.SessionId == before.SessionId
-                && fullscreen.Time > playing.Time && playing.Time > start.Time,
+            transport["fullscreen"] = Frame(fullscreen);
+            transport["atCheck"] = Frame(viewport.LastFrame);
+            transport["isMonitorFullscreen"] = IsMonitorFullscreen;
+            transport["transportPlaying"] = viewport.IsPlaying;
+            bool passed = IsMonitorFullscreen && viewport.IsPlaying
+                && playing.SessionId == start.SessionId && fullscreen.SessionId == start.SessionId
+                && viewport.LastFrame?.SessionId == start.SessionId
+                && fullscreen.Time > playing.Time && playing.Time > start.Time;
+            transport["passed"] = passed; SaveTransport();
+            check(passed,
                 workspace + "：播放中 F1 全屏后原生时间继续前进，不把 resize 产生的同时间新序号当作播放成功");
             await App.CaptureCheckpointAsync(workspace + "-monitor-playing-fullscreen");
             await viewport.CapturePresentedDesktopSmokeAsync(this, workspace + "-monitor-playing-desktop");
         }
+        catch (Exception error) { transport["error"] = error.Message; throw; }
         finally
         {
-            await viewport.PauseForEditingAsync(); ExitMonitorFullscreen();
-            root.UpdateLayout(); await viewport.SeekAsync(before.Time); await viewport.WaitForGpuLayoutAsync();
+            try
+            {
+                await viewport.PauseForEditingAsync(); ExitMonitorFullscreen();
+                root.UpdateLayout(); await viewport.SeekAsync(before.Time); await viewport.WaitForGpuLayoutAsync();
+                transport["restored"] = Frame(viewport.LastFrame);
+                transport["restoredFullscreen"] = IsMonitorFullscreen;
+                transport["restoredPlaying"] = viewport.IsPlaying;
+            }
+            finally { SaveTransport(); }
         }
+
+        System.Text.Json.Nodes.JsonObject? Frame(OurNotes.Director.Core.PreviewFrame? value) => value is null ? null : new()
+        {
+            ["elapsedMilliseconds"] = transportClock.Elapsed.TotalMilliseconds, ["sequence"] = value.Sequence,
+            ["sessionId"] = value.SessionId, ["frame"] = value.Frame, ["time"] = value.Time,
+            ["duration"] = value.Duration, ["playing"] = value.IsPlaying, ["device"] = value.Device,
+            ["width"] = value.Pixels.Width, ["height"] = value.Pixels.Height,
+            ["renderMilliseconds"] = value.RenderMilliseconds, ["scenePreviewScale"] = value.ScenePreviewScale
+        };
 
         async Task<OurNotes.Director.Core.PreviewFrame> Advance(OurNotes.Director.Core.PreviewFrame previous)
         {
