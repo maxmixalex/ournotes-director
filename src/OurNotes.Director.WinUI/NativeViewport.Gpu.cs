@@ -73,6 +73,15 @@ public sealed partial class NativeViewport
         gpuPanel.RenderTransform = new TranslateTransform { X = rect.X, Y = rect.Y };
         lastGpuRect = rect; scaledGpu = attachedGpu;
     }
+
+    // Full-screen presenter changes can resize the XAML surface without producing a
+    // new native frame (the monitor may be paused). Force the attached swap chain to
+    // recompute its display dimensions instead of waiting for playback to refresh it.
+    internal void RefreshPresentationLayout()
+    {
+        scaledGpu = null;
+        LayoutCanvas();
+    }
     internal void RunGpuCompositionSmoke(Action<bool, string> check)
     {
         using var test = GpuPreviewSurface.CreateCompositionTest(64, 64);
