@@ -209,7 +209,7 @@ internal sealed partial class Live2DStudioPage
             if (version != loadVersion || disposed || document is null) return;
             var current = document; long edited = editVersion; double time = current.Time;
             if (!Directory.Exists(window.Settings.ArchivePath)) { Notice("请先选择项目使用的素材库。", false); return; }
-            var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
+            var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"), selectedMotionOnly: true);
             var source = PreviewSource(input, current); var transform = current.Transform;
             string key = current.ModelId + "\n" + current.Site + "\n" + current.Width + "x" + current.Height + "\n"
                 + current.Canvas + "\n"

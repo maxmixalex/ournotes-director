@@ -7,7 +7,7 @@ public sealed partial class Live2DDocument
 {
     /// <summary>The normal scene/export project. A captured performance is cloned in
     /// full; only explicit workbench edits are inserted into its existing frame schedule.</summary>
-    public SceneDocument ToSceneDocument()
+    public SceneDocument ToSceneDocument(bool selectedMotionOnly = false)
     {
         Validate();
         var project = root["performance"]?.DeepClone() as JsonObject ?? Standalone();
@@ -20,8 +20,10 @@ public sealed partial class Live2DDocument
         // The independent Live2D workbench has one selected motion/expression,
         // never a second copy of the source scene's time-varying action tracks.
         // Preserve the rest of the original performance and its exact timing.
-        var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>().Where(row =>
-            !(Text(row, "TargetName") == ActorId && Text(row, "cmd") is "Motion" or "Expression" or "In"));
+        var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>();
+        if (selectedMotionOnly)
+            sourceRows = sourceRows.Where(row => !(Text(row, "TargetName") == ActorId
+                && Text(row, "cmd") is "Motion" or "Expression" or "In"));
         project["commands"] = new JsonArray(sourceRows.Concat(OwnRows()).OrderBy(Frame)
             .Select(row => (JsonNode)row.DeepClone()).ToArray());
         // Extend a scheduled source only when the user extended the document. Existing
@@ -36,7 +38,7 @@ public sealed partial class Live2DDocument
             .Where(issue => issue.Severity == SceneIssueSeverity.Error).Select(issue => issue.Message)));
         return result;
     }
-    public SceneSnapshot CreateSnapshot(string directory) => ToSceneDocument().CreateSnapshot(directory);
+    public SceneSnapshot CreateSnapshot(string directory, bool selectedMotionOnly = false) => ToSceneDocument(selectedMotionOnly).CreateSnapshot(directory);
 
     JsonObject Standalone() => new()
     {

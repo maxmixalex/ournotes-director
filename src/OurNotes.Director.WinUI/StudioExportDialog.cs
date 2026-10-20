@@ -12,7 +12,7 @@ internal static class StudioExportDialog
 {
     internal static async Task ShowLive2DAsync(MainWindow window, Live2DDocument live2d, string initialKind = "clip")
     {
-        var document = live2d.ToSceneDocument(); var output = document.Output;
+        var document = live2d.ToSceneDocument(selectedMotionOnly: true); var output = document.Output;
         var full = TimelineRange.Full(live2d.Duration, 30);
         using var analysisInput = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-canvas"));
         var source = new ScenePreviewSource(window.Settings.ArchivePath, analysisInput.FilePath,

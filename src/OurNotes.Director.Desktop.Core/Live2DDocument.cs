@@ -131,6 +131,15 @@ public sealed partial class Live2DDocument
         document.baseDirectory = source.BaseDirectory;
         NormalizeDependencies(document.root["performance"] as JsonObject, source.BaseDirectory);
         document.SetDuration(duration); document.Time = playhead; document.Range = range;
+        // Capture only the action/expression selected at the source playhead. The
+        // complete original performance remains stored unchanged for recovery, but
+        // the independent Live2D editor is not a second scene timeline.
+        string? selectedMotion = document.Motion;
+        string? selectedExpression = document.Expression;
+        document.Time = 0;
+        if (selectedMotion is { Length: > 0 }) document.SetMotion(selectedMotion);
+        if (selectedExpression is { Length: > 0 }) document.SetExpression(selectedExpression);
+        document.Time = 0;
         document.undo.Clear(); document.redo.Clear();
         document.Validate();
         return document;

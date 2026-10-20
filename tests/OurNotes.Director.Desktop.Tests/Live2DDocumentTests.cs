@@ -96,13 +96,21 @@ public static class Live2DDocumentTests
             var isolated = captured.ToSceneDocument().Root;
             check(JsonNode.DeepEquals(isolated["commands"], source.Root["commands"]) && JsonNode.DeepEquals(isolated["text"], source.Root["text"])
                 && isolated.ToJsonString().Contains("1.2300e-4", StringComparison.Ordinal), "Scene handoff retains every original command, text and raw numeric token");
-            check(captured.Time == 2.5 && captured.Range == new TimelineRange(60, 90, 30) && captured.Motion == "wave" && captured.Expression == "smile",
-                "Scene handoff retains current source request, time and marked interval");
+            check(captured.Time == 0 && captured.Range == new TimelineRange(60, 90, 30) && captured.Motion == "wave" && captured.Expression == "smile",
+                "Scene handoff captures the source playhead's single motion/expression and starts independent preview at frame zero");
+            var single = captured.ToSceneDocument(selectedMotionOnly: true).Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
+            check(single.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Motion") == 1
+                && single.Count(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() == "Expression") == 1
+                && single.Where(row => row["TargetName"]?.ToString() == "actor" && row["cmd"]?.ToString() is "Motion" or "Expression")
+                    .All(row => row["AtFrame"]!.GetValue<int>() == 0),
+                "Independent Live2D preview/export compiles one selected motion and expression at frame zero");
             check(isolated["output"]?["playbackViewport"]?["letterbox"]?.ToString() == "game", "Isolation preserves the source opening-wait viewport");
             captured.SetControllers(physics: false); captured.SetMotion("idle");
             var changed = captured.ToSceneDocument().Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
-            check(changed.Length == 6 && changed.Count(row => row["AtFrame"]!.GetValue<int>() == 75) == 2,
-                "Captured edits append at the cursor without reconstructing prior motion history");
+            check(changed.Count(row => row["cmd"]?.ToString() == "Motion") == 2
+                && changed.Count(row => row["cmd"]?.ToString() == "Expression") == 1
+                && captured.Motion == "idle" && captured.Expression == "smile" && captured.Time == 0,
+                "Replacing a Live2D motion keeps the original source untouched but changes the independent selection globally");
             check(source.Root["commands"]!.AsArray().Count == 4 && source.Root["output"]?["isolateActor"] is null,
                 "Working on a captured model never mutates its source scene");
             var raw = source.Root;
