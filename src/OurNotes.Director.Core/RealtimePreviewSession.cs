@@ -93,6 +93,14 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         renderer.DisableGpu(reason);Render(frame,[]);
     });
 
+    /// <summary>Re-presents retained pixels at the latest XAML display size on
+    /// their owning render thread. Layout never evaluates animation or advances time.</summary>
+    public Task SetGpuDisplaySizeAsync(GpuPreviewSurface surface, long expectedSessionId, double width, double height)=>Enqueue(()=>
+    {
+        if (sessionId != expectedSessionId || !ReferenceEquals(renderer?.GpuSurface, surface)) return;
+        surface.SetDisplaySize(width, height);
+    });
+
     public Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
         if(!double.IsFinite(seconds)||seconds<0||seconds>36000)throw new ArgumentOutOfRangeException(nameof(seconds));

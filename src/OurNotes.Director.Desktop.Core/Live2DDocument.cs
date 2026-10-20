@@ -78,7 +78,7 @@ public sealed partial class Live2DDocument
             // Captured performances can contain thousands of rows. Resolve their active
             // pins once per inspector refresh, rather than parsing that history per slider.
             var pins = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-            foreach (var row in ActiveRows())
+            foreach (var row in ActiveParameterRows())
                 if (Text(row, "cmd") == "Director.Parameter") pins[Text(row, "Parameter")] = row;
             return Definitions().Select(definition =>
             {
@@ -98,6 +98,7 @@ public sealed partial class Live2DDocument
         FilePath = filePath is null ? null : Path.GetFullPath(filePath);
         baseDirectory = FilePath is not null ? Path.GetDirectoryName(FilePath)! : Path.GetFullPath(directory ?? Environment.CurrentDirectory);
         Validate(); NormalizeDependencies(root["performance"] as JsonObject, baseDirectory);
+        CaptureMissingSelections();
     }
 
     public static Live2DDocument Create(string modelId, string site = "intl", string language = "zh-Hans", JsonNode? metadata = null)
@@ -134,17 +135,7 @@ public sealed partial class Live2DDocument
         // Only capture a single selection when the source has an exact native frame
         // schedule. Sequential legacy performances remain intact and read-only rather
         // than guessing where their current motion/expression should begin.
-        bool hasNativeSchedule = document.root["performance"]?["commands"] is JsonArray sourceRows
-            && sourceRows.OfType<JsonObject>().All(row => row["AtFrame"] is not null);
-        if (hasNativeSchedule)
-        {
-            string? selectedMotion = document.Motion;
-            string? selectedExpression = document.Expression;
-            if (selectedMotion is { Length: > 0 }) document.SetMotion(selectedMotion);
-            if (selectedExpression is { Length: > 0 }) document.SetExpression(selectedExpression);
-            // Opening a scene actor preserves its cursor and marked interval.
-            document.Time = playhead;
-        }
+        document.CaptureMissingSelections();
         document.undo.Clear(); document.redo.Clear();
         document.Validate();
         return document;
@@ -173,9 +164,12 @@ public sealed partial class Live2DDocument
     { ["project"] = root.DeepClone(), ["filePath"] = FilePath, ["baseDirectory"] = baseDirectory, ["savedContent"] = savedContent };
     public static Live2DDocument FromDraft(JsonObject draft)
     {
-        var document = new Live2DDocument(draft["project"] as JsonObject ?? throw new ArgumentException("Live2D 草稿缺少项目。"),
+        var project = draft["project"] as JsonObject ?? throw new ArgumentException("Live2D 草稿缺少项目。");
+        string saved = draft["savedContent"]?.GetValue<string>() ?? "";
+        bool wasSaved = saved == Content(project);
+        var document = new Live2DDocument(project,
             draft["filePath"]?.GetValue<string>(), draft["baseDirectory"]?.GetValue<string>());
-        document.savedContent = draft["savedContent"]?.GetValue<string>() ?? ""; return document;
+        document.savedContent = wasSaved ? document.Content() : saved; return document;
     }
     public void MarkUnsaved() => savedContent = "";
 
@@ -292,9 +286,10 @@ public sealed partial class Live2DDocument
         if (JsonNode.DeepEquals(next, root)) return;
         undo.Push(root); redo.Clear(); root = next; observed.Clear();
     }
-    string Content()
+    string Content() => Content(root);
+    static string Content(JsonObject value)
     {
-        var content = (JsonObject)root.DeepClone(); content.Remove("time"); content.Remove("metadata");
+        var content = (JsonObject)value.DeepClone(); content.Remove("time"); content.Remove("metadata");
         return content.ToJsonString();
     }
     static JsonObject TransformJson(Live2DTransform value) => new()
@@ -315,6 +310,8 @@ public sealed partial class Live2DDocument
     IEnumerable<JsonObject> OwnRows() => root["edits"]!.AsArray().OfType<JsonObject>();
     IEnumerable<JsonObject> ActiveRows() => PerformanceRows().Concat(OwnRows()).Where(row => Frame(row) <= FrameAt(Time)
         && Text(row, "TargetName") == ActorId).OrderBy(Frame);
+    IEnumerable<JsonObject> ActiveParameterRows() => HasExactSelectionSchedule
+        ? OwnRows().Where(row => Frame(row) <= FrameAt(Time)).OrderBy(Frame) : ActiveRows();
     IEnumerable<JsonObject> PerformanceRows() => root["performance"] is JsonObject performance
         ? new[] { "initialize", "commands", "finalize" }.SelectMany(section => performance[section]?.AsArray().OfType<JsonObject>() ?? []) : [];
     bool Controller(string key)
@@ -343,14 +340,8 @@ public sealed partial class Live2DDocument
         if (command == "Expression" && OwnRows().LastOrDefault(row => Text(row, "cmd") == "Motion")
             is { } motion && motion["ExpressionName"] is JsonValue embedded)
             return embedded.GetValue<string>();
-        string? result = root["metadata"]?[defaultField]?.GetValue<string>();
-        foreach (var row in ActiveRows())
-        {
-            string kind = Text(row, "cmd");
-            if ((kind == command || kind == "In" || command == "Expression" && kind == "Motion")
-                && row[field]?.GetValue<string>() is { Length: > 0 } value) result = value;
-        }
-        return result;
+        var selected = SourceAnimationSelection();
+        return command == "Motion" ? selected.Motion : selected.Expression;
     }
     void SetAnimation(string command, string field, string choices, string? value)
     {

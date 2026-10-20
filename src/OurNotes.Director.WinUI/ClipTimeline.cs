@@ -243,21 +243,26 @@ internal sealed partial class ClipTimeline : UserControl
             Waveform: (c["waveform"] as JsonArray)?.Select(v => float.TryParse(v?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? f : 0).ToArray(),
             AudioIn: N(c["data"]!.AsObject(), "AudioIn"), AudioDuration: N(c["data"]!.AsObject(), "AudioDuration", N(c, "duration")), SourceDuration: N(c, "sourceDuration"))).ToArray();
         var names = document.Actors.OfType<JsonObject>().ToDictionary(a => S(a, "id"), a => DisplayNames.Character(CreativeScene.Text(a, "name", S(a, "id"))), StringComparer.Ordinal);
+        var byTrack = clipViews.GroupBy(c => (c.Actor, c.Kind)).ToDictionary(group => group.Key, group => group.ToArray());
         var result = new List<TimelineLane>();
+        var added = new HashSet<(string Actor, string Kind)>();
+        bool imported = document.Root["imported"]?.GetValue<bool>() == true;
+        void AddTrack(string actor, string kind, TimelineItem[] group)
+        {
+            if (!added.Add((actor, kind))) return;
+            result.Add(new(actor, kind, names.GetValueOrDefault(actor, actor.Length == 0 ? "场景" : actor) + " · " + KindName(kind), group));
+        }
         foreach (string actor in names.Keys.Concat(clipViews.Select(c => c.Actor).Where(a => a.Length > 0)).Distinct())
         {
             foreach (string kind in new[] { "motion", "expression", "voice", "transform" })
             {
-                var group = clipViews.Where(c => c.Actor == actor && c.Kind == kind).ToArray();
-                if (document.Root["imported"]?.GetValue<bool>() == true && group.Length == 0) continue;
-                result.Add(new(actor, kind, names.GetValueOrDefault(actor, actor) + " · " + KindName(kind), group));
+                var group = byTrack.GetValueOrDefault((actor, kind), []);
+                if (imported && group.Length == 0) continue;
+                AddTrack(actor, kind, group);
             }
         }
-        foreach (var group in clipViews.GroupBy(c => (c.Actor, c.Kind)))
-            if (!result.Any(t => t.Actor == group.Key.Actor && t.Kind == group.Key.Kind))
-                result.Add(new(group.Key.Actor, group.Key.Kind, names.GetValueOrDefault(group.Key.Actor, group.Key.Actor.Length == 0 ? "场景" : group.Key.Actor) + " · " + KindName(group.Key.Kind), group.ToArray()));
-        if (!result.Any(t => t.Actor == "" && t.Kind == "camera")) result.Add(new("", "camera", "场景 · 镜头", []));
-        if (!result.Any(t => t.Actor == "" && t.Kind == "grade")) result.Add(new("", "grade", "场景 · 画面", []));
+        foreach (var (key, group) in byTrack) AddTrack(key.Actor, key.Kind, group);
+        AddTrack("", "camera", []); AddTrack("", "grade", []);
         SetTracks(document.Source.ToJsonString() + document.Root["imported"], document.Duration, 30, result, selectedClip);
     }
     public void SetTracks(string identity, double duration, int fps, IReadOnlyList<TimelineLane> tracks, string? selection)
@@ -266,6 +271,7 @@ internal sealed partial class ClipTimeline : UserControl
         bool changedProject=sourceKey!=identity;
         if (changedProject) { sourceKey = identity; fitPending = true; filteredActor=null; collapsedGroups.Clear(); }
         length = duration; framesPerSecond = fps; allLanes = tracks; items = tracks.SelectMany(t => t.Items).ToArray(); selected = selection;
+        RebuildGroupSpans();
         if(filteredActor is not null&&!allLanes.Any(l=>l.Actor==filteredActor))filteredActor=null;
         ValidateRange(changedProject);
         UpdateLanes();

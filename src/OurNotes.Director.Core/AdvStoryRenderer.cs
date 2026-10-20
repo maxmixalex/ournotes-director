@@ -69,13 +69,19 @@ public sealed class AdvStoryRenderer : IDisposable
     readonly bool charactersOnly;
     bool TransparentOutput => charactersOnly || isolateActor is not null || Scene.DirectorTransparent;
     readonly Dictionary<string,double> milliseconds=[];
+    readonly Dictionary<string,double> initializationMilliseconds=[];
+    readonly StoryAudioPrefetch? timingAudioPrefetch;
     T Measure<T>(string name,Func<T> action){long start=Stopwatch.GetTimestamp();try{return action();}finally{milliseconds[name]=milliseconds.GetValueOrDefault(name)+Stopwatch.GetElapsedTime(start).TotalMilliseconds;}}
     void Measure(string name,Action action)=>Measure(name,()=>{action();return 0;});
     public IReadOnlyDictionary<string,double> Timings=>milliseconds;
+    public IReadOnlyDictionary<string,double> InitializationTimings=>initializationMilliseconds;
     internal Func<Func<long,CancellationToken,long,AdvCue>>? PrefetchAudio { get; }
     public AdvStoryRenderer(Archive archive,string site,string dll,string id,string language,int width,int height,string? script,string ffmpeg,int supersample=2,
-        JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null,CancellationToken cancellationToken=default)
+        JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null,CancellationToken cancellationToken=default,
+        bool prefetchAudio=false)
     {
+        long phase=Stopwatch.GetTimestamp();
+        void Mark(string name){initializationMilliseconds[name]=Stopwatch.GetElapsedTime(phase).TotalMilliseconds;phase=Stopwatch.GetTimestamp();}
         cancellationToken.ThrowIfCancellationRequested();
         RenderDimensions.Validate(width,height,supersample);
         outputWidth=width;outputHeight=height;this.supersample=supersample;
@@ -107,14 +113,29 @@ public sealed class AdvStoryRenderer : IDisposable
             if(custom is JsonObject){if(custom["text"] is JsonObject text)foreach(var pair in text)episode["text"]![pair.Key]=pair.Value?.DeepClone();if(custom["initialize"] is JsonArray init)settings["_initializeEpisodes"]=init.DeepClone();if(custom["finalize"] is JsonArray fin)settings["_finalizeEpisodes"]=fin.DeepClone();}
         }
         var program=AdvProgram.From(episode,settings);Player=new(Loop,program);var tweens=new AdvTweens(Loop);
+        Mark("sourceAndProgramMs");
         gl=new(checked(width*supersample),checked(viewportHeight*supersample));
+        Mark("graphicsContextMs");
         try{
+            cancellationToken.ThrowIfCancellationRequested();
+            // Start the same bounded independent decoders before native model
+            // setup. Their immutable source snapshots never touch playback's
+            // lazy JsonNodes, and their lifetime includes constructor failures.
+            if(timingOnly)
+            {
+                PrefetchAudio=AdvAudio.IndependentDecoder(archive,site,manifest,episode,ffmpeg);
+                if(prefetchAudio)
+                {
+                    var voices=StoryAudioPrefetch.VoiceCandidates(program).ToArray();
+                    if(voices.Length>0)timingAudioPrefetch=new(cueCache??=new(),voices,PrefetchAudio,cancellationToken);
+                }
+            }
+            Mark("audioPrefetchSetupMs");
             Scene=new(archive,site,dll,manifest,definition,scene,language,gl,Loop,tweens){TimingOnly=timingOnly};Scene.Bind(Player);
             if(script is not null)Scene.ProjectDirectory=Path.GetDirectoryName(Path.GetFullPath(script))!;
             var rows=program.Initialize.Concat(program.Rows).Concat(program.Finalize).Where(r=>!r.Ignored).ToArray();
             foreach(var row in rows)DirectorValidation.Check(row);
-            Audio=new(Loop,[]){ResolveCue=n=>cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg,cancellationToken))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg,cancellationToken)};Audio.Bind(Player);
-            if(timingOnly)PrefetchAudio=AdvAudio.IndependentDecoder(archive,site,manifest,episode,ffmpeg);
+            Audio=new(Loop,[]){ResolveCue=n=>timingAudioPrefetch?.Get(n)??cueCache?.Get(n,()=>AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg,cancellationToken))??AdvAudio.Decode(archive,site,manifest,episode,n,ffmpeg,cancellationToken)};Audio.Bind(Player);
             Ui=new(archive,site,manifest,definition,episode,settings,language,gl,Loop,Audio,supersample){HasLetterbox=playbackViewport is null ? viewportHeight<height : ActorIsolation.HasLetterbox(
                 playbackViewport["width"]!.GetValue<int>(),playbackViewport["height"]!.GetValue<int>(),playbackViewport["letterbox"]!.ToString()),MasterIds=scene["settings"]?["masterIdSettings"],TimingOnly=timingOnly};Ui.Bind(Player);Ui.CheckTexts(rows);
             Ui.AudioProjectDirectory=script is null?Environment.CurrentDirectory:Path.GetDirectoryName(Path.GetFullPath(script))!;Ui.AudioFfmpegPath=ffmpeg;
@@ -128,12 +149,15 @@ public sealed class AdvStoryRenderer : IDisposable
             Scene.TalkShakeGet=()=>Ui.ShakeOffset;Scene.TalkShakeSet=v=>Ui.ShakeOffset=v;
             Scene.StillShakeGet=()=>Stills.ShakeOffset;Scene.StillShakeSet=v=>Stills.ShakeOffset=v;
             if(Player.MissingCommands.Length>0)throw new NotSupportedException("Native story commands not connected: "+string.Join(", ",Player.MissingCommands));
+            Mark("sceneAndUiMs");
             cancellationToken.ThrowIfCancellationRequested();
-            Scene.Preload(rows);
+            Scene.Preload(rows,cancellationToken);
+            Mark("nativeModelsMs");
             cancellationToken.ThrowIfCancellationRequested();
             foreach(var row in rows.Where(r=>r.Command=="Director.Parameter"))_=(Scene.Character(row.Text("TargetName"))??throw new ArgumentException("Unknown actor: "+row.Text("TargetName"))).ParameterValue(row.Text("Parameter"));
             Player.Prepare=p=>Ui.Prepare();Player.Start();
-        }catch{Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
+            Mark("startPlaybackMs");
+        }catch{timingAudioPrefetch?.Dispose();Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
     }
     public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
     {
@@ -221,7 +245,7 @@ public sealed class AdvStoryRenderer : IDisposable
         }
         gl.CopySurface(reduced, gl.CurrentSurface, linear: true);
     }
-    public void Dispose(){interactiveSceneCanvas?.Dispose();Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
+    public void Dispose(){timingAudioPrefetch?.Dispose();interactiveSceneCanvas?.Dispose();Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
     public static object Contact(Archive archive,string site,string dll,string id,string language,string? script,string output,int width,int height,double[] times,int columns,bool clean,bool overwrite,string ffmpeg,int supersample=2)
     {
         if(times.Length is <1 or >64||times.Any(t=>!double.IsFinite(t)||t<0||t>36000))throw new ArgumentException("Contact needs 1..64 times within ten hours");

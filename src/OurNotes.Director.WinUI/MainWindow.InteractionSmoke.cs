@@ -39,6 +39,7 @@ public sealed partial class MainWindow
                 && layout.ProgramMonitorPanel.IsMaximized && fullscreenHidden.Count > 0,
                 workspace + "：实际 F1 进入节目监视器全屏，隐藏编辑器外框");
             await App.CaptureCheckpointAsync(workspace + "-monitor-fullscreen");
+            await viewport.CapturePresentedDesktopSmokeAsync(this, workspace + "-monitor-paused-desktop");
             await viewport.SendShellKeySmokeAsync(this, (VirtualKey)192); root.UpdateLayout();
             check(IsMonitorFullscreen && layout.MaximizedPanel == layout.ProgramMonitorPanel,
                 workspace + "：全屏内反引号不恢复被隐藏的其他面板");
@@ -72,6 +73,8 @@ public sealed partial class MainWindow
             // These controls are deliberately inside the monitor. Testing only
             // inspector focus would not exercise the text-input exclusion.
             if (workspace == "scenes") await VerifyMonitorTextFocusSmokeAsync(layout, viewport, check);
+            if (viewport.HasCurrentSource) await VerifyPlayingFullscreenSmokeAsync(workspace, viewport, check);
+            if (workspace == "home") await viewport.RunGpuLayoutSmokeAsync(this, check);
         }
         Navigate("scenes"); root.UpdateLayout(); await Task.Delay(100);
         await Scene.RunTimelineInteractionSmokeAsync(check);
@@ -94,6 +97,45 @@ public sealed partial class MainWindow
         check(Descendants<Microsoft.UI.Xaml.Controls.ComboBox>(drawerContent).Any(box => box.Header?.ToString() == "渲染显卡（重启后生效）"),
             "实际设置抽屉提供自动、节能、高性能显卡选择和当前设备诊断");
         await App.CaptureCheckpointAsync("graphics-settings"); CloseDrawer();
+    }
+
+    async Task VerifyPlayingFullscreenSmokeAsync(string workspace, NativeViewport viewport, Action<bool, string> check)
+    {
+        var before = viewport.LastFrame!;
+        try
+        {
+            await viewport.SeekAsync(0);
+            var start = viewport.LastFrame!;
+            viewport.Play();
+            var playing = await Advance(start);
+            viewport.Focus(FocusState.Keyboard); await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
+            root.UpdateLayout();
+            var fullscreen = await Advance(playing);
+            await viewport.WaitForGpuLayoutAsync();
+            check(IsMonitorFullscreen && viewport.IsPlaying && fullscreen.SessionId == before.SessionId
+                && fullscreen.Time > playing.Time && playing.Time > start.Time,
+                workspace + "：播放中 F1 全屏后原生时间继续前进，不把 resize 产生的同时间新序号当作播放成功");
+            await App.CaptureCheckpointAsync(workspace + "-monitor-playing-fullscreen");
+            await viewport.CapturePresentedDesktopSmokeAsync(this, workspace + "-monitor-playing-desktop");
+        }
+        finally
+        {
+            await viewport.PauseForEditingAsync(); ExitMonitorFullscreen();
+            root.UpdateLayout(); await viewport.SeekAsync(before.Time); await viewport.WaitForGpuLayoutAsync();
+        }
+
+        async Task<OurNotes.Director.Core.PreviewFrame> Advance(OurNotes.Director.Core.PreviewFrame previous)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew(); long sequence = previous.Sequence;
+            while (clock.Elapsed < TimeSpan.FromSeconds(15))
+            {
+                var next = await viewport.WaitForFrameAsync(sequence, TimeSpan.FromSeconds(15) - clock.Elapsed);
+                if (next.SessionId != previous.SessionId) throw new InvalidOperationException("全屏时重建了原生会话。");
+                if (next.Time > previous.Time) return next;
+                sequence = next.Sequence;
+            }
+            throw new TimeoutException("播放全屏后没有呈现时间真正前进的原生帧。");
+        }
     }
 
     async Task VerifyMonitorTextFocusSmokeAsync(StudioLayout layout, NativeViewport viewport, Action<bool, string> check)

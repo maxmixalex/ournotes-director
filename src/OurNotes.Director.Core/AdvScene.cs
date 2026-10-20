@@ -38,6 +38,10 @@ public sealed partial class AdvScene : IDisposable
     public IReadOnlyDictionary<int,Actor> Shown=>shown;
     public string StageName{get;private set;}="";
     internal bool TimingOnly{get;init;}
+    internal int PreloadedActorCount=>actors.Count;
+    internal int PreloadedModelTextureCount=>actors.Values.Sum(actor=>actor.LoadedTextureCount);
+    internal int CaptureWaitCount{get;private set;}
+    internal int CaptureDrawCount{get;private set;}
     public AdvScene(Archive archive,string site,string dll,JsonNode manifest,JsonNode definition,JsonNode scene,string language,OffscreenGl gl,AdvLoop loop,AdvTweens tweens)
     {
         this.archive=archive;this.site=site;this.dll=dll;this.manifest=manifest;this.definition=definition;this.language=language;this.gl=gl;this.loop=loop;this.tweens=tweens;
@@ -64,10 +68,12 @@ public sealed partial class AdvScene : IDisposable
         loop.On(AdvPhase.PreLateEnd,()=>{if(!TimingOnly)foreach(var actor in shown.Values.Concat(directorActors.Keys).Distinct())actor.Step(shot,loop.Time,(float)loop.DeltaTime);});
         loop.On(AdvPhase.Animation,AnimateEffects);
     }
-    public void Preload(IEnumerable<AdvRow> rows)
+    public void Preload(IEnumerable<AdvRow> rows,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         PreloadEffects(rows);
         foreach(var row in rows.Where(r=>!r.Ignored&&r.Command=="Character")){
+            cancellationToken.ThrowIfCancellationRequested();
             var key=(row.Text("TargetName"),(int)row.Number("TargetAssetIndex"));if(actors.ContainsKey(key))continue;
             var address="Character/Live2D/"+row.Text("TargetAssetName");
             string id=row.Text("Model") is {Length:>0} explicitModel?explicitModel:definition["models"]?[address]?.GetValue<string>()??throw new InvalidDataException("Model address absent from story: "+address);
@@ -81,7 +87,7 @@ public sealed partial class AdvScene : IDisposable
             actors.Add(key,actor);
         }
         foreach(var actor in actors.Values)actor.BeginGameWarmup();
-        for(int frame=0;frame<4;frame++)foreach(var actor in actors.Values)actor.Step(shot,frame/30d,1f/30);
+        for(int frame=0;frame<4;frame++)foreach(var actor in actors.Values){cancellationToken.ThrowIfCancellationRequested();actor.Step(shot,frame/30d,1f/30);}
     }
     public Actor? Character(string name)=>actors.GetValueOrDefault((name,costumes.GetValueOrDefault(name)));
     public AdvTransform Slot(int pos)=>pos is 1 or 3 or 5 or 7 or 9?slots[(pos-1)/2]:throw new ArgumentException("PositionType has no character slot: "+pos);
@@ -239,7 +245,7 @@ public sealed partial class AdvScene : IDisposable
         // A native Stage fade waits for capture, then the next Update. Timing
         // needs that exact wait boundary, not the captured GPU pixels. Resolve
         // the same waiter at the same phase without drawing invisible models.
-        var wait=pendingCapture;pendingCapture=null;
+        var wait=pendingCapture;pendingCapture=null;CaptureWaitCount++;
         loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));
     }
     public Action? DrawForeground{get;set;}
@@ -256,7 +262,7 @@ public sealed partial class AdvScene : IDisposable
             if(index<0)effect.RestoreOrder();else effect.SetRelativeOrder(index*1000,index*1000+ordered[index].Value.Core.DrawableCount,index*1000+999);
         }
         var backgroundItems=BackgroundItems(globals).Concat(EffectItems(globals,(e,r)=>r.Layer==12)).ToArray();
-        if(pendingCapture is not null){AdvRenderItem.DrawAll(backgroundItems);captureTexture=gl.Capture(captureTexture);var wait=pendingCapture;pendingCapture=null;loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));gl.Begin(clearColor);}
+        if(pendingCapture is not null){AdvRenderItem.DrawAll(backgroundItems);captureTexture=gl.Capture(captureTexture);var wait=pendingCapture;pendingCapture=null;CaptureWaitCount++;CaptureDrawCount++;loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));gl.Begin(clearColor);}
         var foreground=ForegroundItem?.Invoke();IEnumerable<AdvRenderItem> foregroundItems=foreground is null?[]:[foreground];
         if(!offscreen){
             var items=backgroundItems.Concat(ordered.SelectMany((p,i)=>p.Value.GameDrawItems(globals,i*1000))).Concat(EffectItems(globals,(e,r)=>r.Layer is >=6 and <=11)).Concat(foregroundItems);AdvRenderItem.DrawAll(items);

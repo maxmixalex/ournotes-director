@@ -129,7 +129,15 @@ public sealed class DesktopSettings
         path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try { File.WriteAllText(temporary, contents, new UTF8Encoding(false)); File.Move(temporary, path, true); }
+        try
+        {
+            File.WriteAllText(temporary, contents, new UTF8Encoding(false));
+            // Windows MoveFileEx cannot overwrite an open destination even when
+            // its readers share deletion. ReplaceFile supports that snapshot-read
+            // contract and retains the original file's access controls.
+            if (File.Exists(path)) File.Replace(temporary, path, null);
+            else File.Move(temporary, path);
+        }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 }

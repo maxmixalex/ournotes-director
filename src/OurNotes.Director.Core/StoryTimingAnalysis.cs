@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics;
 
 namespace OurNotes.Director.Core;
 
@@ -8,21 +9,34 @@ namespace OurNotes.Director.Core;
 public static class StoryTimingAnalysis
 {
     public static NativePlaybackTiming Analyze(ScenePreviewSource source,
-        CancellationToken cancellationToken = default, Action<NativePlaybackTiming>? progress = null)
+        CancellationToken cancellationToken = default, Action<NativePlaybackTiming>? progress = null,
+        Action<StoryTimingAnalysisDiagnostics>? diagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         cancellationToken.ThrowIfCancellationRequested();
+        var phase=Stopwatch.StartNew();
         var project = DirectorProject.Read(source.ProjectPath);
         var document = DirectorProject.Document(source.ProjectPath);
         string hash = Archive.Hash(Encoding.UTF8.GetBytes(document.ToJsonString()));
         cancellationToken.ThrowIfCancellationRequested();
         var cache = new AdvCueCache();
-        using var native = new AdvStoryRenderer(new Archive(source.ArchivePath), project.Site,
+        NativePlaybackTiming timing;
+        double preparation,playback;
+        int models,modelTextures,captureWaits,captureDraws;
+        IReadOnlyDictionary<string,double> initialization;
+        using(var native = new AdvStoryRenderer(new Archive(source.ArchivePath), project.Site,
             source.CubismPath, project.Adv, project.Language, source.Width, source.Height,
-            source.ProjectPath, source.FfmpegPath, 1, document, true, cache, cancellationToken);
-        var voices = StoryAudioPrefetch.VoiceCandidates(native.Player.Program).ToArray();
-        using var prefetch = voices.Length == 0 ? null : new StoryAudioPrefetch(cache, voices, native.PrefetchAudio!, cancellationToken);
-        if (prefetch is not null) native.Audio.ResolveCue = prefetch.Get;
-        return native.AnalyzeTiming(hash, progress, cancellationToken);
+            source.ProjectPath, source.FfmpegPath, 1, document, true, cache, cancellationToken,prefetchAudio:true))
+        {
+            preparation=phase.Elapsed.TotalMilliseconds;phase.Restart();
+            timing=native.AnalyzeTiming(hash,progress,cancellationToken);
+            playback=phase.Elapsed.TotalMilliseconds;phase.Restart();
+            initialization=new Dictionary<string,double>(native.InitializationTimings);
+            models=native.Scene.PreloadedActorCount;modelTextures=native.Scene.PreloadedModelTextureCount;
+            captureWaits=native.Scene.CaptureWaitCount;captureDraws=native.Scene.CaptureDrawCount;
+        }
+        diagnostics?.Invoke(new(preparation,playback,phase.Elapsed.TotalMilliseconds,initialization,
+            models,modelTextures,captureWaits,captureDraws,cache.DecodeAttempts,cache.DecodedPcmBytes,cache.DecodeMilliseconds,cache.RetainedPcmBytes));
+        return timing;
     }
 }

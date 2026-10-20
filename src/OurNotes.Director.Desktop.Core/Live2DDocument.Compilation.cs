@@ -23,6 +23,19 @@ public sealed partial class Live2DDocument
         var edits = singleSelection ? SelectedEditRows() : OwnRows();
         project["commands"] = new JsonArray(sourceRows.Concat(edits).OrderBy(Frame)
             .Select(row => (JsonNode)row.DeepClone()).ToArray());
+        if (singleSelection)
+        {
+            // Starting the native player executes requests at frame zero without
+            // ticking its animation. Sample the chosen pose after initial pins
+            // and controls so a paused model does not show the earlier default
+            // warmup mesh until the first play tick. This existing native command
+            // resets motion time without advancing the ADV frame counter.
+            var selected = project["commands"]!.AsArray();
+            int firstLater = selected.OfType<JsonObject>().TakeWhile(row => Frame(row) == 0).Count();
+            selected.Insert(firstLater, (JsonNode)new JsonObject { ["cmd"] = "Director.Actor",
+                ["TargetName"] = ActorId, ["AtFrame"] = 0,
+                ["Values"] = new JsonObject { ["warmupFrames"] = 1 } });
+        }
         // Extend a scheduled source only when the user extended the document. Existing
         // later commands stay intact when the export range is shorter than the source.
         if (project["commands"] is JsonArray commands && commands.OfType<JsonObject>().All(row => row["AtFrame"] is not null)

@@ -40,10 +40,23 @@ public sealed partial class GpuPreviewSurface
         }
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException) { return null; }
     }
+    public bool? IsSoftwareAdapter
+    {
+        get
+        {
+            lock (gate)
+            {
+                if (handle == 0) return null;
+                return OurNotesGpuAdapterSoftware(handle, out int software) >= 0 ? software != 0 : null;
+            }
+        }
+    }
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode, ExactSpelling = true)]
     static extern int OurNotesGpuAdapterName(nint surface, StringBuilder name, uint capacity);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode, ExactSpelling = true)]
     static extern int OurNotesGpuPreferredAdapter(uint preference, StringBuilder name, uint capacity);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    static extern int OurNotesGpuAdapterSoftware(nint surface, out int software);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     static extern int OurNotesGpuCreatePreferred(uint width, uint height, uint preference, out nint surface);
 }

@@ -9,6 +9,7 @@ void Check(bool passed, string message)
     count++;
 }
 CommandCatalogTests.Run(Check);
+AtomicWriteTests.Run(Check);
 SceneDocumentTests.Run(Check);
 StudioSceneDocumentTests.Run(Check);
 HomeStudioDocumentTests.Run(Check);

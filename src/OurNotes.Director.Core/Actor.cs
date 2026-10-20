@@ -63,6 +63,7 @@ public sealed unsafe partial class Actor : IDisposable
         foreach(var id in spec.Parameters.Keys)if(!ids.ContainsKey(id))throw new ArgumentException($"Unknown parameter {spec.Name}:{id}");
         }catch{Core.Dispose();throw;}
     }
+    internal int LoadedTextureCount=>textures.Length;
     string ParameterLabel(string id)
     {
         var node=gamePrefab["nodes"]!.AsArray().FirstOrDefault(n=>Archive.S(n!,"name")==id);

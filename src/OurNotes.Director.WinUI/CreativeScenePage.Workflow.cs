@@ -100,32 +100,51 @@ internal sealed partial class CreativeScenePage
     CancellationTokenSource? importCancellation;
     Task<NativePlaybackTiming>? importAnalysis;
     internal JsonObject? LastStoryImportReport { get; private set; }
+    internal void CancelStoryImport()=>importCancellation?.Cancel();
     async Task ImportNativeAsync(string json,string baseDirectory)
     {
         if(importingStory)throw new InvalidOperationException("正在打开另一段原剧情，请稍候。");
         if(!Directory.Exists(window.Settings.ArchivePath))throw new DirectoryNotFoundException("请先选择已下载的素材库。");
         if(!await ConfirmReplaceAsync())return;
+        if(importingStory)throw new InvalidOperationException("正在打开另一段原剧情，请稍候。");
+        if(disposed)throw new OperationCanceledException();
         importingStory=true;
+        LastStoryImportReport=null;
         using var cancellation=new CancellationTokenSource();
         importCancellation=cancellation;
         var total=System.Diagnostics.Stopwatch.StartNew();
         var stages=new JsonObject();
         var stage=System.Diagnostics.Stopwatch.StartNew();
         void Mark(string name){stages[name]=stage.Elapsed.TotalMilliseconds;stage.Restart();}
+        string? importNotice=null;
+        void ShowImportNotice(string message)
+        {
+            importNotice=message;notice.Severity=InfoBarSeverity.Informational;notice.Message=message;notice.IsOpen=true;
+            cancelImport.Visibility=Visibility.Visible;cancelImport.IsEnabled=true;
+        }
+        void HideImportNotice()
+        {
+            if(!ReferenceEquals(importCancellation,cancellation))return;
+            cancelImport.Visibility=Visibility.Collapsed;
+            if(notice.Severity==InfoBarSeverity.Informational&&notice.Message==importNotice)notice.IsOpen=false;
+        }
         SceneSnapshot? input=null;
         try
         {
-            scrubber.Cancel(); await scrubber.FlushAsync(); SaveDraft();viewport.Pause();
+            scrubber.Cancel();await scrubber.FlushAsync();cancellation.Token.ThrowIfCancellationRequested();
+            if(disposed||!ReferenceEquals(importCancellation,cancellation))throw new OperationCanceledException();
+            SaveDraft();viewport.Pause();
             var owner=document; long ownerVersion=loadVersion;
             string ownerText=owner.ToJson(), archiveSetting=window.Settings.ArchivePath,
                 ffmpegSetting=window.Settings.FFmpegPath, coreSetting=window.Settings.NativeLibraryPath,
                 sdkSetting=window.Settings.CubismSdkPath;
+            bool SameSettings()=>window.Settings.ArchivePath==archiveSetting&&window.Settings.FFmpegPath==ffmpegSetting
+                &&window.Settings.NativeLibraryPath==coreSetting&&window.Settings.CubismSdkPath==sdkSetting;
             void RequireOwner()
-            { cancellation.Token.ThrowIfCancellationRequested();if(disposed||!ReferenceEquals(document,owner)||loadVersion!=ownerVersion
-                ||owner.ToJson()!=ownerText||window.Settings.ArchivePath!=archiveSetting
-                ||window.Settings.FFmpegPath!=ffmpegSetting||window.Settings.NativeLibraryPath!=coreSetting
-                ||window.Settings.CubismSdkPath!=sdkSetting)throw new OperationCanceledException("原剧情导入的目标项目已更改。"); }
-            notice.Severity=InfoBarSeverity.Informational;notice.Message="正在读取原剧情和素材索引…";notice.IsOpen=true;
+            { cancellation.Token.ThrowIfCancellationRequested();if(disposed||!ReferenceEquals(importCancellation,cancellation)
+                ||!ReferenceEquals(document,owner)||loadVersion!=ownerVersion||owner.ToJson()!=ownerText||!SameSettings())
+                throw new OperationCanceledException("原剧情导入的目标项目已更改。"); }
+            ShowImportNotice("正在读取原剧情和素材索引…");
             string archivePath=window.Settings.ArchivePath;
             // Parsing, expansion and conversion all operate on private documents.
             // Neither file IO nor prefix-by-prefix JSON validation belongs on UI.
@@ -134,28 +153,41 @@ internal sealed partial class CreativeScenePage
             var native=expanded.Document;
             input=await Task.Run(()=>native.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview")),cancellation.Token);
             RequireOwner();Mark("snapshotMs");
-            notice.Message="正在解析演出和真实语音时间…";
+            ShowImportNotice("正在解析演出和真实语音时间…");
             var size=PreviewSize(native.Output.Width,native.Output.Height);
             var timingSource=Source(input.FilePath,size.Width,size.Height,36000,PreviewDurationMode.Automatic);
             // Timing does not need a first rendered preview which would immediately
             // be discarded when the editable project is installed. Keep the current
             // monitor intact and initialize only the final editable renderer.
-            importAnalysis=Task.Factory.StartNew(()=>StoryTimingAnalysis.Analyze(timingSource,cancellation.Token),
+            StoryTimingAnalysisDiagnostics? timingDiagnostics=null;
+            importAnalysis=Task.Factory.StartNew(()=>StoryTimingAnalysis.Analyze(timingSource,cancellation.Token,diagnostics:value=>timingDiagnostics=value),
                 CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
             var timing=await importAnalysis;
             RequireOwner();Mark("nativeTimingMs");
-            notice.Message="正在建立可编辑时间轴…";
+            ShowImportNotice("正在建立可编辑时间轴…");
             var imported=await Task.Run(()=>expanded.CreateScene(timing,cancellation.Token),cancellation.Token);
             RequireOwner();Mark("convertTimelineMs");
             document=imported;timeline.ResetProjectView();ResetProjectLibrary();path=null;directory=baseDirectory;savedText="";
             selectedActor=selectedClip=replaceAssetClip=null;playhead=0;undo.Clear();redo.Clear();previewDirty=true;loadedSourceKey=null;
             Refresh();SaveDraft();Mark("bindTimelineMs");
-            await ReloadAsync();Mark("editablePreviewMs");notice.IsOpen=false;
-            LastStoryImportReport=new JsonObject { ["schema"]="ournotes-director/story-import/2",["totalMs"]=total.Elapsed.TotalMilliseconds,["intermediatePreviewCreated"]=false,
-                ["commands"]=timing.Commands.Count,["clips"]=document.Clips.Count,["stages"]=stages };
+            long previewVersion=loadVersion+1;string importedText=imported.ToJson();
+            await ReloadAsync(cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            if(disposed||!ReferenceEquals(importCancellation,cancellation)||!ReferenceEquals(document,imported)
+                ||loadVersion!=previewVersion||imported.ToJson()!=importedText||!SameSettings())
+                throw new OperationCanceledException("原剧情导入的目标项目已更改。");
+            if(previewDirty||!viewport.HasCurrentSource)
+                throw new InvalidOperationException(notice.Severity==InfoBarSeverity.Error?notice.Message:"原剧情的可编辑预览未能完成。");
+            Mark("editablePreviewMs");HideImportNotice();
+            LastStoryImportReport=new JsonObject { ["schema"]="ournotes-director/story-import/3",["totalMs"]=total.Elapsed.TotalMilliseconds,["intermediatePreviewCreated"]=false,
+                ["commands"]=timing.Commands.Count,["clips"]=imported.Clips.Count,["stages"]=stages,["nativeAnalysis"]=timingDiagnostics?.ToJson() };
             App.TraceStartup("Story import: "+LastStoryImportReport.ToJsonString());
         }
-        finally {input?.Dispose();importingStory=false;importAnalysis=null;importCancellation=null;}
+        finally
+        {
+            input?.Dispose();HideImportNotice();
+            if(ReferenceEquals(importCancellation,cancellation)){importingStory=false;importAnalysis=null;importCancellation=null;}
+        }
     }
     static SceneDocument ParseNativeProject(string json,string baseDirectory)
     {
@@ -253,29 +285,43 @@ internal sealed partial class CreativeScenePage
         var compiled=document.Compile();foreach(var row in compiled["commands"]!.AsArray().OfType<JsonObject>())if(row["AudioPath"] is JsonValue file)row["AudioPath"]=Path.GetFullPath(file.ToString(),directory);return compiled;
     }
     async Task ReloadAsync()=>await UpdatePreviewAsync(false);
+    async Task ReloadAsync(CancellationToken cancellationToken)=>await UpdatePreviewAsync(false,cancellationToken);
     async Task CommitLiveAsync()=>await UpdatePreviewAsync(true);
-    async Task UpdatePreviewAsync(bool preservePose)
+    async Task UpdatePreviewAsync(bool preservePose,CancellationToken cancellationToken=default)
     {
-        if(disposed)return;long version=++loadVersion;await loadGate.WaitAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        if(disposed)return;long version=++loadVersion;await loadGate.WaitAsync(cancellationToken);
         try
         {
             if(version!=loadVersion||disposed)return;
             if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null){viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));previewDirty=false;loadedSourceKey=null;return;}
             if(!Directory.Exists(window.Settings.ArchivePath)){ShowError("请先选择素材库；当前场景已经保留。");return;}
-            double restore=playhead;var parsed=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);var input=parsed.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview"));
+            var owner=document;string ownerText=owner.ToJson();double duration=owner.Duration,restore=playhead;
+            string archiveSetting=window.Settings.ArchivePath,ffmpegSetting=window.Settings.FFmpegPath,
+                coreSetting=window.Settings.NativeLibraryPath,sdkSetting=window.Settings.CubismSdkPath;
+            bool Current()=>!cancellationToken.IsCancellationRequested&&!disposed&&version==loadVersion&&ReferenceEquals(document,owner)&&owner.ToJson()==ownerText
+                &&window.Settings.ArchivePath==archiveSetting&&window.Settings.FFmpegPath==ffmpegSetting
+                &&window.Settings.NativeLibraryPath==coreSetting&&window.Settings.CubismSdkPath==sdkSetting;
+            var parsed=SceneDocument.Parse(Compiled().ToJsonString(),baseDirectory:directory);var input=parsed.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory,"creative-preview"));
             string sourceKey=parsed.Root["source"]!.ToJsonString()+parsed.Root["output"]!.ToJsonString()+window.Settings.ArchivePath;
+            bool installed=false;
             try
             {
-                var size=PreviewSize(parsed.Output.Width,parsed.Output.Height);var source=Source(input.FilePath,size.Width,size.Height,document.Duration+1d/30);
+                var size=PreviewSize(parsed.Output.Width,parsed.Output.Height);var source=Source(input.FilePath,size.Width,size.Height,duration+1d/30);
                 bool same=viewport.HasCurrentSource&&loadedSourceKey==sourceKey;
                 if(same)await viewport.CommitSceneProjectAsync(source);else await viewport.LoadSceneAsync(source);
-                previewInput?.Dispose();previewInput=input;loadedSourceKey=sourceKey;previewDirty=false;
+                if(!Current())return;
+                previewInput?.Dispose();previewInput=input;installed=true;loadedSourceKey=sourceKey;previewDirty=false;
                 // Live placement has already updated the native pose. Mouse release must not
                 // immediately replay history or re-upload all models and textures.
-                if(!(preservePose&&same))await viewport.SeekAsync(Math.Min(restore,document.Duration));
+                double target=Math.Min(restore,duration);
+                // A new source already renders and presents frame zero in LoadScene.
+                // Nonzero restores and existing-source commits still need their seek.
+                if(!(preservePose&&same)&&(same||target>0))await viewport.SeekAsync(target);
+                if(!Current())return;
                 viewport.SelectedTargetId=selectedActor;
             }
-            catch{if(!ReferenceEquals(previewInput,input))input.Dispose();throw;}
+            finally{if(!installed)input.Dispose();}
         }
         finally{loadGate.Release();}
     }

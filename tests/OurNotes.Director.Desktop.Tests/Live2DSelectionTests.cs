@@ -86,12 +86,81 @@ static class Live2DSelectionTests
         captured.Time = 4.5;
         check(Single(captured.ToWorkbenchSceneDocument(), "wave", "smile"),
             "The original scene's later Out cannot hide the independent selected model");
+
+        var legacyCaptured = JsonNode.Parse(captured.ToJson())!.AsObject();
+        legacyCaptured["edits"] = new JsonArray(); legacyCaptured["time"] = 2.5;
+        legacyCaptured["range"] = new JsonObject { ["startFrame"] = 60, ["endFrameExclusive"] = 90 };
+        legacyCaptured["performance"]!["commands"]!.AsArray().Insert(3, (JsonNode)new JsonObject
+            { ["cmd"] = "Motion", ["TargetName"] = "actor", ["MotionName"] = "idle", ["AtFrame"] = 90 });
+        string retainedSource = legacyCaptured["performance"]!.ToJsonString();
+        var sourceOnly = Live2DDocument.Parse(legacyCaptured.ToJsonString());
+        string frozen = sourceOnly.ToWorkbenchSceneDocument().ToJson();
+        sourceOnly.Time = 0;
+        check(Single(sourceOnly.ToWorkbenchSceneDocument(), "wave", "smile"),
+            "Reopening an old source-only workbench captures the saved choice before a backward seek");
+        sourceOnly.Time = 4;
+        check(sourceOnly.ToWorkbenchSceneDocument().ToJson() == frozen
+            && sourceOnly.Range == new TimelineRange(60, 90, 30)
+            && !sourceOnly.CanUndo && JsonNode.Parse(sourceOnly.ToJson())!["performance"]!.ToJsonString() == retainedSource,
+            "Legacy selection capture preserves the source, marked interval and history while later source choices stay inactive");
+        var savedLegacy = (JsonObject)legacyCaptured.DeepClone(); savedLegacy.Remove("time"); savedLegacy.Remove("metadata");
+        var legacyDraft = new JsonObject { ["project"] = legacyCaptured.DeepClone(), ["savedContent"] = savedLegacy.ToJsonString() };
+        var restoredDraft = Live2DDocument.FromDraft(legacyDraft);
+        check(!restoredDraft.HasUnsavedChanges && restoredDraft.Time == 2.5
+            && Single(restoredDraft.ToWorkbenchSceneDocument(), "wave", "smile"),
+            "Migrating an unchanged older draft does not turn selection capture into an unsaved user edit");
+
+        var resetSource = source.Root;
+        resetSource["commands"]!.AsArray().Insert(3, (JsonNode)new JsonObject
+            { ["cmd"] = "Motion", ["TargetName"] = "actor", ["MotionName"] = "idle", ["AtFrame"] = 60 });
+        var resetCapture = Live2DDocument.FromSceneActor(SceneDocument.Parse(resetSource.ToJsonString()),
+            "actor", "test-model", metadata, 2.5, 5);
+        check(Single(resetCapture.ToWorkbenchSceneDocument(), "idle", "normal"),
+            "A source motion with no expression resets to the native default instead of reviving an earlier face");
+        resetSource["commands"]!.AsArray()[3]!["cmd"] = "In";
+        resetSource["commands"]!.AsArray()[3]!.AsObject().Remove("MotionName");
+        resetSource["commands"]!.AsArray()[3]!["PositionType"] = 3;
+        resetCapture = Live2DDocument.FromSceneActor(SceneDocument.Parse(resetSource.ToJsonString()),
+            "actor", "test-model", metadata, 2.5, 5);
+        check(Single(resetCapture.ToWorkbenchSceneDocument(), "idle", "normal"),
+            "A source In with omitted names starts the default motion and expression");
+        resetSource["commands"]!.AsArray()[3]!["IgnoreData"] = true;
+        resetCapture = Live2DDocument.FromSceneActor(SceneDocument.Parse(resetSource.ToJsonString()),
+            "actor", "test-model", metadata, 2.5, 5);
+        check(Single(resetCapture.ToWorkbenchSceneDocument(), "wave", "smile"),
+            "An ignored source animation command never changes the captured workbench choice");
+
+        var pinnedSource = source.Root;
+        pinnedSource["commands"]!.AsArray().Insert(3, (JsonNode)new JsonObject
+            { ["cmd"] = "Director.Parameter", ["TargetName"] = "actor", ["Parameter"] = "Angle", ["Value"] = 18, ["AtFrame"] = 40 });
+        var pins = Live2DDocument.FromSceneActor(SceneDocument.Parse(pinnedSource.ToJsonString()),
+            "actor", "test-model", metadata, 2.5, 5);
+        string unedited = pins.ToJson(); pins.ResetParameters();
+        check(!pins.Parameters.Single().IsOverridden && pins.Parameters.Single().Value == 0 && pins.ToJson() == unedited
+            && !Rows(pins.ToWorkbenchSceneDocument()).Any(row => row["cmd"]?.ToString() == "Director.Parameter"),
+            "Single-model parameter controls ignore source pins that its actual native project does not execute");
+        pins.Time = 0; pins.SetControllers(breath: false); pins.SetParameter("Angle", 9);
+        var initialRows = Rows(pins.ToWorkbenchSceneDocument());
+        int sample = Array.FindIndex(initialRows, row => row["Values"]?["warmupFrames"]?.GetValue<int>() == 1);
+        check(sample > Array.FindIndex(initialRows, row => row["cmd"]?.ToString() == "Expression")
+            && sample > Array.FindIndex(initialRows, row => row["cmd"]?.ToString() == "Director.Parameter")
+            && sample > Array.FindIndex(initialRows, row => row["Values"]?["controls"] is JsonObject)
+            && initialRows[sample]["AtFrame"]!.GetValue<int>() == 0
+            && !Rows(pins.ToSceneDocument()).Any(row => row["Values"]?["warmupFrames"] is not null),
+            "Only the single-model projection samples its initial pose after the selected animation, controls and pins");
+
         string directory = Path.Combine(Path.GetTempPath(), "director-selection-" + Guid.NewGuid().ToString("N"));
         try
         {
             using var snapshot = captured.CreateWorkbenchSnapshot(directory);
             check(JsonNode.DeepEquals(SceneDocument.Open(snapshot.FilePath).Root, captured.ToWorkbenchSceneDocument().Root),
                 "Preview/live-edit/canvas snapshots and export compile the same canonical workbench project");
+            string oldPath = Path.Combine(directory, "reopened.live2d.json");
+            sourceOnly.Save(oldPath);
+            var reopenedSource = Live2DDocument.Open(oldPath);
+            check(!reopenedSource.HasUnsavedChanges && reopenedSource.Time == 4
+                && Single(reopenedSource.ToWorkbenchSceneDocument(), "wave", "smile"),
+                "Saving a migrated workbench at a later cursor keeps its frozen selection when reopened");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }

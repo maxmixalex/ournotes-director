@@ -24,6 +24,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     readonly TextBlock title=new(){Text="未命名场景",FontSize=13,VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis};
     readonly TextBlock assetHint=new(){Text="选择角色后添加动作、表情或声音。",FontSize=11,TextWrapping=TextWrapping.Wrap,Opacity=.7};
     readonly InfoBar notice=new(){IsOpen=false,IsClosable=true};
+    readonly Button cancelImport=new(){Content="取消解析",Visibility=Visibility.Collapsed};
     readonly SemaphoreSlim loadGate=new(1);
     readonly Stack<string> undo=new(),redo=new();
     readonly List<ResultRow> assetRows=[];
@@ -52,6 +53,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         toolbar.Children.Add(title);Grid.SetColumn(title,1);var publish=Ui.Row(8,Button("保存",()=>SaveAsync(),"\uE74E"),Button("导出…",()=>ExportAsync("clip"),"\uE898",true));toolbar.Children.Add(publish);Grid.SetColumn(publish,2);
         foreach(var(key,label)in new[]{("motion","动作"),("expression","表情"),("voice","语音台词")})assetKind.Items.Add(new ComboBoxItem{Content=label,Tag=key});
         assetKind.SelectedIndex=0;var library=BuildProjectLibrary();
+        cancelImport.Click+=(_,_)=>{CancelStoryImport();cancelImport.IsEnabled=false;};notice.ActionButton=cancelImport;
         var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar,workspaceKey:"scenes");
         actors.SelectionChanged+=(_,_)=>
         {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);timeline.RevealActor(selectedActor);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
@@ -124,7 +126,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     string AssetKind=>(assetKind.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"motion";
     Button Button(string text,Func<Task> action,string glyph,bool primary=false)=>StudioLayout.AsyncTool(text,()=>Safe(action),glyph,primary);
     async Task Safe(Func<Task> action){try{if(!disposed)await action();}catch(OperationCanceledException){}catch(Exception error){if(!disposed)ShowError(error.Message);}}
-    void ShowError(string message){notice.Severity=InfoBarSeverity.Error;notice.Message=message;notice.IsOpen=true;}
+    void ShowError(string message){cancelImport.Visibility=Visibility.Collapsed;notice.Severity=InfoBarSeverity.Error;notice.Message=message;notice.IsOpen=true;}
     void ClearSelection()
     {
         selectedActor=selectedClip=replaceAssetClip=null;
@@ -166,6 +168,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     }
     async Task UndoAsync(bool forward)
     {
+        CancelStoryImport();
         var from=forward?redo:undo;var to=forward?undo:redo;if(from.Count==0)return;viewport.Pause();to.Push(document.ToJson());document=CreativeScene.Parse(from.Pop());selectedClip=null;previewDirty=true;Refresh();SaveDraft();await ReloadAsync();
     }
     async Task DeleteClipAsync(){if(selectedClip is {} id)await EditAsync(()=>{document.RemoveClip(id);selectedClip=null;});}

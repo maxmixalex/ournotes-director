@@ -43,7 +43,9 @@ try {
     [IO.File]::WriteAllText($replacement, '{"phase":"after"}')
     $heldReader = Open-SmokeReportReader $probe
     try {
-        [IO.File]::Move($replacement, $probe, $true)
+        # Match DesktopSettings.AtomicWrite: MoveFileEx cannot replace an open
+        # destination on Windows, even with FileShare.Delete. ReplaceFile can.
+        [IO.File]::Replace($replacement, $probe, $null)
         if ($heldReader.ReadToEnd() -ne '{"phase":"before"}' -or (Read-SmokeReport $probe) -ne '{"phase":"after"}') {
             throw 'The progress reader did not preserve complete atomic report snapshots.'
         }

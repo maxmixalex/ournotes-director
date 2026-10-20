@@ -12,6 +12,7 @@ static class StoryTimingAnalysisTests
     {
         if (Environment.GetEnvironmentVariable(WorkerEnvironment) is not { Length: > 0 } path
             || !args.Contains("f32le")) return null;
+        if (Directory.Exists(path)) path = Path.Combine(path, Environment.ProcessId + ".json");
         int input = Array.IndexOf(args, "-i");
         File.WriteAllText(path + ".tmp", new JsonObject { ["pid"] = Environment.ProcessId,
             ["input"] = input >= 0 ? args[input + 1] : "" }.ToJsonString());
@@ -45,23 +46,29 @@ static class StoryTimingAnalysisTests
             string hash = Archive.Hash(Encoding.UTF8.GetBytes(project.ToJsonString()));
             var source = new ScenePreviewSource(fixture, path, core, ffmpeg, 960, 540, 36000);
             NativePlaybackTiming? reference = null;
-            foreach (bool parallel in new[] { false, true, true, false })
+            foreach (string mode in new[] { "sequential", "afterInitialization", "duringInitialization", "duringInitialization", "afterInitialization", "sequential" })
             {
                 var watch = Stopwatch.StartNew();
                 NativePlaybackTiming timing;
-                if (parallel) timing = StoryTimingAnalysis.Analyze(source);
+                StoryTimingAnalysisDiagnostics? diagnostics=null;
+                bool parallel=mode!="sequential";
+                if (mode=="duringInitialization") timing = StoryTimingAnalysis.Analyze(source,diagnostics:value=>diagnostics=value);
                 else
                 {
+                    var cache=new AdvCueCache();
                     using var native = new AdvStoryRenderer(archive, "intl", core, "10462", "zh-Hans",
-                        960, 540, path, ffmpeg, 1, project, true, new AdvCueCache());
+                        960, 540, path, ffmpeg, 1, project, true, cache);
+                    using var prefetch=parallel?new StoryAudioPrefetch(cache,StoryAudioPrefetch.VoiceCandidates(native.Player.Program),native.PrefetchAudio!,CancellationToken.None):null;
+                    if(prefetch is not null)native.Audio.ResolveCue=prefetch.Get;
                     timing = native.AnalyzeTiming(hash);
                 }
-                measurements.Add((JsonNode)new JsonObject { ["prefetch"] = parallel, ["ms"] = watch.Elapsed.TotalMilliseconds,
+                measurements.Add((JsonNode)new JsonObject { ["prefetch"] = parallel, ["prefetchMode"]=mode,
+                    ["diagnostics"]=diagnostics?.ToJson(), ["ms"] = watch.Elapsed.TotalMilliseconds,
                     ["endFrame"] = timing.EndFrame, ["commands"] = timing.Commands.Count });
                 reference ??= timing;
                 Check(timing.IsComplete && timing.ProjectHash == reference.ProjectHash && timing.EndFrame == reference.EndFrame
                     && timing.Duration == reference.Duration && timing.Commands.SequenceEqual(reference.Commands),
-                    "Real original story preserves every native command start/end/ordinal and its final frame " + (parallel ? "with prefetch" : "in sequential analysis"));
+                    "Real original story preserves every native command start/end/ordinal and its final frame: " + mode);
             }
             report["endFrame"] = reference!.EndFrame; report["commands"] = reference.Commands.Count;
             // Serial and prefetched analyses both use timingOnly. Compare against
@@ -96,12 +103,60 @@ static class StoryTimingAnalysisTests
                         && actual.Pcm.SequenceEqual(expected.Pcm), "Prefetched real voice retains its complete, sample-identical native PCM: " + id);
                 }
             }
+            await CancelledNativeAnalysis(source,output,Check,report);
+            await StoryTimingRenderStateTests.RunAsync(archive,core,ffmpeg,output,Check,report);
             Check(File.ReadAllText(path) == project.ToJsonString(), "Native analysis never modifies the input source project");
             report["ok"] = true;
             Console.WriteLine(report.ToJsonString());
             return 0;
         }
         finally { File.WriteAllText(Path.Combine(output, "report.json"), report.ToJsonString(new() { WriteIndented = true })); }
+    }
+
+    static async Task CancelledNativeAnalysis(ScenePreviewSource source,string output,Action<bool,string> check,JsonObject report)
+    {
+        string workers=Path.Combine(output,"cancelled-native-analysis");Directory.CreateDirectory(workers);
+        foreach(string file in Directory.EnumerateFiles(workers,"*.json"))File.Delete(file);
+        string executable=Environment.ProcessPath!;
+        if(Path.GetFileNameWithoutExtension(executable).Equals("dotnet",StringComparison.OrdinalIgnoreCase))
+            executable=Path.Combine(AppContext.BaseDirectory,"OurNotes.Director.NativeTests"+(OperatingSystem.IsWindows()?".exe":""));
+        string? previous=Environment.GetEnvironmentVariable(WorkerEnvironment);
+        using var cancellation=new CancellationTokenSource();
+        Task<NativePlaybackTiming>? task=null;
+        try
+        {
+            Environment.SetEnvironmentVariable(WorkerEnvironment,workers);
+            task=Task.Factory.StartNew(()=>StoryTimingAnalysis.Analyze(source with{FfmpegPath=executable},cancellation.Token),
+                CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
+            var start=Stopwatch.StartNew();
+            while(!Directory.EnumerateFiles(workers,"*.json").Any()&&!task.IsCompleted&&start.Elapsed<TimeSpan.FromSeconds(10))await Task.Delay(20);
+            check(Directory.EnumerateFiles(workers,"*.json").Any(),"Native timing initialization starts real independent voice decoders");
+            start.Restart();cancellation.Cancel();bool stopped=false;
+            try{await task.WaitAsync(TimeSpan.FromSeconds(10));}catch(OperationCanceledException){stopped=true;}
+            var children=Directory.EnumerateFiles(workers,"*.json").Select(path=>JsonNode.Parse(File.ReadAllText(path))!).ToArray();
+            bool Reaped(JsonNode child)
+            {
+                bool exited;try{using var process=Process.GetProcessById(child["pid"]!.GetValue<int>());exited=process.HasExited;}catch(ArgumentException){exited=true;}
+                return exited&&!File.Exists(child["input"]!.ToString());
+            }
+            check(stopped&&children.Length>0&&children.All(Reaped),
+                "Cancelling native analysis joins every started decoder and removes its private audio input before returning");
+            report["nativeCancellation"]=new JsonObject{["cancelled"]=stopped,["startedDecoders"]=children.Length,["cancelMs"]=start.Elapsed.TotalMilliseconds,["allChildrenReaped"]=children.All(Reaped)};
+        }
+        finally
+        {
+            cancellation.Cancel();
+            // This is failure cleanup only: the assertion above observes the
+            // production cancellation result before any fallback kills a child.
+            if(task is {IsCompleted:false})foreach(string path in Directory.EnumerateFiles(workers,"*.json"))
+            {
+                int pid=JsonNode.Parse(File.ReadAllText(path))!["pid"]!.GetValue<int>();
+                try{using var child=Process.GetProcessById(pid);if(!child.HasExited)child.Kill(true);}
+                catch(ArgumentException){}
+            }
+            try{if(task is not null)await task.WaitAsync(TimeSpan.FromSeconds(10));}catch(OperationCanceledException){}
+            finally{Environment.SetEnvironmentVariable(WorkerEnvironment,previous);}
+        }
     }
 
     static void PrefetchControl(Action<bool, string> check)

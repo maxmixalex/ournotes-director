@@ -46,10 +46,11 @@ public sealed partial class GpuPreviewSurface : IDisposable
     public static void ReleaseSwapChain(nint swapChain) { if (swapChain != 0) OurNotesGpuReleaseSwapChain(swapChain); }
     public void SetDisplaySize(double width, double height)
     {
+        VerifyThread();
         if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
             throw new ArgumentOutOfRangeException(nameof(width));
-        // Serialize D3D-only re-presentation with native drawing and destruction.
-        // The native entry point makes no WGL calls and does not evaluate animation.
+        // Immediate-context operations and DXGI Present share the render owner.
+        // The UI only enqueues layout; it never waits on this gate during resize.
         lock (gate)
         {
             if (handle == 0) return;
@@ -75,6 +76,8 @@ public sealed partial class GpuPreviewSurface : IDisposable
     { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPresentCount(handle, out uint count)); return count; }
     public uint ReadCompositionTestPixel()
     { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPixel(handle, out uint pixel)); return pixel; }
+    public void PresentCompositionTestColor(uint rgba)
+    { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuPresentTestColor(handle, rgba)); }
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern uint OurNotesGpuAbi();
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuPresent(nint surface, uint framebuffer, uint width, uint height);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuDestroy(nint surface);
@@ -85,4 +88,5 @@ public sealed partial class GpuPreviewSurface : IDisposable
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuCreateTest(uint width, uint height, out nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPresentCount(nint surface, out uint count);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPixel(nint surface, out uint rgba);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuPresentTestColor(nint surface, uint rgba);
 }

@@ -234,8 +234,10 @@ public sealed class AdvAudio
                 process.WaitForExit(); // Reap cancelled children before deleting their seekable input.
                 _=error.GetAwaiter().GetResult();
             }
-            var bytes=output.ToArray();if(bytes.Length==0||bytes.Length%(4*channels)!=0)throw new InvalidDataException("Empty or invalid decoded float PCM: "+error.GetAwaiter().GetResult());
-            var pcm=new float[bytes.Length/4];Buffer.BlockCopy(bytes,0,pcm,0,bytes.Length);
+            int byteCount=checked((int)output.Length);if(byteCount==0||byteCount%(4*channels)!=0)throw new InvalidDataException("Empty or invalid decoded float PCM: "+error.GetAwaiter().GetResult());
+            // The stream owns an exposable buffer. Copy once into the immutable
+            // cue rather than allocating another complete PCM byte array first.
+            var pcm=new float[byteCount/4];Buffer.BlockCopy(output.GetBuffer(),0,pcm,0,byteCount);
             return new(soundId,sound["_category"]!.GetValue<int>(),pcm,channels,meta["loopStart"]?.GetValue<int>(),meta["loopEnd"]?.GetValue<int>());
         }
         finally{NativeTemporary.Delete(temporary);}

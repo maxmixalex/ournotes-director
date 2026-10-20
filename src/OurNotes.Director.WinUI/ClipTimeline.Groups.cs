@@ -10,6 +10,8 @@ namespace OurNotes.Director.WinUI;
 internal sealed partial class ClipTimeline
 {
     readonly HashSet<string> collapsedGroups = new(StringComparer.Ordinal);
+    readonly Dictionary<string, GroupSpan[]> groupSpans = new(StringComparer.Ordinal);
+    readonly record struct GroupSpan(double Start, double End);
     readonly Slider heightSlider = new() { Minimum = 24, Maximum = 108, Value = 36, StepFrequency = 2, Width = 180 };
     bool heightLoaded;
     internal string ViewKey { get; } = MainWindow.Current?.ActivePage ?? "scenes";
@@ -68,6 +70,23 @@ internal sealed partial class ClipTimeline
         }
         return result;
     }
+    void RebuildGroupSpans()
+    {
+        // Cache document-time intervals when the project changes. Scrolling,
+        // zooming and folding groups must not sort every hidden clip again.
+        groupSpans.Clear();
+        foreach (var group in items.GroupBy(GroupOf))
+        {
+            var spans = new List<GroupSpan>();
+            foreach (var item in group.Where(item => item.Enabled).OrderBy(item => item.Start))
+            {
+                if (spans.Count > 0 && item.Start <= spans[^1].End)
+                    spans[^1] = spans[^1] with { End = Math.Max(spans[^1].End, item.End) };
+                else spans.Add(new(item.Start, item.End));
+            }
+            groupSpans[group.Key] = spans.ToArray();
+        }
+    }
     internal void ToggleGroup(string key)
     {
         if (dragging is not null) return;
@@ -110,8 +129,17 @@ internal sealed partial class ClipTimeline
     }
     void DrawGroupSummary(TimelineLane lane, int row, double left, double right)
     {
-        // Merge occupied screen intervals instead of constructing a control for
-        // every hidden clip. A collapsed long story stays cheap to paint.
+        if (lane.GroupKey is null || !groupSpans.TryGetValue(lane.GroupKey, out var spans)) return;
+        // Skip off-screen intervals with a binary search, then merge gaps smaller
+        // than two screen pixels at the current zoom. The cached time intervals
+        // are shared by expanded and collapsed views and never include disabled clips.
+        int low = 0, high = spans.Length;
+        while (low < high)
+        {
+            int middle = low + (high - low) / 2;
+            if (spans[middle].End * scale <= left) low = middle + 1;
+            else high = middle;
+        }
         double start = double.NaN, end = 0;
         void Segment()
         {
@@ -120,9 +148,9 @@ internal sealed partial class ClipTimeline
                 Fill = Brush(100, 130, 155, 190), IsHitTestVisible = false };
             Canvas.SetLeft(line, start); Canvas.SetTop(line, row * RowHeight + RowHeight / 2 - 2); canvas.Children.Add(line);
         }
-        foreach (var item in lane.Items.Where(i => i.Enabled && i.Start * scale < right && i.End * scale > left).OrderBy(i => i.Start))
+        for (int i = low; i < spans.Length && spans[i].Start * scale < right; i++)
         {
-            double a = Math.Max(left, item.Start * scale), b = Math.Min(right, item.End * scale);
+            double a = Math.Max(left, spans[i].Start * scale), b = Math.Min(right, spans[i].End * scale);
             if (double.IsFinite(start) && a <= end + 2) end = Math.Max(end, b);
             else { Segment(); start = a; end = b; }
         }

@@ -205,10 +205,10 @@ API HRESULT __cdecl OurNotesGpuScaleSwapChain(IDXGISwapChain* swap, float x, flo
     DXGI_MATRIX_3X2_F matrix{}; matrix._11 = x; matrix._22 = y;
     return composition->SetMatrixTransform(&matrix);
 }
-// The managed surface gate serializes this call with render-thread presentation
-// and destruction. Only D3D is touched here; WGL ownership remains on its thread.
+// Keep immediate-context work and DXGI presentation on their owning render
+// thread. XAML layout must enqueue this call without blocking the message pump.
 API HRESULT __cdecl OurNotesGpuSetDisplaySize(Surface* s, float x, float y) noexcept {
-    if (!s || !s->swap || !s->shared || !s->back) return E_INVALIDARG;
+    if (!s || !s->IsOwner() || !s->swap || !s->shared || !s->back) return E_INVALIDARG;
     HRESULT hr = OurNotesGpuScaleSwapChain(s->swap.Get(), x, y);
     if (FAILED(hr)) return hr;
     // SetMatrixTransform is latched by the NEXT Present. Re-copy the retained
@@ -252,6 +252,25 @@ API HRESULT __cdecl OurNotesGpuTestPixel(Surface* s, uint32_t* rgba) noexcept {
     hr = s->context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped); if (FAILED(hr)) return hr;
     std::memcpy(rgba, mapped.pData, 4); s->context->Unmap(staging.Get(), 0); return S_OK;
 }
+API HRESULT __cdecl OurNotesGpuPresentTestColor(Surface* s, uint32_t rgba) noexcept {
+    if (!s || !s->testOnly || !s->IsOwner()) return E_INVALIDARG;
+    ComPtr<ID3D11RenderTargetView> target;
+    HRESULT hr = s->device->CreateRenderTargetView(s->shared.Get(), nullptr, &target); if (FAILED(hr)) return hr;
+    const float color[] = { static_cast<float>(rgba & 255) / 255.f, static_cast<float>((rgba >> 8) & 255) / 255.f,
+        static_cast<float>((rgba >> 16) & 255) / 255.f, static_cast<float>((rgba >> 24) & 255) / 255.f };
+    s->context->ClearRenderTargetView(target.Get(), color);
+    // A uniform fill cannot detect content that was enlarged and cropped. Four
+    // distinct corner markers verify the complete texture's on-screen mapping.
+    const uint32_t colors[] = { 0xFFFFFFFF, 0xFF2020EF, 0xFFEDBC29, 0xFF1A1A1A };
+    for (UINT corner = 0; corner < 4; ++corner) {
+        uint32_t pixels[16]; for (auto& pixel : pixels) pixel = colors[corner];
+        UINT x = (corner & 1) ? s->width - 4 : 0, y = (corner & 2) ? s->height - 4 : 0;
+        D3D11_BOX box{ x, y, 0, x + 4, y + 4, 1 };
+        s->context->UpdateSubresource(s->shared.Get(), 0, &box, pixels, 16, 0);
+    }
+    s->context->CopyResource(s->back.Get(), s->shared.Get());
+    return s->swap->Present(0, 0);
+}
 
 // Query without opening a GL context. This is the OS preference order, not a
 // fabricated report of the active rendering device.
@@ -277,4 +296,13 @@ API HRESULT __cdecl OurNotesGpuAdapterName(Surface* s, wchar_t* name, UINT capac
     hr = dxgi->GetAdapter(&adapter); if (FAILED(hr)) return hr;
     DXGI_ADAPTER_DESC description{}; hr = adapter->GetDesc(&description); if (FAILED(hr)) return hr;
     std::wmemcpy(name, description.Description, 128); name[127] = 0; return S_OK;
+}
+API HRESULT __cdecl OurNotesGpuAdapterSoftware(Surface* s, BOOL* software) noexcept {
+    if (!s || !software) return E_INVALIDARG;
+    ComPtr<IDXGIDevice> dxgi; ComPtr<IDXGIAdapter> adapter; ComPtr<IDXGIAdapter1> adapter1;
+    HRESULT hr = s->swap->GetDevice(IID_PPV_ARGS(&dxgi)); if (FAILED(hr)) return hr;
+    hr = dxgi->GetAdapter(&adapter); if (FAILED(hr)) return hr;
+    hr = adapter.As(&adapter1); if (FAILED(hr)) return hr;
+    DXGI_ADAPTER_DESC1 description{}; hr = adapter1->GetDesc1(&description); if (FAILED(hr)) return hr;
+    *software = (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) ? TRUE : FALSE; return S_OK;
 }

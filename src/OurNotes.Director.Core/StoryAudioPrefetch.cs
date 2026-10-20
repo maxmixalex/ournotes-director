@@ -79,6 +79,7 @@ internal sealed class StoryAudioPrefetch : IDisposable
     {
         try
         {
+            cancellation.Token.ThrowIfCancellationRequested();
             var workerDecode = decoderFactory();
             foreach (long id in pending.GetConsumingEnumerable(cancellation.Token))
             {
