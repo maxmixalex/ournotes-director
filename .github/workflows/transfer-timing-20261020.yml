@@ -21,11 +21,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 'e2d547cd769496fac67581a6389b0de117ebb5e2'
+          test "$(git rev-parse HEAD^)" = 'e995e5e90de5344b13f8b7950a3ea2ba0c38629f'
           test "$(git ls-remote origin refs/heads/feat/windows-creative-editor | cut -f1)" = "$GITHUB_SHA"
           echo '14a31fdbd83a274110d05e25b36e2e2ffb87b5b48322bf1342210be680a9a43e  scripts/transfer-timing-20261020.patch' | sha256sum -c -
           git apply --check --index scripts/transfer-timing-20261020.patch
           git apply --index scripts/transfer-timing-20261020.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/OurNotes.Director.NativeTests/StoryTimingResourceTests.cs')
+          source = path.read_text()
+          old = 'samples.Add(new JsonObject'
+          assert source.count(old) == 1
+          # Select JsonArray.Add(JsonNode), not the reflection-based generic overload.
+          path.write_text(source.replace(old, 'samples.Add((JsonNode)new JsonObject'))
+          PY
+          git add tests/OurNotes.Director.NativeTests/StoryTimingResourceTests.cs
           git diff --cached --check
           git rm scripts/transfer-timing-20261020.patch
       - uses: actions/setup-dotnet@v6
