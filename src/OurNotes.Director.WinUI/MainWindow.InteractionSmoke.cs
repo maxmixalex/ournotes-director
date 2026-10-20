@@ -78,6 +78,7 @@ public sealed partial class MainWindow
         }
         Navigate("scenes"); root.UpdateLayout(); await Task.Delay(100);
         await Scene.RunTimelineInteractionSmokeAsync(check);
+        await Scene.RunStoryImportTransactionSmokeAsync(check);
         Navigate("settings"); root.UpdateLayout(); await Task.Delay(100);
         WindowsGpuPreference.RunRegressionSmoke(check);
         string registryFixture = @"Software\OurNotes\DirectorTests\" + Guid.NewGuid().ToString("N");

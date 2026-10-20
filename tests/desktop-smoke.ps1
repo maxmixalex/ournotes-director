@@ -45,7 +45,9 @@ try {
     try {
         # Match DesktopSettings.AtomicWrite: MoveFileEx cannot replace an open
         # destination on Windows, even with FileShare.Delete. ReplaceFile can.
-        [IO.File]::Replace($replacement, $probe, $null)
+        # PowerShell coerces $null to an empty string for .NET string parameters.
+        # NullString preserves the CLR null required for “no backup file”.
+        [IO.File]::Replace($replacement, $probe, [System.Management.Automation.Language.NullString]::Value)
         if ($heldReader.ReadToEnd() -ne '{"phase":"before"}' -or (Read-SmokeReport $probe) -ne '{"phase":"after"}') {
             throw 'The progress reader did not preserve complete atomic report snapshots.'
         }

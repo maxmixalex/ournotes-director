@@ -240,7 +240,11 @@ internal sealed partial class CreativeScenePage
     internal async Task RunRealSmokeTestAsync(Action<bool,string> check)
     {
         string? fixture=Environment.GetEnvironmentVariable("OURNOTES_REAL_SCENE_FIXTURE");if(string.IsNullOrEmpty(fixture))return;
-        window.Settings.ArchivePath=fixture;await ImportNativeAsync(SceneTemplates.Create("story-patch",new SceneSource("10462","intl","zh-Hans")).Text,fixture);await SeekAsync(3.1);
+        window.Settings.ArchivePath=fixture;await ImportNativeAsync(SceneTemplates.Create("story-patch",new SceneSource("10462","intl","zh-Hans")).Text,fixture);
+        check(viewport.HasCurrentSource&&!previewDirty&&undo.Count==0&&redo.Count==0&&LastStoryImportReport is not null
+            &&previewInput is SceneSnapshot accepted&&File.Exists(accepted.FilePath),
+            "原剧情完成可编辑原生预览后才提交新文档与历史，并保留当前渲染器拥有的输入快照");
+        await SeekAsync(3.1);
         check(document.Clips.OfType<JsonObject>().Any(c=>S(c,"kind")=="voice"),"原剧情对白成为可见语音片段");check(viewport.LastFrame is {Frame:93},"新工作台可定位真实剧情第93帧");
         var full=viewport.LastFrame!;var targets=full.Targets.ToArray();var lips=full.LipSync?.ToArray()??[];
         var dialogue=document.Clips.OfType<JsonObject>().First(c=>S(c,"kind")=="voice"&&N(c,"start")<=3.1&&N(c,"start")+N(c,"duration")>=3.1);

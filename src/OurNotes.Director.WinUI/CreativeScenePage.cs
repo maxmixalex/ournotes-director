@@ -53,7 +53,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         toolbar.Children.Add(title);Grid.SetColumn(title,1);var publish=Ui.Row(8,Button("保存",()=>SaveAsync(),"\uE74E"),Button("导出…",()=>ExportAsync("clip"),"\uE898",true));toolbar.Children.Add(publish);Grid.SetColumn(publish,2);
         foreach(var(key,label)in new[]{("motion","动作"),("expression","表情"),("voice","语音台词")})assetKind.Items.Add(new ComboBoxItem{Content=label,Tag=key});
         assetKind.SelectedIndex=0;var library=BuildProjectLibrary();
-        cancelImport.Click+=(_,_)=>{CancelStoryImport();cancelImport.IsEnabled=false;};notice.ActionButton=cancelImport;
+        cancelImport.Click+=(_,_)=>CancelStoryImport();notice.ActionButton=cancelImport;
         var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar,workspaceKey:"scenes");
         actors.SelectionChanged+=(_,_)=>
         {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);timeline.RevealActor(selectedActor);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
@@ -64,7 +64,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         {
             if(disposed||!viewport.HasCurrentSource)return;if(!scrubber.IsBusy){playhead=frame.Time;timeline.Position=playhead;}timeline.IsPlaying=frame.IsPlaying;
             bool ended=playingLast&&!frame.IsPlaying;playingLast=frame.IsPlaying;
-            if(ended&&timeline.Repeat&&playhead>=timeline.PlaybackLastTime-.04)_=Safe(async()=>{await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);});
+            if(ended&&!importingStory&&timeline.Repeat&&playhead>=timeline.PlaybackLastTime-.04)_=Safe(async()=>{await SeekAsync(timeline.PlaybackStart);viewport.Play(timeline.WorkRange?.End);});
         };
         viewport.TargetLabel=target=>
         {
@@ -99,7 +99,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             args.Data.SetData("OurNotes.SceneAsset",data.ToJsonString());args.Data.RequestedOperation=DataPackageOperation.Copy;
         };
         KeyDown+=(_,args)=>HandleWorkspaceKey(args);
-        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(!viewport.HasCurrentSource)_=Safe(ReloadAsync);else if(viewport.ScenePreviewScale<1||viewport.LastFrame?.ScenePreviewScale<1)_=Safe(()=>SeekAsync(playhead));};
+        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(previewDirty||!viewport.HasCurrentSource)_=Safe(ReloadAsync);else if(viewport.ScenePreviewScale<1||viewport.LastFrame?.ScenePreviewScale<1)_=Safe(()=>SeekAsync(playhead));};
         Unloaded+=(_,_)=>Deactivate();Refresh();
     }
     internal void HandleWorkspaceKey(KeyRoutedEventArgs args)
@@ -159,7 +159,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     }
     async Task EditAsync(Action action,bool reload=true)
     {
-        importCancellation?.Cancel();
+        CancelStoryImport();
         viewport.Pause();string before=document.ToJson();string? previousSelection=selectedClip;
         try{action();document.Validate();}catch{document=CreativeScene.Parse(before);selectedClip=previousSelection;Refresh();throw;}
         if(document.ToJson()==before)return;undo.Push(before);redo.Clear();previewDirty=true;SaveDraft();Refresh();
@@ -190,7 +190,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         foreach(var row in assetRows.Where(row=>row.SearchText.Contains(query,StringComparison.OrdinalIgnoreCase)))
         {var item=new ListViewItem{Tag=row,Content=new TextBlock{Text=row.Title,TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=false},HorizontalContentAlignment=HorizontalAlignment.Stretch};ToolTipService.SetToolTip(item,row.Subtitle);assets.Items.Add(item);}
     }
-    public void Deactivate(){importCancellation?.Cancel();scrubber.Cancel();viewport.Pause();SaveDraft();}
+    public void Deactivate(){CancelStoryImport();scrubber.Cancel();viewport.Pause();SaveDraft();}
     public void SaveDraft()
     {
         if(disposed||!HasUnsavedChanges)return;
@@ -198,7 +198,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         catch(Exception error)when(error is IOException or UnauthorizedAccessException){ShowError("草稿未保存："+error.Message);}
     }
     public async ValueTask DisposeAsync()
-    {if(disposed)return;importCancellation?.Cancel();scrubber.Cancel();SaveDraft();disposed=true;assetRequest?.Cancel();loadVersion++;
+    {if(disposed)return;CancelStoryImport();scrubber.Cancel();SaveDraft();disposed=true;assetRequest?.Cancel();loadVersion++;
         // The import owns its snapshot until the dedicated native worker exits.
         // Its caller observes any analysis error; shutdown must still release the viewport.
         if(importAnalysis is {} analysis)try{await analysis;}catch(Exception){ }

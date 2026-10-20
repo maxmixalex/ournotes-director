@@ -112,16 +112,38 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
 
     static SolidColorBrush Brush(byte r,byte g,byte b)=>new(Color.FromArgb(255,r,g,b));
 
-    public async Task LoadSceneAsync(ScenePreviewSource source)
+    public Task LoadSceneAsync(ScenePreviewSource source)=>LoadSceneAsync(source,null,CancellationToken.None);
+
+    // The accept callback runs on the caller's XAML continuation only after the
+    // candidate's native frame has actually been presented. Until it accepts,
+    // the monitor cannot expose the candidate as the editor's current source.
+    internal async Task LoadSceneAsync(ScenePreviewSource source,Action? acceptSource,CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         RecordPreviewOperation("load.begin", width: source.Width, height: source.Height, supersample: source.Supersample);
         long version=BeginLoad("正在载入场景…");
         try
         {
-            await session.LoadSceneAsync(source with{GpuPresentation=true});PreviewSupersample=source.Supersample;await AwaitPresentationAsync();
-            if(version==sourceVersion)ConfigureAudio(source);
-            if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
+            // Native initialization owns the input until it exits. Cancellation
+            // rejects its result, without disposing an input still in use.
+            await session.LoadSceneAsync(source with{GpuPresentation=true});PreviewSupersample=source.Supersample;
+            cancellationToken.ThrowIfCancellationRequested();
+            if(version!=sourceVersion)
+            {if(acceptSource is not null)throw new OperationCanceledException();return;}
+            await AwaitPresentationAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if(version!=sourceVersion)
+            {if(acceptSource is not null)throw new OperationCanceledException();return;}
+            acceptSource?.Invoke();
+            ConfigureAudio(source);HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();
             RecordPreviewOperation("load.end");
+        }
+        catch(OperationCanceledException)
+        {
+            // New/Open may already own a different source generation, including
+            // an empty canvas. A rejected candidate must not invalidate that.
+            if(version==sourceVersion)InvalidateSource();
+            throw;
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
     }
