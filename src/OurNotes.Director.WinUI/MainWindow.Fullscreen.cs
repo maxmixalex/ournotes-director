@@ -62,15 +62,6 @@ public sealed partial class MainWindow
         Grid.SetRow(content, 0); Grid.SetRowSpan(content, root.RowDefinitions.Count);
         AppWindow.Changed += OnFullscreenPresenterChanged;
         AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
-        // A paused GPU-backed monitor may not receive a new frame after the window
-        // changes size. Recalculate the native swap-chain presentation on the next
-        // layout turn, without advancing or reloading the scene.
-        DispatcherQueue.TryEnqueue(async () =>
-        {
-            if (!IsMonitorFullscreen || !ReferenceEquals(fullscreenLayout, layout)) return;
-            foreach (var viewport in Descendants<NativeViewport>(layout.ProgramMonitorPanel))
-                await viewport.RefreshPresentationLayoutAsync();
-        });
         layout.ProgramMonitorPanel.FocusContent();
     }
 
@@ -97,11 +88,6 @@ public sealed partial class MainWindow
         fullscreenHidden.Clear(); priorMaximizedPanel = null;
         var presenter = priorPresenter; priorPresenter = null;
         if (presenter is not null && !ReferenceEquals(AppWindow.Presenter, presenter)) AppWindow.SetPresenter(presenter);
-        DispatcherQueue.TryEnqueue(async () =>
-        {
-            foreach (var viewport in Descendants<NativeViewport>(layout.ProgramMonitorPanel))
-                await viewport.RefreshPresentationLayoutAsync();
-        });
         layout.FocusActivePanel();
     }
 }

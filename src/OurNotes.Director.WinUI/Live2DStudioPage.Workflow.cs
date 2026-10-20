@@ -92,7 +92,7 @@ internal sealed partial class Live2DStudioPage
         await SetDocumentAsync(next);
         if (version != openVersion || !ReferenceEquals(document, next)) return;
         handoffSource = original;
-        Notice("已带入这个人物的完整演出；当前姿态、历史动作和所选区间均已保留。", false);
+        Notice("已打开角色的动作与表情；原场景保留不变。", false);
     }
     internal Task OpenAsync(string? path = null)
     {
@@ -209,11 +209,12 @@ internal sealed partial class Live2DStudioPage
             if (version != loadVersion || disposed || document is null) return;
             var current = document; long edited = editVersion; double time = current.Time;
             if (!Directory.Exists(window.Settings.ArchivePath)) { Notice("请先选择项目使用的素材库。", false); return; }
-            var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"), selectedMotionOnly: true);
+            var compiled = current.ToWorkbenchSceneDocument();
+            var input = compiled.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
             var source = PreviewSource(input, current); var transform = current.Transform;
             string key = current.ModelId + "\n" + current.Site + "\n" + current.Width + "x" + current.Height + "\n"
                 + current.Canvas + "\n"
-                + current.ToSceneDocument().Root["source"]?.ToJsonString() + "\n" + window.Settings.ArchivePath;
+                + compiled.Root["source"]?.ToJsonString() + "\n" + window.Settings.ArchivePath;
             try
             {
                 await viewport.PauseForEditingAsync();
@@ -267,7 +268,7 @@ internal sealed partial class Live2DStudioPage
             // by a later seek/play, so a slider never rebuilds the model or advances time.
             // Freeze both rows and their matching project before yielding: another
             // pointer event may author the next value while native rendering awaits.
-            var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
+            var input = current.CreateWorkbenchSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-preview"));
             var source = PreviewSource(input, current);
             try
             {

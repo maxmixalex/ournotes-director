@@ -74,35 +74,22 @@ public sealed partial class NativeViewport
         lastGpuRect = rect; scaledGpu = attachedGpu;
     }
 
-    // Full-screen presenter changes can resize the XAML surface without producing a
-    // new native frame (the monitor may be paused). Force the attached swap chain to
-    // recompute its display dimensions instead of waiting for playback to refresh it.
-    internal async Task RefreshPresentationLayoutAsync()
-    {
-        scaledGpu = null;
-        LayoutCanvas();
-        // Resizing a paused SwapChainPanel must also redraw the current native pose:
-        // otherwise the compositor can stretch the old, pre-fullscreen viewport into
-        // only a corner of the newly-sized panel. Seek the same timestamp, not a new
-        // frame, and wait until that exact picture has been presented.
-        if (IsPlaying || !HasCurrentSource || LastFrame is not { } frame) return;
-        try
-        {
-            await session.SeekAsync(frame.Time);
-            await AwaitPresentationAsync();
-            scaledGpu = null;
-            LayoutCanvas();
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception error) { if (!disposed) PresentFailure(error); }
-    }
     internal void RunGpuCompositionSmoke(Action<bool, string> check)
     {
         using var test = GpuPreviewSurface.CreateCompositionTest(64, 64);
         check(!string.IsNullOrWhiteSpace(test.AdapterName) && test.AdapterName != "未取得 D3D11 设备名称",
             "呈现设备名称由真实 D3D11 设备返回，不把请求的显卡名称当作当前设备");
         uint rgba = test.ReadCompositionTestPixel();
+        uint beforeResize = test.ReadCompositionTestPresentCount();
         test.SetDisplaySize(128, 96);
+        uint afterResize = test.ReadCompositionTestPresentCount();
+        test.SetDisplaySize(256, 192);
+        uint afterEnlarge = test.ReadCompositionTestPresentCount();
+        test.SetDisplaySize(64, 64);
+        check(afterResize > beforeResize && afterEnlarge > afterResize
+            && test.ReadCompositionTestPresentCount() > afterEnlarge
+            && test.ReadCompositionTestPixel() == rgba,
+            "独立 WARP 检查：暂停缩放每次真正 Present 并保留像素，不依赖重新定位或播放新帧");
         check((rgba >> 24) == 255 && ((rgba >> 8) & 255) is >= 127 and <= 128 && ((rgba >> 16) & 255) is >= 191 and <= 192,
             "独立 WARP 检查：D3D11 交换链生成真实像素，不冒充硬件互操作验证");
         nint borrowed = test.AcquireSwapChain();

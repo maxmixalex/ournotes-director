@@ -10,23 +10,18 @@ public sealed partial class Live2DDocument
     public SceneDocument ToSceneDocument(bool selectedMotionOnly = false)
     {
         Validate();
-        var project = root["performance"]?.DeepClone() as JsonObject ?? Standalone();
+        bool singleSelection = selectedMotionOnly && HasExactSelectionSchedule;
+        var project = singleSelection ? SelectedPerformance()
+            : root["performance"]?.DeepClone() as JsonObject ?? Standalone();
         var output = ActorIsolation.Output(project["output"] as JsonObject, ActorId, Width, Height);
         output["isolateTransform"] = root["transform"]!.DeepClone();
         if (root["output"]?["isolateCanvas"] is { } canvas) output["isolateCanvas"] = canvas.DeepClone();
         else output.Remove("isolateCanvas");
         project["output"] = output;
         if (OwnRows().Any()) EnsureEditablePerformance();
-        // The independent Live2D workbench has one selected motion/expression,
-        // never a second copy of the source scene's time-varying action tracks.
-        // Preserve the rest of the original performance and its exact timing.
         var sourceRows = project["commands"]!.AsArray().OfType<JsonObject>();
-        bool hasNativeSchedule = root["performance"]?["commands"] is JsonArray sourceCommands
-            && sourceCommands.OfType<JsonObject>().All(row => row["AtFrame"] is not null);
-        if (selectedMotionOnly && hasNativeSchedule)
-            sourceRows = sourceRows.Where(row => !(Text(row, "TargetName") == ActorId
-                && Text(row, "cmd") is "Motion" or "Expression" or "In"));
-        project["commands"] = new JsonArray(sourceRows.Concat(OwnRows()).OrderBy(Frame)
+        var edits = singleSelection ? SelectedEditRows() : OwnRows();
+        project["commands"] = new JsonArray(sourceRows.Concat(edits).OrderBy(Frame)
             .Select(row => (JsonNode)row.DeepClone()).ToArray());
         // Extend a scheduled source only when the user extended the document. Existing
         // later commands stay intact when the export range is shorter than the source.

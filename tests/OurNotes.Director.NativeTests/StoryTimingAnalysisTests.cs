@@ -64,6 +64,21 @@ static class StoryTimingAnalysisTests
                     "Real original story preserves every native command start/end/ordinal and its final frame " + (parallel ? "with prefetch" : "in sequential analysis"));
             }
             report["endFrame"] = reference!.EndFrame; report["commands"] = reference.Commands.Count;
+            // Serial and prefetched analyses both use timingOnly. Compare against
+            // the real rendering path as well, so a shared shortcut cannot make
+            // those two agree on a wrong command schedule.
+            var fullWatch = Stopwatch.StartNew();
+            using (var full = new AdvStoryRenderer(archive, "intl", core, "10462", "zh-Hans",
+                960, 540, path, ffmpeg, 1, project, false, new AdvCueCache()))
+            {
+                var fullTiming = full.AnalyzeTiming(hash);
+                Check(fullTiming.IsComplete && fullTiming.ProjectHash == reference!.ProjectHash
+                    && fullTiming.EndFrame == reference.EndFrame && fullTiming.Duration == reference.Duration
+                    && fullTiming.Commands.SequenceEqual(reference.Commands),
+                    "Timing-only visual-resource shortcuts preserve the full renderer's native command schedule");
+                report["fullRendererReference"] = new JsonObject { ["ms"] = fullWatch.Elapsed.TotalMilliseconds,
+                    ["endFrame"] = fullTiming.EndFrame, ["commands"] = fullTiming.Commands.Count };
+            }
             var manifest = archive.Manifest("intl", "stories", "10462");
             var definition = JsonNode.Parse(archive.Logical("intl", manifest, "story.json"))!;
             var episode = JsonNode.Parse(archive.Logical("intl", manifest, Archive.S(definition, "episode")))!;

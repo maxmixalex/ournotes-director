@@ -73,7 +73,7 @@ internal sealed partial class Live2DStudioPage
                 throw new InvalidOperationException("请先完成模型拖动，再计算完整动作画布。");
             long edited = editVersion;
             actorCanvasStatus.Text = "正在计算完整动作范围…";
-            using var input = current.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-canvas"));
+            using var input = current.CreateWorkbenchSnapshot(Path.Combine(DesktopSettings.DataDirectory, "live2d-canvas"));
             var full = TimelineRange.Full(current.Duration, 30);
             var progress = new Progress<ActorCanvasProgress>(value =>
             {

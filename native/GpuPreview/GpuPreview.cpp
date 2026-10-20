@@ -167,7 +167,7 @@ HRESULT CreateSurface(UINT width, UINT height, UINT preference, Surface** result
 }
 }
 #define API extern "C" __declspec(dllexport)
-API unsigned __cdecl OurNotesGpuAbi() noexcept { return 2; }
+API unsigned __cdecl OurNotesGpuAbi() noexcept { return 3; }
 API HRESULT __cdecl OurNotesGpuCreate(UINT width, UINT height, Surface** result) noexcept {
     return CreateSurface(width, height, 0, result);
 }
@@ -204,6 +204,22 @@ API HRESULT __cdecl OurNotesGpuScaleSwapChain(IDXGISwapChain* swap, float x, flo
     HRESULT hr = swap->QueryInterface(IID_PPV_ARGS(&composition)); if (FAILED(hr)) return hr;
     DXGI_MATRIX_3X2_F matrix{}; matrix._11 = x; matrix._22 = y;
     return composition->SetMatrixTransform(&matrix);
+}
+// The managed surface gate serializes this call with render-thread presentation
+// and destruction. Only D3D is touched here; WGL ownership remains on its thread.
+API HRESULT __cdecl OurNotesGpuSetDisplaySize(Surface* s, float x, float y) noexcept {
+    if (!s || !s->swap || !s->shared || !s->back) return E_INVALIDARG;
+    HRESULT hr = OurNotesGpuScaleSwapChain(s->swap.Get(), x, y);
+    if (FAILED(hr)) return hr;
+    // SetMatrixTransform is latched by the NEXT Present. Re-copy the retained
+    // texture because flip-sequential Present rotates buffers; presenting an old
+    // back buffer without copying it may show blank/stale content while paused.
+    s->context->CopyResource(s->back.Get(), s->shared.Get());
+    return s->swap->Present(0, 0);
+}
+API HRESULT __cdecl OurNotesGpuTestPresentCount(Surface* s, UINT* count) noexcept {
+    if (!s || !s->testOnly || !s->IsOwner() || !count) return E_INVALIDARG;
+    return s->swap->GetLastPresentCount(count);
 }
 API HRESULT __cdecl OurNotesGpuAttachPanel(IUnknown* panel, IDXGISwapChain* swap) noexcept {
     if (!panel) return E_POINTER;

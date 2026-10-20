@@ -16,6 +16,7 @@ public static class Live2DDocumentTests
 
     public static void Run(Action<bool, string> check)
     {
+        Live2DSelectionTests.Run(check);
         void Reject(Action action, string label)
         {
             bool failed = false;
@@ -112,7 +113,7 @@ public static class Live2DDocumentTests
             var changed = captured.ToSceneDocument().Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
             check(changed.Count(row => row["cmd"]?.ToString() == "Motion") == 2
                 && changed.Count(row => row["cmd"]?.ToString() == "Expression") == 1
-                && captured.Motion == "idle" && captured.Expression == "smile" && captured.Time == 0,
+                && captured.Motion == "idle" && captured.Expression == "smile" && captured.Time == 2.5,
                 "Replacing a Live2D motion keeps the original source untouched but changes the independent selection globally");
             check(source.Root["commands"]!.AsArray().Count == 4 && source.Root["output"]?["isolateActor"] is null,
                 "Working on a captured model never mutates its source scene");

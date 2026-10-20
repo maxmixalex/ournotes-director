@@ -142,8 +142,7 @@ public sealed partial class Live2DDocument
             string? selectedExpression = document.Expression;
             if (selectedMotion is { Length: > 0 }) document.SetMotion(selectedMotion);
             if (selectedExpression is { Length: > 0 }) document.SetExpression(selectedExpression);
-            // Selection is singular, but opening a scene actor retains its cursor;
-            // only an explicit action change restarts the independent preview.
+            // Opening a scene actor preserves its cursor and marked interval.
             document.Time = playhead;
         }
         document.undo.Clear(); document.redo.Clear();
@@ -320,9 +319,12 @@ public sealed partial class Live2DDocument
         ? new[] { "initialize", "commands", "finalize" }.SelectMany(section => performance[section]?.AsArray().OfType<JsonObject>() ?? []) : [];
     bool Controller(string key)
     {
-        bool value = true, director = !IsCapturedPerformance;
+        bool value = true, director = HasExactSelectionSchedule;
         bool? nativeLoop = null;
-        foreach (var row in ActiveRows().Where(row => Text(row, "cmd") == "Director.Actor"))
+        // The single-model projection starts with director controls, not the
+        // source scene's stage/animation controller history.
+        var rows = director ? OwnRows().Where(row => Frame(row) <= FrameAt(Time)).OrderBy(Frame) : ActiveRows();
+        foreach (var row in rows.Where(row => Text(row, "cmd") == "Director.Actor"))
         {
             if (row["Values"]?["animation"] is JsonValue mode) director = mode.ToString() == "director";
             if ((row["Values"]?["controls"]?[key] ?? row["Values"]?[key]) is JsonValue flag && flag.TryGetValue<bool>(out bool parsed)) value = parsed;
@@ -333,11 +335,16 @@ public sealed partial class Live2DDocument
     }
     string? CurrentAnimation(string command, string field, string defaultField)
     {
+        // Independent selections are properties, not keyframes. Old saved projects
+        // may still contain multiple rows: the latest authored choice wins even
+        // when the user moves the transport back before that row's old timestamp.
+        var own = OwnRows().LastOrDefault(row => Text(row, "cmd") == command);
+        if (own is not null) return Text(own, field, Text(root["metadata"], defaultField));
+        if (command == "Expression" && OwnRows().LastOrDefault(row => Text(row, "cmd") == "Motion")
+            is { } motion && motion["ExpressionName"] is JsonValue embedded)
+            return embedded.GetValue<string>();
         string? result = root["metadata"]?[defaultField]?.GetValue<string>();
-        bool ownsChoice = OwnRows().Any(row => Text(row, "cmd") == command
-            || command == "Expression" && Text(row, "cmd") == "Motion");
-        var rows = ownsChoice ? OwnRows().Where(row => Frame(row) <= FrameAt(Time)).OrderBy(Frame) : ActiveRows();
-        foreach (var row in rows)
+        foreach (var row in ActiveRows())
         {
             string kind = Text(row, "cmd");
             if ((kind == command || kind == "In" || command == "Expression" && kind == "Motion")
@@ -349,25 +356,26 @@ public sealed partial class Live2DDocument
     {
         EnsureEditablePerformance();
         if (command is not ("Motion" or "Expression")) throw new ArgumentOutOfRangeException(nameof(command));
+        string defaultField = command == "Motion" ? "defaultMotion" : "defaultExpression";
+        value = string.IsNullOrWhiteSpace(value) ? root["metadata"]?[defaultField]?.GetValue<string>() : value;
         if (!string.IsNullOrWhiteSpace(value)
             && root["metadata"]?[choices] is JsonArray available
             && !available.Any(item => (item is JsonObject ? Text(item, "id") : item?.GetValue<string>()) == value))
             throw new ArgumentException("模型不包含所选" + (command == "Motion" ? "动作：" : "表情：") + value);
 
-        // This workbench deliberately edits one motion and one expression, not a
-        // second timeline. A selection replaces the previous choice at frame zero;
-        // complex, time-varying performances belong in the Scene workbench.
-        string? other = command == "Motion" ? Expression : Motion;
-        var row = string.IsNullOrWhiteSpace(value) ? null
-            : new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId, [field] = value,
-                ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
-        if (row is not null && command == "Motion" && other is { Length: > 0 })
-            row["ExpressionName"] = other;
+        var row = new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId,
+            [field] = value ?? "", ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
+        if (command == "Motion") row["ExpressionName"] = Expression ?? "";
         Change(next =>
         {
             RemoveEdits(next, previous => Text(previous, "cmd") == command);
-            next["time"] = 0;
-            if (row is not null) next["edits"]!.AsArray().Add(row.DeepClone());
+            // A global choice must not move the cursor or move parameter edits to
+            // frame zero. Explicit transport controls own seeking/restarting.
+            if (command == "Expression")
+                foreach (var motion in next["edits"]!.AsArray().OfType<JsonObject>()
+                    .Where(previous => Text(previous, "cmd") == "Motion"))
+                    motion["ExpressionName"] = value ?? "";
+            next["edits"]!.AsArray().Add(row.DeepClone());
         });
     }
     void SetEdit(JsonObject row)

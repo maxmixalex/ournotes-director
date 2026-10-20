@@ -34,7 +34,7 @@ internal sealed partial class Live2DStudioPage
         check(viewport.LastFrame is { } frame && frame.Frame == (int)Math.Round(time * 30)
             && frame.Targets.Count == 1 && frame.Targets[0].Id == actor
             && current.ToSceneDocument().Root["output"]?["isolateActor"]?.ToString() == actor,
-            "独立 Live2D 原生预览在原帧只绘制被选人物，没有重建或改写原演出");
+            "独立 Live2D 原生预览在所选时间只绘制一个人物，原场景副本保持不变");
     }
 
     // Only invoked by the packaged Windows --smoke-test workflow. Every edit is
@@ -106,6 +106,7 @@ internal sealed partial class Live2DStudioPage
         SelectInspector("parameters"); UpdateLayout();
         controls = await BringParameterIntoViewSmokeAsync(parameter.Id); controls.Number.Value = finalValue;
         await FlushEditsAsync();
+        await RunSelectionConsistencySmokeAsync(check);
         await App.CaptureCheckpointAsync("live2d-parameters");
 
         // A small real output canvas makes the preview and exported pixel buffers
@@ -211,7 +212,7 @@ internal sealed partial class Live2DStudioPage
         check(candidates.Length > 0 && list.IsLoaded && list.ActualHeight > 0,
             expressions ? "真实表情标签列出模型自带表情" : "真实动作标签列出模型自带动作");
         string? preferred = document!.Metadata[expressions ? "defaultExpression" : "defaultMotion"]?.ToString();
-        var chosen = candidates.FirstOrDefault(item => item.Tag?.ToString() == preferred) ?? candidates[0];
+        var chosen = candidates.FirstOrDefault(item => item.Tag?.ToString() != preferred) ?? candidates[0];
         list.SelectedItem = null; list.SelectedItem = chosen;
         await FlushEditsAsync();
         string? id = chosen.Tag?.ToString();

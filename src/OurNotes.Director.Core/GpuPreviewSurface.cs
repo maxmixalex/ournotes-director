@@ -7,7 +7,7 @@ namespace OurNotes.Director.Core;
 public sealed partial class GpuPreviewSurface : IDisposable
 {
     const string Library = "OurNotes.GpuPreview.dll";
-    const uint AbiVersion = 2;
+    const uint AbiVersion = 3;
     readonly object gate = new();
     readonly int owner = Environment.CurrentManagedThreadId;
     nint handle;
@@ -46,9 +46,16 @@ public sealed partial class GpuPreviewSurface : IDisposable
     public static void ReleaseSwapChain(nint swapChain) { if (swapChain != 0) OurNotesGpuReleaseSwapChain(swapChain); }
     public void SetDisplaySize(double width, double height)
     {
-        nint swap = AcquireSwapChain(); if (swap == 0) return;
-        try { Marshal.ThrowExceptionForHR(OurNotesGpuScaleSwapChain(swap, (float)(width / Width), (float)(height / Height))); }
-        finally { ReleaseSwapChain(swap); }
+        if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(width));
+        // Serialize D3D-only re-presentation with native drawing and destruction.
+        // The native entry point makes no WGL calls and does not evaluate animation.
+        lock (gate)
+        {
+            if (handle == 0) return;
+            Marshal.ThrowExceptionForHR(OurNotesGpuSetDisplaySize(handle,
+                (float)(width / Width), (float)(height / Height)));
+        }
     }
     public static int AttachPanel(nint panel, nint swapChain) => OurNotesGpuAttachPanel(panel, swapChain);
     public void Dispose()
@@ -64,6 +71,8 @@ public sealed partial class GpuPreviewSurface : IDisposable
         Marshal.ThrowExceptionForHR(OurNotesGpuCreateTest((uint)width, (uint)height, out nint native));
         return new(native, width, height);
     }
+    public uint ReadCompositionTestPresentCount()
+    { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPresentCount(handle, out uint count)); return count; }
     public uint ReadCompositionTestPixel()
     { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPixel(handle, out uint pixel)); return pixel; }
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern uint OurNotesGpuAbi();
@@ -71,8 +80,9 @@ public sealed partial class GpuPreviewSurface : IDisposable
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuDestroy(nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern nint OurNotesGpuAcquireSwapChain(nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuReleaseSwapChain(nint swapChain);
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuScaleSwapChain(nint swapChain, float x, float y);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuSetDisplaySize(nint surface, float x, float y);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuAttachPanel(nint panel, nint swapChain);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuCreateTest(uint width, uint height, out nint surface);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPresentCount(nint surface, out uint count);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPixel(nint surface, out uint rgba);
 }
