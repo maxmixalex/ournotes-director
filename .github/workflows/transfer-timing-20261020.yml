@@ -1,0 +1,58 @@
+name: Verify timing resource split
+on:
+  push:
+    branches: [feat/windows-creative-editor]
+    paths: ['scripts/transfer-timing-20261020.patch', '.github/workflows/transfer-timing-20261020.yml']
+permissions:
+  contents: write
+concurrency:
+  group: editor-timing-resource-transfer-20261020
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'maxmixalex/ournotes-director' && github.ref == 'refs/heads/feat/windows-creative-editor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Verify and apply the exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = 'e2d547cd769496fac67581a6389b0de117ebb5e2'
+          test "$(git ls-remote origin refs/heads/feat/windows-creative-editor | cut -f1)" = "$GITHUB_SHA"
+          echo '14a31fdbd83a274110d05e25b36e2e2ffb87b5b48322bf1342210be680a9a43e  scripts/transfer-timing-20261020.patch' | sha256sum -c -
+          git apply --check --index scripts/transfer-timing-20261020.patch
+          git apply --index scripts/transfer-timing-20261020.patch
+          git diff --cached --check
+          git rm scripts/transfer-timing-20261020.patch
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build and check before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/timing-transfer-checks
+          dotnet build OurNotes.Director.sln -c Release --nologo 2>&1 | tee artifacts/timing-transfer-checks/build.log
+          dotnet run --project tests/OurNotes.Director.Tests -c Release --no-build --no-restore 2>&1 | tee artifacts/timing-transfer-checks/core.log
+          dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release --no-build --no-restore 2>&1 | tee artifacts/timing-transfer-checks/desktop.log
+      - name: Publish tested source with a branch lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/feat/windows-creative-editor | cut -f1)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Avoid model drawing allocation during exact native story timing'
+          git push origin HEAD:refs/heads/feat/windows-creative-editor
+          git rev-parse HEAD | tee artifacts/timing-transfer-checks/applied-commit.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: timing-resource-managed-checks
+          path: artifacts/timing-transfer-checks/*
+          if-no-files-found: warn
+          retention-days: 14

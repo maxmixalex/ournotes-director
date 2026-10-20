@@ -1,0 +1,224 @@
+diff --git a/docs/editor-recovery-2026-10-20.md b/docs/editor-recovery-2026-10-20.md
+index 710890f..628dd5a 100644
+--- a/docs/editor-recovery-2026-10-20.md
++++ b/docs/editor-recovery-2026-10-20.md
+@@ -29,3 +29,11 @@ WARP 检查同时读取真实 Present 计数和保留像素，要求暂停缩放
+ 剧情分析增加完整渲染器与 timingOnly 的逐指令时序对照，避免串行与并行两条 timingOnly 路径共同出错却互相通过。既有耗时对照与取消检查不改门槛。原剧情完整导入耗时仍以新的 story-import.json 为准，不能把单阶段或历史测量当作本版总加载提速。
+ 
+ 本记录写入时仅完成代码审查和 git diff --check；构建、原生与 Windows 实窗结果以该次实际 CI 为准。
++
++## 时序解析的模型资源拆分
++
++继续定位到 timingOnly 仍然解码、上传完整模型贴图并建立 GameActorDrawing 和遮罩资源。现在保留 Cubism 模型、原动画元数据、四步热身与原生指令处理，只跳过不用于时间求值的模型绘图资源。Stage 的截图等待仍在同一原生帧阶段注册 YieldUpdate 并完成，不能直接省去这一个等待。普通预览、导出和动作画布分析仍走完整绘制路径。
++
++新增真实模型资源检查及两次连续 Stage 淡化的逐指令对照，同时执行 RimLight 和 In/Out。完整渲染器执行实际截图，timingOnly 不分配模型绘图；要求双方的所有命令起止帧、ordinal、结束帧和时长完全一致。比较结果并入 story-analysis/report.json。
++
++仅角色导出回归的完整指令相等断言改为和工作台统一编译结果比较，不再和用于恢复原场景的副本比较；全帧边界、透明边缘、像素一致和撤销断言保留。
+diff --git a/src/OurNotes.Director.Core/Actor.Game.cs b/src/OurNotes.Director.Core/Actor.Game.cs
+index 31a6f95..19830b9 100644
+--- a/src/OurNotes.Director.Core/Actor.Game.cs
++++ b/src/OurNotes.Director.Core/Actor.Game.cs
+@@ -20,8 +20,11 @@ public sealed unsafe partial class Actor
+     public float ParameterValue(string id)=>ids.TryGetValue(id,out int index)?Values[index]:throw new ArgumentException("Unknown model parameter: "+id);
+     readonly JsonNode gameModel,gamePrefab;
+     GameActorDrawing? gameDrawing;
++    bool timingAnimation;
++    internal bool HasGameDrawingResources => gameDrawing is not null || textures.Length > 0;
++    internal void EnableGameTiming() { timingAnimation = true; InitializeGameAnimation(); }
+     public ActorDrawingWork DrawingWork=>gameDrawing?.DrawingWork??new(0,0,0);
+-    public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl){gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();}
++    public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl){timingAnimation=false;gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();}
+     bool HasEditorOverlay=>EditorOffsetX!=0||EditorOffsetY!=0||EditorScale!=1;
+     float[] OverlayProjection(float[] projection)
+     {
+@@ -40,7 +43,7 @@ public sealed unsafe partial class Actor
+     public void DrawGame(IReadOnlyDictionary<string,float[]> globals)=>(gameDrawing??throw new InvalidOperationException("Game materials not initialized")).Draw(OverlayGlobals(globals),renderOpacity*Spec.Opacity);
+     internal void DrawGameIsolated(IReadOnlyDictionary<string,float[]> globals)=>(gameDrawing??throw new InvalidOperationException("Game materials not initialized")).Draw(globals,renderOpacity*Spec.Opacity);
+     public IReadOnlyList<AdvRenderItem> GameDrawItems(IReadOnlyDictionary<string,float[]> globals,int baseOrder)=>(gameDrawing??throw new InvalidOperationException("Game materials not initialized")).Items(OverlayGlobals(globals),renderOpacity*Spec.Opacity,baseOrder);
+-    public void ToggleRim(float[] color,float shadow){if(gameDrawing is null)throw new InvalidOperationException("Game materials not initialized");gameDrawing.RimEnabled=!gameDrawing.RimEnabled;gameDrawing.RimColor=color;gameDrawing.ShadowIntensity=Math.Clamp(shadow,0,1);}
++    public void ToggleRim(float[] color,float shadow){if(timingAnimation)return;if(gameDrawing is null)throw new InvalidOperationException("Game materials not initialized");gameDrawing.RimEnabled=!gameDrawing.RimEnabled;gameDrawing.RimColor=color;gameDrawing.ShadowIntensity=Math.Clamp(shadow,0,1);}
+     public bool GameLighting{get=>gameDrawing?.LightingEnabled??false;set{if(gameDrawing is not null)gameDrawing.LightingEnabled=value;}}
+     public void SetDirectorTint(float[] tint,float brightness){if(gameDrawing is null)throw new InvalidOperationException("Game drawing not initialized");gameDrawing.DirectorTint=tint;gameDrawing.DirectorBrightness=brightness;}
+     public PreviewTarget? PreviewBounds(float[] viewProjection)=>Spec.Opacity<=0||renderOpacity<=0?null:gameDrawing?.PreviewBounds(Spec.Name,Spec.Name,OverlayProjection(viewProjection));
+diff --git a/src/OurNotes.Director.Core/AdvScene.cs b/src/OurNotes.Director.Core/AdvScene.cs
+index 9e55755..65674fb 100644
+--- a/src/OurNotes.Director.Core/AdvScene.cs
++++ b/src/OurNotes.Director.Core/AdvScene.cs
+@@ -72,8 +72,10 @@ public sealed partial class AdvScene : IDisposable
+             var address="Character/Live2D/"+row.Text("TargetAssetName");
+             string id=row.Text("Model") is {Length:>0} explicitModel?explicitModel:definition["models"]?[address]?.GetValue<string>()??throw new InvalidDataException("Model address absent from story: "+address);
+             bool customSeed=row.Data["Seed"] is not null;
+-            var actor=new Actor(archive,site,dll,new(){Name=key.Item1,Model=id},gl,customSeed?uint.Parse(row.Text("Seed"),CultureInfo.InvariantCulture):722,customSeed?null:shakeRandom);
+-            actor.EnableGameDrawing(archive,site,gl);
++            var actor=new Actor(archive,site,dll,new(){Name=key.Item1,Model=id},TimingOnly?null:gl,customSeed?uint.Parse(row.Text("Seed"),CultureInfo.InvariantCulture):722,customSeed?null:shakeRandom);
++            // Timing uses the same native model, motion metadata and four warmup
++            // steps, but does not decode textures or allocate drawing/mask meshes.
++            if(TimingOnly)actor.EnableGameTiming();else actor.EnableGameDrawing(archive,site,gl);
+             var ch=actor.Prefab.Find("Live2DCharacter").Component;
+             actor.Prefab.Root.Position=AdvPrefab.Vector(ch["BasePosition"]);actor.Prefab.Root.Scale=new(Actor.N(ch["BaseScale"],1));actor.Prefab.Root.Rotation=Quaternion.Identity;
+             actors.Add(key,actor);
+@@ -229,7 +231,17 @@ public sealed partial class AdvScene : IDisposable
+         yield return Tween(key,()=>from,to,seconds,AdvEase.OutQuad,v=>slotAlpha[i]=v);if(fadeSerial[i]==serial)slotAlpha[i]=to;
+     }
+     readonly int[] fadeSerial=new int[5];
+-    public void AdvanceRenderState(){post.AdvanceCamera(Camera,loop.Frame);if(pendingCapture is not null)Draw();}
++    public void AdvanceRenderState()
++    {
++        post.AdvanceCamera(Camera,loop.Frame);
++        if(pendingCapture is null)return;
++        if(!TimingOnly){Draw();return;}
++        // A native Stage fade waits for capture, then the next Update. Timing
++        // needs that exact wait boundary, not the captured GPU pixels. Resolve
++        // the same waiter at the same phase without drawing invisible models.
++        var wait=pendingCapture;pendingCapture=null;
++        loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));
++    }
+     public Action? DrawForeground{get;set;}
+     public Func<AdvRenderItem?>? ForegroundItem{get;set;}
+     public void Draw()
+diff --git a/src/OurNotes.Director.WinUI/Live2DStudioPage.Canvas.Smoke.cs b/src/OurNotes.Director.WinUI/Live2DStudioPage.Canvas.Smoke.cs
+index a3b405c..1f1ed2a 100644
+--- a/src/OurNotes.Director.WinUI/Live2DStudioPage.Canvas.Smoke.cs
++++ b/src/OurNotes.Director.WinUI/Live2DStudioPage.Canvas.Smoke.cs
+@@ -31,7 +31,7 @@ internal sealed partial class Live2DStudioPage
+         await FlushEditsAsync(); await SeekAsync(0);
+         SelectInspector("controls"); UpdateLayout();
+         var transform = current.Transform;
+-        var commands = current.ToSceneDocument().Root["commands"]!.DeepClone();
++        var commands = current.ToWorkbenchSceneDocument().Root["commands"]!.DeepClone();
+         actorCanvasMultiplier.Value = 1.15;
+         fitActorCanvasButton!.StartBringIntoView();
+         Task previous = actorCanvasTask;
+@@ -45,7 +45,7 @@ internal sealed partial class Live2DStudioPage
+             && canvas.ReferenceWidth == 320 && canvas.ReferenceHeight == 480
+             && widthBox.Value == current.Width && heightBox.Value == current.Height,
+             "侧栏按 1.15 倍设置完整动作画布，同时更新宽高并保存原始参考坐标");
+-        check(current.Transform == transform && JsonNode.DeepEquals(commands, current.ToSceneDocument().Root["commands"]),
++        check(current.Transform == transform && JsonNode.DeepEquals(commands, current.ToWorkbenchSceneDocument().Root["commands"]),
+             "调整画布保留原始人物变换和包含前后不同姿态的完整动作历史");
+         var full = TimelineRange.Full(current.Duration, 30);
+         bool contained = true;
+@@ -75,7 +75,7 @@ internal sealed partial class Live2DStudioPage
+         {
+             ["framesAnalyzed"] = full.FrameCount, ["referenceWidth"] = 320, ["referenceHeight"] = 480,
+             ["sidebarMultiplier"] = 1.15, ["exportMultiplier"] = 1.25,
+-            ["sidebarOutput"] = current.ToSceneDocument().Root["output"]!.DeepClone(), ["exports"] = new JsonArray()
++            ["sidebarOutput"] = current.ToWorkbenchSceneDocument().Root["output"]!.DeepClone(), ["exports"] = new JsonArray()
+         };
+         string id = Guid.NewGuid().ToString("N");
+         string picture = App.SmokeEvidencePath("live2d-actor-canvas-" + id + ".png");
+@@ -153,7 +153,7 @@ internal sealed partial class Live2DStudioPage
+         var crop = ActorIsolation.ReadCanvas(queued.Root["output"]?["isolateCanvas"], document!.ActorId);
+         check(crop is not null && crop.ReferenceWidth == 320 && crop.ReferenceHeight == 480
+             && queued.Root["output"]?["isolateActor"]?.ToString() == document.ActorId
+-            && JsonNode.DeepEquals(queued.Root["commands"], document.ToSceneDocument().Root["commands"]),
++            && JsonNode.DeepEquals(queued.Root["commands"], document.ToWorkbenchSceneDocument().Root["commands"]),
+             "仅角色 " + kind + " 快照使用原始参考画布与完整动作，不叠加上一次裁剪");
+         File.Copy(job.Request.Arguments[2], App.SmokeEvidencePath("live2d-actor-canvas-export-" + kind + ".project.json"), true);
+         return job;
+diff --git a/tests/OurNotes.Director.NativeTests/Program.cs b/tests/OurNotes.Director.NativeTests/Program.cs
+index d3eb329..8c4d817 100644
+--- a/tests/OurNotes.Director.NativeTests/Program.cs
++++ b/tests/OurNotes.Director.NativeTests/Program.cs
+@@ -3,7 +3,11 @@
+ try
+ {
+     if (await StoryTimingAnalysisTests.HandleDecoderWorkerAsync(args) is {} workerExit) return workerExit;
+-    if (args.Length == 3 && args[0] == "--story-analysis") return await StoryTimingAnalysisTests.RunAsync(args[1], args[2]);
++    if (args.Length == 3 && args[0] == "--story-analysis")
++    {
++        int timing = await StoryTimingAnalysisTests.RunAsync(args[1], args[2]);
++        return timing != 0 ? timing : StoryTimingResourceTests.Run(args[1], args[2]);
++    }
+     if (args.Length == 2 && args[0] == "--preview-quality") return PreviewQualityNativeTests.RunGraphics(args[1]);
+     if (args.Length == 3 && args[0] == "--live2d") return await Live2DNativeTests.RunAsync(args[1], args[2]);
+     if(args.Length==3&&args[0]=="--stage-authoring")
+diff --git a/tests/OurNotes.Director.NativeTests/StoryTimingResourceTests.cs b/tests/OurNotes.Director.NativeTests/StoryTimingResourceTests.cs
+new file mode 100644
+index 0000000..6f0bc80
+--- /dev/null
++++ b/tests/OurNotes.Director.NativeTests/StoryTimingResourceTests.cs
+@@ -0,0 +1,83 @@
++using System.Diagnostics;
++using System.Text;
++using System.Text.Json.Nodes;
++using OurNotes.Director.Core;
++
++// The production timing shortcut must preserve the capture/fade waits, even
++// though it no longer creates model drawing resources or captures scene pixels.
++static class StoryTimingResourceTests
++{
++    public static int Run(string fixture, string output)
++    {
++        string reportPath = Path.Combine(output, "report.json");
++        var report = JsonNode.Parse(File.ReadAllText(reportPath))!.AsObject();
++        var checks = report["checks"]!.AsArray();
++        var samples = new JsonArray(); report["modelResources"] = samples; report["ok"] = false;
++        void Check(bool value, string name)
++        {
++            checks.Add((JsonNode)new JsonObject { ["name"] = name, ["ok"] = value });
++            if (!value) throw new InvalidOperationException(name);
++        }
++        try
++        {
++            NativeTestGraphics.Configure();
++            string core = NativeDependencies.CoreLibrary(baseDirectory: NativeTestGraphics.PackageDirectory);
++            string ffmpeg = NativeDependencies.MediaTool("ffmpeg", baseDirectory: NativeTestGraphics.PackageDirectory);
++            var archive = new Archive(fixture);
++            var manifest = archive.Manifest("intl", "stories", "10462");
++            var definition = JsonNode.Parse(archive.Logical("intl", manifest, "story.json"))!;
++            var episode = JsonNode.Parse(archive.Logical("intl", manifest, Archive.S(definition, "episode")))!;
++            var scene = JsonNode.Parse(archive.Logical("intl", manifest, Archive.S(definition, "scene")))!;
++            var program = AdvProgram.From(episode, scene["settings"]!["playerSettings"]!);
++            var sourceCharacter = program.Initialize.Concat(program.Rows).Concat(program.Finalize)
++                .First(row => !row.Ignored && row.Command == "Character" && row.Number("TargetAssetIndex") == 0);
++            string model = sourceCharacter.Text("Model");
++            if (model.Length == 0) model = definition["models"]!["Character/Live2D/" + sourceCharacter.Text("TargetAssetName")]!.GetValue<string>();
++            var project = JsonNode.Parse("""
++                {"format":"ournotes-director/project","version":1,
++                 "source":{"adv":"10462","site":"intl","language":"zh-Hans"},
++                 "output":{"width":960,"height":540,"letterbox":"none"},
++                 "initialize":[],"finalize":[],"text":{},"commands":[
++                   {"cmd":"Character","TargetName":"timing-actor","Model":""},
++                   {"cmd":"In","TargetName":"timing-actor","PositionType":3},
++                   {"cmd":"RimLight","TargetName":"timing-actor","Parameter1":"#ffaaaa","Parameter2":"0.5"},
++                   {"cmd":"Stage","TargetAssetName":"","Duration":0.1},
++                   {"cmd":"Delay","Frames":3},
++                   {"cmd":"Stage","TargetAssetName":"","Duration":0.2},
++                   {"cmd":"Out","TargetName":"timing-actor","PositionType":3,"Duration":0.1},
++                   {"cmd":"Delay","Frames":1}]}
++                """)!.AsObject();
++            project["commands"]![0]!["Model"] = model;
++            string json = project.ToJsonString(), hash = Archive.Hash(Encoding.UTF8.GetBytes(json));
++            string path = Path.Combine(output, "capture-wait.project.json"); File.WriteAllText(path, json);
++            NativePlaybackTiming? reference = null;
++            foreach (bool timingOnly in new[] { false, true })
++            {
++                var watch = Stopwatch.StartNew();
++                using var native = new AdvStoryRenderer(archive, "intl", core, "10462", "zh-Hans",
++                    960, 540, path, ffmpeg, 1, project, timingOnly);
++                double initialized = watch.Elapsed.TotalMilliseconds;
++                var actor = native.Scene.Character("timing-actor");
++                Check(actor is not null && actor.HasGameDrawingResources == !timingOnly,
++                    timingOnly ? "Timing-only actors retain native animation but allocate no model textures or drawing meshes"
++                        : "The full-renderer reference allocates the real model drawing resources");
++                var timing = native.AnalyzeTiming(hash);
++                samples.Add(new JsonObject { ["timingOnly"] = timingOnly, ["initializationMs"] = initialized,
++                    ["totalMs"] = watch.Elapsed.TotalMilliseconds, ["endFrame"] = timing.EndFrame,
++                    ["commands"] = timing.Commands.Count, ["modelDrawingAllocated"] = actor!.HasGameDrawingResources });
++                Check(timing.IsComplete && timing.Commands.Count(row => row.Command == "Stage") == 2,
++                    "Both native capture-dependent Stage fades finish " + (timingOnly ? "without GPU drawing" : "with actual GPU captures"));
++                if (reference is not null)
++                    Check(timing.ProjectHash == reference.ProjectHash && timing.EndFrame == reference.EndFrame
++                        && timing.Duration == reference.Duration && timing.Commands.SequenceEqual(reference.Commands),
++                        "Skipping capture pixels preserves every native command wait, ordinal and endpoint, including consecutive Stage fades");
++                reference = timing;
++            }
++            Check(File.ReadAllText(path) == json, "Timing resource optimization does not rewrite its source project");
++            report["ok"] = true;
++            Console.WriteLine("Passed 6 native model-resource and capture-wait parity checks.");
++            return 0;
++        }
++        finally { File.WriteAllText(reportPath, report.ToJsonString(new() { WriteIndented = true })); }
++    }
++}
