@@ -77,10 +77,24 @@ public sealed partial class NativeViewport
     // Full-screen presenter changes can resize the XAML surface without producing a
     // new native frame (the monitor may be paused). Force the attached swap chain to
     // recompute its display dimensions instead of waiting for playback to refresh it.
-    internal void RefreshPresentationLayout()
+    internal async Task RefreshPresentationLayoutAsync()
     {
         scaledGpu = null;
         LayoutCanvas();
+        // Resizing a paused SwapChainPanel must also redraw the current native pose:
+        // otherwise the compositor can stretch the old, pre-fullscreen viewport into
+        // only a corner of the newly-sized panel. Seek the same timestamp, not a new
+        // frame, and wait until that exact picture has been presented.
+        if (IsPlaying || !HasCurrentSource || LastFrame is not { } frame) return;
+        try
+        {
+            await session.SeekAsync(frame.Time);
+            await AwaitPresentationAsync();
+            scaledGpu = null;
+            LayoutCanvas();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { if (!disposed) PresentFailure(error); }
     }
     internal void RunGpuCompositionSmoke(Action<bool, string> check)
     {
