@@ -95,7 +95,7 @@ internal sealed partial class Live2DStudioPage
         var row = nativeDescription?["motions"]?.AsArray().OfType<JsonObject>().FirstOrDefault(item => item["id"]?.ToString() == motion);
         if (row is null || !double.TryParse(row["duration"]?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double length) || length <= 0)
         { Notice("选择一个带有时长的动作后，可以让输出区间匹配这段动画。", false); return; }
-        Edit(current => current.SetDuration(Math.Max(0, current.Time + length - 1d / 30))); RefreshControls();
+        Edit(current => current.SetDuration(Math.Max(0, length - 1d / 30))); RefreshControls();
     }
     FrameworkElement CreateAnimationInspector(bool expressions)
     {
@@ -126,7 +126,7 @@ internal sealed partial class Live2DStudioPage
             if (document is null) return;
             string search = (expressions ? expressionSearch : motionSearch).Text.Trim();
             string? current = expressions ? document.Expression : document.Motion;
-            var automatic = new ListViewItem { Content = Ui.Stack(2, Ui.Text("撤销此处切换", 13), Ui.Text("恢复此前的动作或表情，保留较早的切换", 11, true)), Tag = "" };
+            var automatic = new ListViewItem { Content = Ui.Stack(2, Ui.Text(expressions ? "恢复默认表情" : "恢复默认动作", 13)), Tag = "" };
             list.Items.Add(automatic); if (current is null) list.SelectedItem = automatic;
             foreach (string id in document.Metadata?[expressions ? "expressions" : "motions"]?.AsArray().Select(item => item?.ToString()).OfType<string>() ?? [])
             {
