@@ -346,8 +346,8 @@ public sealed partial class Live2DDocument
         var row = string.IsNullOrWhiteSpace(value) ? null
             : new JsonObject { ["cmd"] = command, ["TargetName"] = ActorId, [field] = value,
                 ["MotionFadeIn"] = 0, ["AtFrame"] = 0 };
-        if (row is not null && other is { Length: > 0 })
-            row[command == "Motion" ? "ExpressionName" : "MotionName"] = other;
+        if (row is not null && command == "Motion" && other is { Length: > 0 })
+            row["ExpressionName"] = other;
         Change(next =>
         {
             RemoveEdits(next, previous => Text(previous, "cmd") == command);
