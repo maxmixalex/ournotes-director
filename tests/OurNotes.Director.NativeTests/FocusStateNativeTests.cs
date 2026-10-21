@@ -107,7 +107,7 @@ static class FocusStateNativeTests
         project["output"]!["width"] = 320; project["output"]!["height"] = 180;
         project["output"]!["content"] = "characters"; project["output"]!["supersample"] = 1;
         var rows = new JsonArray();
-        void Row(int frame, JsonObject row) { row["AtFrame"] = frame; rows.Add(row); }
+        void Row(int frame, JsonObject row) { row["AtFrame"] = frame; rows.Add((JsonNode)row); }
         Row(0, new() { ["cmd"] = "Stage", ["TargetAssetName"] = stage, ["Duration"] = 0 });
         foreach (string actor in new[] { "departing", "replacement" })
         {
@@ -154,7 +154,7 @@ static class FocusStateNativeTests
         var distance = profile["_focusData"]!.AsArray().First(value => Actor.N(value!["_characterBlurIntensity"]) > 0)!;
         int cameraDistance = (int)Actor.N(distance["_cameraDistance"]); float intensity = Actor.N(distance["_characterBlurIntensity"]);
         var rows = new JsonArray();
-        void Row(int frame, JsonObject row) { row["AtFrame"] = frame; rows.Add(row); }
+        void Row(int frame, JsonObject row) { row["AtFrame"] = frame; rows.Add((JsonNode)row); }
         Row(0, new() { ["cmd"] = "Stage", ["TargetAssetName"] = selectedStage.Key, ["Duration"] = 0 });
         foreach (var (actor, position) in new[] { ("left", 3), ("right", 7) })
         {
