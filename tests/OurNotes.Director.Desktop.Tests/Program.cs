@@ -1,5 +1,8 @@
 using OurNotes.Director.Desktop.Tests;
 
+if (args.Length == 4 && args[0] == "--audio-output")
+    return await WindowsPreviewAudioTests.RunRealVoiceAsync(args[1], args[2], args[3]);
+
 if (await EngineRunnerTests.HandleWorkerAsync(args) is { } fixtureExit) return fixtureExit;
 
 var count = 0;
@@ -22,6 +25,7 @@ CreativeMaterialTests.Run(Check);
 CreativeMaterialFrameTests.Run(Check);
 StagePlacementTests.Run(Check);
 ViewportNavigationTests.Run(Check);
+PreviewResolutionTests.Run(Check);
 WorkspaceLayoutSettingsTests.Run(Check);
 await TimelineEditingTests.RunAsync(Check);
 EditorPerformanceTests.Run(Check);
@@ -30,5 +34,6 @@ CreativeSourceImporterTests.Run(Check);
 SceneInteractionPreviewTests.Run(Check);
 ResultRowTests.Run(Check);
 await EngineRunnerTests.RunAsync(Check);
+await WindowsPreviewAudioTests.RunAsync(Check);
 Console.WriteLine($"Passed {count} desktop command, JSON document, result and task execution checks.");
 return 0;

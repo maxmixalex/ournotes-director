@@ -119,6 +119,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Story timing and decoder cancellation checks failed: $LASTEXITCODE" }
           & $test --stage-authoring artifacts/real-scene-fixture artifacts/staging-evidence
           if ($LASTEXITCODE -ne 0) { throw "Native staging authoring checks failed: $LASTEXITCODE" }
+          dotnet run --project tests/OurNotes.Director.Desktop.Tests -c Release --no-build --no-restore -- --audio-output artifacts/staging-evidence/original-voice.wav $ffmpeg artifacts/audio-output
+          if ($LASTEXITCODE -ne 0) { throw "Real voice output queue checks failed: $LASTEXITCODE" }
           & $test --live2d artifacts/real-scene-fixture artifacts/live2d-evidence
           if ($LASTEXITCODE -ne 0) { throw "Native Live2D workbench checks failed: $LASTEXITCODE" }
           ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 600 -ProgressTimeoutSeconds 90
@@ -135,6 +137,7 @@ jobs:
             artifacts/story-analysis/report.json
             artifacts/story-analysis/cancelled-decoder/result.json
             artifacts/staging-evidence/*
+            artifacts/audio-output/*
             artifacts/live2d-evidence/*
           if-no-files-found: ignore
           retention-days: 14

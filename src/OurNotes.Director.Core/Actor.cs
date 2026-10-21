@@ -58,7 +58,7 @@ public sealed unsafe partial class Actor : IDisposable
         blink=Comp("CubismAutoEyeBlinkInput");random=randomStream??new(seed);nextBlink=Interval();
         if(Comp("CubismPhysicsController")?["_rig"] is JsonNode rig)physics=new(rig,Core,ids);
         canvasHeight=N(model["canvas"]!["height"])/N(model["canvas"]!["pixelsPerUnit"]);
-        textures=gl is null?[]:model["textures"]!.AsArray().Select(t=>gl.Upload(Png.Decode(archive.Logical(site,Manifest,t!.ToString())))).ToArray();
+        textures=gl is null?[]:model["textures"]!.AsArray().Select(t=>gl.Upload(archive.ModelTexture(site,Manifest,t!.ToString()))).ToArray();
         Motion(spec.Motion??DefaultMotion,0);Expression(spec.Expression??DefaultExpression,0);
         foreach(var id in spec.Parameters.Keys)if(!ids.ContainsKey(id))throw new ArgumentException($"Unknown parameter {spec.Name}:{id}");
         }catch{Core.Dispose();throw;}

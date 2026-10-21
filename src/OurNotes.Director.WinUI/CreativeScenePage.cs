@@ -24,7 +24,6 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     readonly TextBlock title=new(){Text="未命名场景",FontSize=13,VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis};
     readonly TextBlock assetHint=new(){Text="选择角色后添加动作、表情或声音。",FontSize=11,TextWrapping=TextWrapping.Wrap,Opacity=.7};
     readonly InfoBar notice=new(){IsOpen=false,IsClosable=true};
-    readonly Button cancelImport=new(){Content="取消解析",Visibility=Visibility.Collapsed};
     readonly SemaphoreSlim loadGate=new(1);
     readonly Stack<string> undo=new(),redo=new();
     readonly List<ResultRow> assetRows=[];
@@ -53,7 +52,10 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         toolbar.Children.Add(title);Grid.SetColumn(title,1);var publish=Ui.Row(8,Button("保存",()=>SaveAsync(),"\uE74E"),Button("导出…",()=>ExportAsync("clip"),"\uE898",true));toolbar.Children.Add(publish);Grid.SetColumn(publish,2);
         foreach(var(key,label)in new[]{("motion","动作"),("expression","表情"),("voice","语音台词")})assetKind.Items.Add(new ComboBoxItem{Content=label,Tag=key});
         assetKind.SelectedIndex=0;var library=BuildProjectLibrary();
-        cancelImport.Click+=(_,_)=>CancelStoryImport();notice.ActionButton=cancelImport;
+        // Only the user's close button cancels work. Programmatically hiding a
+        // completed notice must not cancel the candidate being accepted.
+        notice.CloseButtonClick+=(_,_)=>CancelStoryImport();
+        InitializePresentationSize();
         var center=new Grid();center.Children.Add(viewport);notice.VerticalAlignment=VerticalAlignment.Top;notice.Margin=new(12);center.Children.Add(notice);Content=new StudioLayout(library,center,Ui.Scroll(inspector),timeline,toolbar,workspaceKey:"scenes");
         actors.SelectionChanged+=(_,_)=>
         {if(refreshing)return;selectedActor=(actors.SelectedItem as ListViewItem)?.Tag as string;selectedClip=replaceAssetClip=null;timeline.Select(null);timeline.RevealActor(selectedActor);viewport.SelectedTargetId=selectedActor;BuildInspector();_=Safe(LoadAssetsAsync);};
@@ -99,7 +101,17 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
             args.Data.SetData("OurNotes.SceneAsset",data.ToJsonString());args.Data.RequestedOperation=DataPackageOperation.Copy;
         };
         KeyDown+=(_,args)=>HandleWorkspaceKey(args);
-        Loaded+=(_,_)=>{Refresh();if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));else if(previewDirty||!viewport.HasCurrentSource)_=Safe(ReloadAsync);else if(viewport.ScenePreviewScale<1||viewport.LastFrame?.ScenePreviewScale<1)_=Safe(()=>SeekAsync(playhead));};
+        Loaded+=(_,_)=>_=Safe(async()=>
+        {
+            Refresh();
+            if(document.Actors.Count==0&&document.Clips.Count==0&&document.Root["staging"] is null)
+                viewport.SetEmptyCanvas((int)N(document.Canvas,"width"),(int)N(document.Canvas,"height"));
+            else if(previewDirty||!viewport.HasCurrentSource)await ReloadAsync();
+            else if(viewport.ScenePreviewScale<1||viewport.LastFrame?.ScenePreviewScale<1)await SeekAsync(playhead);
+            // Leaving a fullscreen page can stop its debounced window-size
+            // restoration. Finish it when returning even if layout size is unchanged.
+            await ApplyPresentationSizeAsync();
+        });
         Unloaded+=(_,_)=>Deactivate();Refresh();
     }
     internal void HandleWorkspaceKey(KeyRoutedEventArgs args)
@@ -126,7 +138,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
     string AssetKind=>(assetKind.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"motion";
     Button Button(string text,Func<Task> action,string glyph,bool primary=false)=>StudioLayout.AsyncTool(text,()=>Safe(action),glyph,primary);
     async Task Safe(Func<Task> action){try{if(!disposed)await action();}catch(OperationCanceledException){}catch(Exception error){if(!disposed)ShowError(error.Message);}}
-    void ShowError(string message){cancelImport.Visibility=Visibility.Collapsed;notice.Severity=InfoBarSeverity.Error;notice.Message=message;notice.IsOpen=true;}
+    void ShowError(string message){notice.Severity=InfoBarSeverity.Error;notice.Message=message;notice.IsOpen=true;}
     void ClearSelection()
     {
         selectedActor=selectedClip=replaceAssetClip=null;
@@ -190,7 +202,7 @@ internal sealed partial class CreativeScenePage : UserControl, IAsyncDisposable
         foreach(var row in assetRows.Where(row=>row.SearchText.Contains(query,StringComparison.OrdinalIgnoreCase)))
         {var item=new ListViewItem{Tag=row,Content=new TextBlock{Text=row.Title,TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=false},HorizontalContentAlignment=HorizontalAlignment.Stretch};ToolTipService.SetToolTip(item,row.Subtitle);assets.Items.Add(item);}
     }
-    public void Deactivate(){CancelStoryImport();scrubber.Cancel();viewport.Pause();SaveDraft();}
+    public void Deactivate(){CancelStoryImport();scrubber.Cancel();presentationTimer?.Stop();viewport.Pause();SaveDraft();}
     public void SaveDraft()
     {
         if(disposed||!HasUnsavedChanges)return;

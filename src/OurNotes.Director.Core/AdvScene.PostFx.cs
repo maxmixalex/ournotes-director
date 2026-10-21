@@ -5,6 +5,12 @@ namespace OurNotes.Director.Core;
 public sealed partial class AdvScene
 {
     AdvPostFx post=null!;
+    internal void ReleasePresentationTargets()
+    {
+        post.ReleasePresentationTargets();mediaPost?.ReleasePresentationTargets();
+    }
+    internal long PresentationTargetBytes=>post.PresentationTargetBytes+(mediaPost?.PresentationTargetBytes??0);
+    internal int PresentationTargetCount=>post.PresentationTargetCount+(mediaPost?.PresentationTargetCount??0);
     AdvPostFx? mediaPost;AdvCamera? mediaCamera;
     readonly List<AdvVolume> volumes=[];
     readonly List<(JsonNode Profile,float Weight)> evaluatedVolumeInputs=[];

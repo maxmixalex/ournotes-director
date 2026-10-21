@@ -81,7 +81,7 @@ public sealed partial class AdvScene
                 {
                     bool wasShown=shown.Values.Contains(actor);directorActors[actor]=state=new();
                     if(!wasShown){actor.ResetGameAnimation();actor.Motion(actor.DefaultMotion,0);actor.Expression(actor.DefaultExpression,0);}
-                    foreach(int slot in shown.Where(p=>p.Value==actor).Select(p=>p.Key).ToArray())shown.Remove(slot);
+                    RemoveStageActor(actor);
                     positions.Remove(target);actor.Prefab.Root.Parent=null;
                 }
                 if(row.Text("Space") is {Length:>0} space){if(space is not ("world" or "screen"))throw new ArgumentException("Actor Space must be world or screen");state.Space=space;}

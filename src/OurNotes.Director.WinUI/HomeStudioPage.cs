@@ -93,6 +93,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         previewTimer = DispatcherQueue.CreateTimer(); previewTimer.Interval = TimeSpan.FromMilliseconds(35); previewTimer.IsRepeating = false;
         previewTimer.Tick += (_, _) => _ = SafeAsync(ApplyPreviewAsync);
         draftTimer = DispatcherQueue.CreateTimer(); draftTimer.Interval = TimeSpan.FromMilliseconds(800); draftTimer.IsRepeating = false; draftTimer.Tick += (_, _) => SaveDraft();
+        InitializePresentationSize();
         Loaded += (_, _) => { active = true; _ = SafeAsync(ActivateAsync); };
         Unloaded += (_, _) => Deactivate();
         KeyDown += (_, args) => HandleWorkspaceKey(args);
@@ -139,6 +140,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
         }
         if (document is not null && !previewLoaded && !string.IsNullOrWhiteSpace(ArchivePath)) await LoadMetadataAndPreviewAsync();
         else if (document is not null && pendingPreview is not null) await ApplyPreviewAsync();
+        await ApplyPresentationSizeAsync();
     }
     async Task<bool> ConfirmReplaceAsync()
     {
@@ -595,7 +597,7 @@ internal sealed partial class HomeStudioPage : UserControl, IAsyncDisposable
     internal void Deactivate()
     {
         scrubber.Cancel();
-        active = false; Pause(); previewTimer.Stop(); draftTimer.Stop(); SaveDraft();
+        active = false; Pause(); previewTimer.Stop(); presentationTimer?.Stop(); draftTimer.Stop(); SaveDraft();
     }
     public async ValueTask DisposeAsync()
     {

@@ -53,6 +53,7 @@ public sealed partial class MainWindow
         if (fullscreenLayout is not null || ActiveLayout is not { } layout) return;
         priorMaximizedPanel = layout.MaximizedPanel; priorPresenter = AppWindow.Presenter;
         fullscreenLayout = layout;
+        Descendants<NativeViewport>(layout.ProgramMonitorPanel).SingleOrDefault()?.SetFullscreenRendering(true);
         // Only visibility and grid spans change. In particular, never remove and
         // reparent a live viewport: that would unload its render/seek session.
         layout.RestorePanels(); layout.ToggleMaximize(layout.ProgramMonitorPanel);
@@ -79,6 +80,7 @@ public sealed partial class MainWindow
     {
         if (fullscreenLayout is not { } layout) return;
         fullscreenLayout = null;
+        Descendants<NativeViewport>(layout.ProgramMonitorPanel).SingleOrDefault()?.SetFullscreenRendering(false);
         AppWindow.Changed -= OnFullscreenPresenterChanged;
         layout.ProgramMonitorPanel.SetImmersive(false);
         layout.RestorePanels();

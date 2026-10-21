@@ -9,13 +9,26 @@ try
         return timing != 0 ? timing : StoryTimingResourceTests.Run(args[1], args[2]);
     }
     if (args.Length == 2 && args[0] == "--preview-quality") return PreviewQualityNativeTests.RunGraphics(args[1]);
-    if (args.Length == 3 && args[0] == "--live2d") return await Live2DNativeTests.RunAsync(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--live2d")
+    {
+        int live2d = await Live2DNativeTests.RunAsync(args[1], args[2]);
+        return live2d != 0 ? live2d : GraphicsQualityNativeTests.Run(args[2],
+            Path.Combine(NativeTestGraphics.PackageDirectory, "tools", OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg"));
+    }
     if(args.Length==3&&args[0]=="--stage-authoring")
     {
         int staged = await CreativeStagingNativeTests.RunAsync(args[1],args[2]);
-        return staged != 0 ? staged : await SceneInteractionNativeTests.RunAsync(args[1],args[2]);
+        if (staged != 0) return staged;
+        int interaction = await SceneInteractionNativeTests.RunAsync(args[1],args[2]);
+        return interaction != 0 ? interaction : await FocusStateNativeTests.RunAsync(args[1],args[2]);
     }
-    if (args.Length == 1 && args[0] == "--preview-editing") return await PreviewEditingTests.RunAsync();
+    if (args.Length == 1 && args[0] == "--preview-editing")
+    {
+        int editing = await PreviewEditingTests.RunAsync();
+        if (editing != 0) return editing;
+        int home = await HomePreviewResolutionTests.RunAsync();
+        return home != 0 ? home : await ScenePreviewResolutionTests.RunAsync();
+    }
     if (args.Length == 3 && args[0] == "--creative-audio") return await CreativeAudioTests.RunAsync(args[1],args[2]);
     if (args.Length == 2 && args[0] == "--runtime-package") return RuntimeDependencyTests.Run(args[1]);
     if (args.Length == 2 && args[0] == "--home-fixture") return HomeRenderingTests.WriteFixture(args[1]);

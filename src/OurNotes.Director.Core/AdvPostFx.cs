@@ -33,6 +33,19 @@ public sealed class AdvPostFx
         if(targets.TryGetValue(key,out var existing))return existing;
         return targets[key]=hdr?gl.FloatSurface(w,h):gl.Surface(w,h);
     }
+    // The three interaction scales reuse their targets while the viewport stays
+    // the same. A viewport resize can have arbitrary dimensions, so release its
+    // old targets instead of retaining every intermediate window size forever.
+    internal void ReleasePresentationTargets()
+    {
+        foreach(var key in targets.Keys.Where(key=>key.Name!="lut").ToArray())
+        {
+            gl.ReleaseSurface(targets[key]);targets.Remove(key);
+        }
+    }
+    internal long PresentationTargetBytes=>targets.Keys.Where(key=>key.Name!="lut")
+        .Sum(key=>(long)key.Width*key.Height*(key.Hdr?8:4));
+    internal int PresentationTargetCount=>targets.Keys.Count(key=>key.Name!="lut");
     static float N(JsonNode node,string key)=>Actor.N(node[key]);
     static float[] V(JsonNode node,string key,bool color=false)=> (color?new[]{"r","g","b","a"}:new[]{"x","y","z","w"}).Select(k=>Actor.N(node[key]?[k])).ToArray();
     public static float Linear(float c)=>c<=.04045f?c/12.92f:c<1?(float)Math.Pow((c+.055f)/1.055f,2.4):c==1?1:(float)Math.Pow(c,2.2f);

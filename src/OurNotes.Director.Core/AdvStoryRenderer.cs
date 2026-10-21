@@ -25,7 +25,8 @@ public sealed class AdvStoryRenderer : IDisposable
 
     readonly OffscreenGl gl;
     int outputWidth,outputHeight,supersample;
-    readonly int viewportY;
+    int viewportY,viewportHeight;
+    readonly int referenceOutputHeight,referenceViewportHeight;
     OffscreenGl.DrawingCanvas? previewCanvas;
     OffscreenGl.DrawingCanvas? interactiveSceneCanvas;
     /// <summary>Transient scene-only preview scale. Text/UI, native timing, captures,
@@ -38,7 +39,7 @@ public sealed class AdvStoryRenderer : IDisposable
             throw new InvalidOperationException("Isolated models use their own adaptive presentation canvas.");
         if (ScenePreviewScale == scale) return;
         var next = scale == 1 ? null : gl.CreateDrawingCanvas(
-            Math.Max(16, (int)Math.Round(gl.Width * scale)), Math.Max(16, (int)Math.Round(gl.Height * scale)));
+            Math.Max(16, (int)Math.Round(outputWidth * supersample * scale)), Math.Max(16, (int)Math.Round(viewportHeight * supersample * scale)));
         interactiveSceneCanvas?.Dispose(); interactiveSceneCanvas = next;
         ScenePreviewScale = scale;
     }
@@ -53,18 +54,28 @@ public sealed class AdvStoryRenderer : IDisposable
         if(isolateActor is null)throw new InvalidOperationException("Load an isolated actor before editing its presentation.");
         isolateTransform=ActorIsolation.ReadTransform(ActorIsolation.TransformJson(transform),isolateActor);
     }
-    /// <summary>Changes only an isolated actor's presentation FBO. The ADV player,
+    /// <summary>Changes only the presentation FBO. The ADV player,
     /// Cubism model, masks, captures and original UI coordinate system stay alive.</summary>
     public void ResizePreview(int width,int height,int sampling=1)
     {
-        if(isolateActor is null)throw new InvalidOperationException("Only isolated actor previews support live resizing.");
         RenderDimensions.Validate(width,height,sampling);
         if(PendingFrames>0)throw new InvalidOperationException("Read queued exports before resizing a preview.");
         if(outputWidth==width&&outputHeight==height&&supersample==sampling)return;
-        int sampledWidth=checked(width*sampling),sampledHeight=checked(height*sampling);
+        int nextViewportHeight=Math.Clamp((int)Math.Round(height*(referenceViewportHeight/(double)referenceOutputHeight)),1,height);
+        int sampledWidth=checked(width*sampling),sampledHeight=checked(nextViewportHeight*sampling);
         var next=sampledWidth==gl.Width&&sampledHeight==gl.Height?null:gl.CreateDrawingCanvas(sampledWidth,sampledHeight);
+        OffscreenGl.DrawingCanvas? nextInteractive=null;
+        try
+        {
+            if(ScenePreviewScale!=1)nextInteractive=gl.CreateDrawingCanvas(
+                Math.Max(16,(int)Math.Round(sampledWidth*ScenePreviewScale)),Math.Max(16,(int)Math.Round(sampledHeight*ScenePreviewScale)));
+        }
+        catch{next?.Dispose();throw;}
+        Scene.ReleasePresentationTargets();
         previewCanvas?.Dispose();previewCanvas=next;
+        interactiveSceneCanvas?.Dispose();interactiveSceneCanvas=nextInteractive;
         outputWidth=width;outputHeight=height;supersample=sampling;
+        viewportHeight=nextViewportHeight;viewportY=(int)MathF.Floor((height-viewportHeight)/2f+.5f);
     }
     readonly bool charactersOnly;
     bool TransparentOutput => charactersOnly || isolateActor is not null || Scene.DirectorTransparent;
@@ -78,11 +89,14 @@ public sealed class AdvStoryRenderer : IDisposable
     internal Func<Func<long,CancellationToken,long,AdvCue>>? PrefetchAudio { get; }
     public AdvStoryRenderer(Archive archive,string site,string dll,string id,string language,int width,int height,string? script,string ffmpeg,int supersample=2,
         JsonNode? projectDocument=null,bool timingOnly=false,AdvCueCache? cueCache=null,CancellationToken cancellationToken=default,
-        bool prefetchAudio=false)
+        bool prefetchAudio=false,CancellationToken initializationCancellationToken=default)
     {
+        using var initializationCancellation=initializationCancellationToken.CanBeCanceled
+            ?CancellationTokenSource.CreateLinkedTokenSource(cancellationToken,initializationCancellationToken):null;
+        var constructorToken=initializationCancellation?.Token??cancellationToken;
         long phase=Stopwatch.GetTimestamp();
         void Mark(string name){initializationMilliseconds[name]=Stopwatch.GetElapsedTime(phase).TotalMilliseconds;phase=Stopwatch.GetTimestamp();}
-        cancellationToken.ThrowIfCancellationRequested();
+        constructorToken.ThrowIfCancellationRequested();
         RenderDimensions.Validate(width,height,supersample);
         outputWidth=width;outputHeight=height;this.supersample=supersample;
         float target=width>height?2.1666667f:1.7777778f;int viewportHeight=height;
@@ -97,6 +111,7 @@ public sealed class AdvStoryRenderer : IDisposable
         bool noLetterbox=isolateActor is not null || supplied is JsonObject projectDoc&&Archive.S(projectDoc,"format")==DirectorProject.Format&&Archive.S(projectDoc["output"]??new JsonObject(),"letterbox")=="none";
         if(!noLetterbox&&width/(float)height+.0001f<target&&(height-width/target)/2>1)viewportHeight=(int)MathF.Floor(width/target+.5f);
         viewportY=(int)MathF.Floor((height-viewportHeight)/2f+.5f);
+        this.viewportHeight=referenceViewportHeight=viewportHeight;referenceOutputHeight=height;
         var manifest=archive.Manifest(site,"stories",id);var definition=JsonNode.Parse(archive.Logical(site,manifest,"story.json"))!;
         var episode=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"episode")))!;
         var scene=JsonNode.Parse(archive.Logical(site,manifest,Archive.S(definition,"scene")))!;var settings=scene["settings"]!["playerSettings"]!.DeepClone();
@@ -114,10 +129,11 @@ public sealed class AdvStoryRenderer : IDisposable
         }
         var program=AdvProgram.From(episode,settings);Player=new(Loop,program);var tweens=new AdvTweens(Loop);
         Mark("sourceAndProgramMs");
+        constructorToken.ThrowIfCancellationRequested();
         gl=new(checked(width*supersample),checked(viewportHeight*supersample));
         Mark("graphicsContextMs");
         try{
-            cancellationToken.ThrowIfCancellationRequested();
+            constructorToken.ThrowIfCancellationRequested();
             // Start the same bounded independent decoders before native model
             // setup. Their immutable source snapshots never touch playback's
             // lazy JsonNodes, and their lifetime includes constructor failures.
@@ -150,12 +166,13 @@ public sealed class AdvStoryRenderer : IDisposable
             Scene.StillShakeGet=()=>Stills.ShakeOffset;Scene.StillShakeSet=v=>Stills.ShakeOffset=v;
             if(Player.MissingCommands.Length>0)throw new NotSupportedException("Native story commands not connected: "+string.Join(", ",Player.MissingCommands));
             Mark("sceneAndUiMs");
-            cancellationToken.ThrowIfCancellationRequested();
-            Scene.Preload(rows,cancellationToken);
+            constructorToken.ThrowIfCancellationRequested();
+            Scene.Preload(rows,constructorToken);
             Mark("nativeModelsMs");
-            cancellationToken.ThrowIfCancellationRequested();
+            constructorToken.ThrowIfCancellationRequested();
             foreach(var row in rows.Where(r=>r.Command=="Director.Parameter"))_=(Scene.Character(row.Text("TargetName"))??throw new ArgumentException("Unknown actor: "+row.Text("TargetName"))).ParameterValue(row.Text("Parameter"));
             Player.Prepare=p=>Ui.Prepare();Player.Start();
+            constructorToken.ThrowIfCancellationRequested();
             Mark("startPlaybackMs");
         }catch{timingAudioPrefetch?.Dispose();Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
     }
@@ -173,7 +190,8 @@ public sealed class AdvStoryRenderer : IDisposable
     public IReadOnlyList<PreviewTarget> PreviewTargets()
     {
         if(isolateActor is not null)return Scene.IsolatedPreviewTarget is {} isolated?[isolated]:[];
-        double top=viewportY/(double)outputHeight,height=gl.Height/(double)supersample/outputHeight;
+        using var canvas=gl.UseDrawingCanvas(previewCanvas);
+        double top=viewportY/(double)outputHeight,height=viewportHeight/(double)outputHeight;
         return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height,StagePlacement=target.StagePlacement is {} plane?plane with{ViewportHeight=height}:null}).ToArray();
     }
     void AdvanceFrame(int frame,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)

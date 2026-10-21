@@ -9,6 +9,10 @@ namespace OurNotes.Director.Core;
 public sealed class Archive
 {
     public string Root { get; }
+    internal PreviewTextureCache? PreviewTextures{get;init;}
+    // A foreground construction token applies only to model texture loading. Shared
+    // audio decoders can outlive that request and must never retain its cancellation.
+    internal CancellationToken LoadCancellation{get;set;}
     public Archive(string root)
     {
         Root = Path.GetFullPath(root);
@@ -83,6 +87,13 @@ public sealed class Archive
         var entry = language is null ? null : manifest["languages"]?[language]?["files"]?[path];
         entry ??= manifest["files"]?[path];
         return Materialize(site, entry ?? throw new FileNotFoundException($"Logical file not found: {path}"));
+    }
+    internal Pixels ModelTexture(string site,JsonNode manifest,string path)
+    {
+        LoadCancellation.ThrowIfCancellationRequested();
+        byte[] bytes=Logical(site,manifest,path);
+        LoadCancellation.ThrowIfCancellationRequested();
+        return PreviewTextures?.Read(bytes,LoadCancellation)??Png.Decode(bytes,LoadCancellation);
     }
     public JsonNode Model(string site, string id)
     {

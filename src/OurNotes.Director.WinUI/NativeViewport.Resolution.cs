@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using System.Text.Json.Nodes;
 using OurNotes.Director.Core;
+using OurNotes.Director.Desktop.Core;
 
 namespace OurNotes.Director.WinUI;
 
@@ -11,6 +12,34 @@ public sealed partial class NativeViewport
     double lastRasterizationScale;
     public event EventHandler? PresentationSizeChanged;
     public int PreviewSupersample { get; private set; } = 1;
+    internal bool IsFullscreenRendering { get; private set; }
+    internal bool IsCompositionFixture => compositionTestLayout is not null;
+    (int Width, int Height, int Supersample)? windowedPreviewSize;
+    long windowedSourceVersion;
+    internal (int Width, int Height, int Supersample)? WindowedPreviewSize
+        => windowedSourceVersion == sourceVersion ? windowedPreviewSize : null;
+
+    internal void SetFullscreenRendering(bool enabled)
+    {
+        if (IsFullscreenRendering == enabled) return;
+        // A quick exit/re-entry can precede the debounced windowed redraw. Its
+        // LastFrame is still fullscreen; keep this source's original pane size.
+        if (enabled && HasCurrentSource && !loading
+            && (windowedPreviewSize is null || windowedSourceVersion != sourceVersion))
+        {
+            windowedPreviewSize = LastFrame is { } frame
+                ? (frame.Pixels.Width, frame.Pixels.Height, PreviewSupersample) : null;
+            windowedSourceVersion = sourceVersion;
+        }
+        IsFullscreenRendering = enabled;
+        PresentationSizeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    void RememberWindowedPreviewSize(int width, int height, int supersample)
+    {
+        windowedPreviewSize = (width, height, supersample);
+        windowedSourceVersion = sourceVersion;
+    }
 
     public void SetCanvasDimensions(int width, int height)
     {
@@ -19,29 +48,23 @@ public sealed partial class NativeViewport
         logicalCanvasWidth = width; logicalCanvasHeight = height; LayoutCanvas();
     }
 
-    public (int Width, int Height, int Supersample) RecommendedPreviewSize(int canvasWidth, int canvasHeight)
+    public (int Width, int Height, int Supersample) RecommendedPreviewSize(int canvasWidth, int canvasHeight, int supersample = 2)
     {
         double width = surface.ActualWidth > 0 ? surface.ActualWidth : 960;
         double height = surface.ActualHeight > 0 ? surface.ActualHeight : 540;
-        double scale = Math.Min(width / canvasWidth, height / canvasHeight)
-            * (XamlRoot?.RasterizationScale ?? 1) * navigation.Zoom;
-        // Render the pixels actually displayed, including monitor DPI and view zoom.
-        // A two-megapixel presentation budget bounds readback/upload on fallback GPUs;
-        // the renderer resolves 2x supersampling into this buffer for smooth edges.
-        double desiredHeight = Math.Max(16, Math.Ceiling(canvasHeight * scale / 16) * 16);
-        scale = desiredHeight / canvasHeight;
-        scale *= Math.Min(1, Math.Min(4096d / (Math.Max(canvasWidth, canvasHeight) * scale),
-            Math.Sqrt(2_097_152d / (canvasWidth * (double)canvasHeight * scale * scale))));
-        return (Math.Max(16, (int)Math.Round(canvasWidth * scale)),
-            Math.Max(16, (int)Math.Round(canvasHeight * scale)), 2);
+        return PreviewResolution.Choose(canvasWidth, canvasHeight, width, height,
+            XamlRoot?.RasterizationScale ?? 1, navigation.Zoom, IsFullscreenRendering, supersample);
     }
 
     public async Task ResizePreviewAsync(int width, int height, int supersample = 1,
         CancellationToken cancellationToken = default)
     {
+        long version = sourceVersion;
+        bool windowed = !IsFullscreenRendering;
         RecordPreviewOperation("resize.begin", width: width, height: height, supersample: supersample);
         await session.ResizePreviewAsync(width, height, supersample, cancellationToken);
         PreviewSupersample = supersample; await AwaitPresentationAsync();
+        if (windowed && version == sourceVersion) RememberWindowedPreviewSize(width, height, supersample);
         RecordPreviewOperation("resize.end");
     }
 

@@ -24,6 +24,9 @@ public sealed class HomePostFx : IDisposable
         catch { shaders.Dispose(); throw; }
     }
     public void Render(int frame) => post.RenderColor(stack, frame);
+    internal void ReleasePresentationTargets() => post.ReleasePresentationTargets();
+    internal long PresentationTargetBytes => post.PresentationTargetBytes;
+    internal int PresentationTargetCount => post.PresentationTargetCount;
     public void Dispose() => shaders.Dispose();
 
     public static JsonNode? Stack(JsonNode home)

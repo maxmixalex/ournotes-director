@@ -21,6 +21,10 @@ static class SceneInteractionNativeTests
             string ffmpeg = NativeDependencies.MediaTool("ffmpeg", baseDirectory: NativeTestGraphics.PackageDirectory);
             await using var session = new RealtimePreviewSession();
             await session.LoadSceneAsync(new(fixture, project, core, ffmpeg, 640, 360, 4, SegmentedCpuFrames: true));
+            var cold=session.LastFrame!.Initialization!;
+            report["coldInitialization"]=cold.ToJson();
+            Check(cold.TextureDecodes>0&&cold.RetainedTextureBytes<=cold.TextureCacheLimitBytes,
+                "A real cold scene decodes model PNGs into a bounded private preview cache");
             await session.SeekAsync(.5);
             var original = session.LastFrame!;
             long identity = original.SessionId;
@@ -44,15 +48,41 @@ static class SceneInteractionNativeTests
                 "Forward interaction seeks evaluate the real motion and expression history");
             await session.SetScenePreviewScaleAsync(1); await session.SeekAsync(35d / 30);
             var full = session.LastFrame!;
+            var resizes=new JsonArray();report["presentationResizes"]=resizes;
             var reference = await Task.Run(() =>
             {
                 using var renderer = new AdvStoryRenderer(new Archive(fixture), "intl", core,
                     DirectorProject.LibrarySource, "zh-Hans", 640, 360, project, ffmpeg, 1);
-                return renderer.Frame(35, DirectorProject.Read(project).Output["clean"]?.GetValue<bool>() ?? false);
+                bool clean=DirectorProject.Read(project).Output["clean"]?.GetValue<bool>()??false;
+                var baseline=renderer.Frame(35,clean);
+                var animations=renderer.Scene.PreviewAnimationState();
+                long budget=renderer.Scene.PresentationTargetBytes;int count=renderer.Scene.PresentationTargetCount;
+                foreach(var (width,height) in new[]{(960,540),(1280,720),(800,450),(640,360)})
+                {
+                    renderer.ResizePreview(width,height);
+                    Check(renderer.Scene.PresentationTargetBytes==0&&renderer.Scene.PresentationTargetCount==0,
+                        $"Presentation resize {width}x{height} releases obsolete dynamic post-effect targets");
+                    var pixels=renderer.Frame(35,clean);
+                    Check(pixels.Width==width&&pixels.Height==height&&renderer.Scene.PreviewAnimationState().SequenceEqual(animations),
+                        $"Presentation resize {width}x{height} draws real requested pixels without changing native animation");
+                    resizes.Add((JsonNode)new JsonObject{["width"]=width,["height"]=height,
+                        ["bytes"]=renderer.Scene.PresentationTargetBytes,["targets"]=renderer.Scene.PresentationTargetCount});
+                }
+                var restored=renderer.Frame(35,clean);
+                Check(restored.Rgba.SequenceEqual(baseline.Rgba)&&renderer.Scene.PresentationTargetBytes==budget
+                    &&renderer.Scene.PresentationTargetCount==count,
+                    "Restoring the original presentation size restores exact pixels and its original post-effect allocation budget");
+                return baseline;
             });
             Check(full.Pixels.Rgba.SequenceEqual(reference.Rgba),
                 "A settled gesture matches independently replayed native output, including focus and expression changes");
-            await session.SetScenePreviewScaleAsync(.25); await session.SeekAsync(.2);
+            await session.SetScenePreviewScaleAsync(.25);
+            var backward=System.Diagnostics.Stopwatch.StartNew();await session.SeekAsync(.2);
+            report["backwardSeekMilliseconds"]=backward.Elapsed.TotalMilliseconds;
+            var replay=session.LastFrame!.Initialization!;report["replayInitialization"]=replay.ToJson();
+            Check(replay.RetainedTextureBytes<=replay.TextureCacheLimitBytes
+                &&(cold.DecodedTextureBytes>cold.TextureCacheLimitBytes||replay.TextureDecodes==0&&replay.TextureCacheHits>=cold.RetainedTextures),
+                "Backward reconstruction reuses all fitting verified model textures without exceeding the cache byte limit");
             Check(session.LastFrame!.Frame == 6 && session.LastFrame.ScenePreviewScale == .25 && !session.IsPlaying,
                 "Backward native reconstruction retains the held-gesture drawing budget and stays paused");
             await session.SetScenePreviewScaleAsync(1); await session.SeekAsync(.2);

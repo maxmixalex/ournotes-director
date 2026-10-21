@@ -124,9 +124,13 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         long version=BeginLoad("正在载入场景…");
         try
         {
-            // Native initialization owns the input until it exits. Cancellation
-            // rejects its result, without disposing an input still in use.
-            await session.LoadSceneAsync(source with{GpuPresentation=true});PreviewSupersample=source.Supersample;
+            // Prepare the frozen soundtrack while models/textures initialize.
+            // BeginLoad already stopped the previous audio; no candidate is
+            // playable until the native frame and owner callback accept it.
+            ConfigureAudio(source,prepareOnly:true);
+            // Native initialization observes the import lifetime between model
+            // and texture operations; its input stays alive until it exits.
+            await session.LoadSceneAsync(source with{GpuPresentation=true},cancellationToken);PreviewSupersample=source.Supersample;
             cancellationToken.ThrowIfCancellationRequested();
             if(version!=sourceVersion)
             {if(acceptSource is not null)throw new OperationCanceledException();return;}
@@ -135,7 +139,12 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             if(version!=sourceVersion)
             {if(acceptSource is not null)throw new OperationCanceledException();return;}
             acceptSource?.Invoke();
-            ConfigureAudio(source);HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();
+            previewAudio.Activate();
+            // The accepted source owns its initial pane resolution, even when
+            // F1 was pressed during loading and LastFrame still belonged to an old source.
+            RememberWindowedPreviewSize(source.Width,source.Height,source.Supersample);
+            HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();
+            PresentationSizeChanged?.Invoke(this,EventArgs.Empty);
             RecordPreviewOperation("load.end");
         }
         catch(OperationCanceledException)
@@ -145,15 +154,19 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             if(version==sourceVersion)InvalidateSource();
             throw;
         }
-        catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
+        catch(Exception exception){if(version==sourceVersion){previewAudio.Clear();soundtrackKey=null;loading=false;PresentFailure(exception);}throw;}
     }
     public async Task LoadHomeAsync(HomePreviewSource source)
     {
+        SetCanvasDimensions(source.Project.Output.Width,source.Project.Output.Height);
         long version=BeginLoad("正在载入主页…");
         try
         {
             await session.LoadHomeAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
-            if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
+            if(version==sourceVersion)
+            {RememberWindowedPreviewSize(source.Width,source.Height,1);
+                HasCurrentSource=true;loading=false;PreviewSupersample=1;UpdateStatus();DrawSelection();
+                PresentationSizeChanged?.Invoke(this,EventArgs.Empty);}
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
     }

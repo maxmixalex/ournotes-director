@@ -187,7 +187,7 @@ public sealed partial class AdvScene : IDisposable
                 SetStage(row.Text("TargetAssetName"));
                 if(duration>0){yield return Tween("capture",()=>1,0,duration,AdvEase.OutQuad,v=>captureAlpha=v);captureActive=false;}yield break;
             case "In":if(name==""||shown.ContainsKey(pos))yield break;Show(name,pos,row.Text("MotionName"),row.Text("ExpressionName"),row.Number("MotionFadeIn"));if(Character(name) is Actor inActor)inActor.GameLighting=!row.Text("Parameter1").Equals("unlit",StringComparison.OrdinalIgnoreCase);foreach(var w in FadeSlot(pos,0,1,duration))yield return w;yield break;
-            case "Out":if(pos==0)pos=positions.GetValueOrDefault(name);foreach(var w in FadeSlot(pos,1,0,duration>0?duration:.05f))yield return w;if(!p.Cancelled){var actor=Character(name);foreach(var pair in shown.Where(x=>x.Value==actor).ToArray())shown.Remove(pair.Key);if(actor is not null)actor.Prefab.Root.Parent=null;}yield break;
+            case "Out":if(pos==0)pos=positions.GetValueOrDefault(name);foreach(var w in FadeSlot(pos,1,0,duration>0?duration:.05f))yield return w;if(!p.Cancelled){var actor=Character(name);if(actor is not null){RemoveStageActor(actor);actor.Prefab.Root.Parent=null;}}yield break;
             case "MoveToDirection":yield return MoveSlot(pos,new(Param(row,1),Param(row,2),Param(row,3)),duration);yield break;
             case "MoveToRight":case "MoveToLeft":case "MoveToUp":case "MoveToDown":case "MoveToForward":case "MoveToBack":
                 float offset=Param(row,1);var dir=row.Command switch{"MoveToRight"=>Vector3.UnitX,"MoveToLeft"=>-Vector3.UnitX,"MoveToUp"=>Vector3.UnitY,"MoveToDown"=>-Vector3.UnitY,"MoveToForward"=>-Vector3.UnitZ,_=>Vector3.UnitZ};yield return MoveSlot(pos,dir*offset,duration);yield break;
@@ -220,7 +220,7 @@ public sealed partial class AdvScene : IDisposable
                 var fds=FocusSettings();
                 var fd=fds["_focusData"]!.AsArray().First(v=>Actor.N(v!["_cameraDistance"])==row.Number("CameraDistance"))!;ease=Ease(row,(AdvEase)(int)Actor.N(fds["_focusEase"]));
                 var pt=FocusPoint(pos);float y=Actor.N(fd["_fieldZoomOffsetY"]);var ch=Character(name);
-                if(ch is not null&&positions.ContainsKey(name))y=ch.HeadPosition.Y-Actor.N(fd["_characterHeadFocusOffsetY"]);
+                if(ch is not null&&positions.TryGetValue(name,out int targetPosition)){pos=targetPosition;y=ch.HeadPosition.Y-Actor.N(fd["_characterHeadFocusOffsetY"]);}
                 focusPosition=panBase=new(pt.X,y,0);focusZoom=Actor.N(fd["_fieldZoomRatio"]);
                 focusDistance=(int)row.Number("CameraDistance");bool sharp=row.Text("Parameter1").Equals("sharp",StringComparison.OrdinalIgnoreCase);
                 var tasks=new List<AdvWait>{Camera.MoveX(pt.X,duration,ease),Camera.MoveY(y,duration,ease),Camera.MoveZ(0,duration,ease),Camera.RotateY(0,duration,ease),Camera.Zoom(focusZoom,duration,ease),RotateSlots(0,duration,ease),Tween("blurRadius",()=>blurRadius,BlurRadii[Math.Clamp(focusDistance,0,6)],duration,ease,v=>blurRadius=v)};

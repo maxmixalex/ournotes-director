@@ -75,14 +75,20 @@ static class StoryTimingAnalysisTests
             // the real rendering path as well, so a shared shortcut cannot make
             // those two agree on a wrong command schedule.
             var fullWatch = Stopwatch.StartNew();
+            var fullCueCache=new AdvCueCache();
+            using var initializationCancellation=new CancellationTokenSource();
             using (var full = new AdvStoryRenderer(archive, "intl", core, "10462", "zh-Hans",
-                960, 540, path, ffmpeg, 1, project, false, new AdvCueCache()))
+                960, 540, path, ffmpeg, 1, project, false, fullCueCache,
+                initializationCancellationToken:initializationCancellation.Token))
             {
+                initializationCancellation.Cancel();
                 var fullTiming = full.AnalyzeTiming(hash);
                 Check(fullTiming.IsComplete && fullTiming.ProjectHash == reference!.ProjectHash
                     && fullTiming.EndFrame == reference.EndFrame && fullTiming.Duration == reference.Duration
                     && fullTiming.Commands.SequenceEqual(reference.Commands),
                     "Timing-only visual-resource shortcuts preserve the full renderer's native command schedule");
+                Check(fullTiming.IsComplete&&initializationCancellation.IsCancellationRequested,
+                    "Cancelling a completed foreground initialization does not cancel native execution or shared PCM decoding");
                 report["fullRendererReference"] = new JsonObject { ["ms"] = fullWatch.Elapsed.TotalMilliseconds,
                     ["endFrame"] = fullTiming.EndFrame, ["commands"] = fullTiming.Commands.Count };
             }
@@ -101,6 +107,9 @@ static class StoryTimingAnalysisTests
                     Check(actual.Channels == expected.Channels && actual.Samples == expected.Samples
                         && actual.Category == expected.Category && actual.LoopStart == expected.LoopStart && actual.LoopEnd == expected.LoopEnd
                         && actual.Pcm.SequenceEqual(expected.Pcm), "Prefetched real voice retains its complete, sample-identical native PCM: " + id);
+                    var retained=fullCueCache.Get(id,()=>throw new InvalidOperationException("Completed native execution did not retain the requested voice."));
+                    Check(retained.Samples==expected.Samples&&retained.Pcm.SequenceEqual(expected.Pcm),
+                        "The shared foreground cue cache remains sample-identical after initialization cancellation: "+id);
                 }
             }
             await CancelledNativeAnalysis(source,output,Check,report);

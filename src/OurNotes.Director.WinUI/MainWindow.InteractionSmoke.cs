@@ -35,6 +35,8 @@ public sealed partial class MainWindow
             viewport.Focus(FocusState.Keyboard);
             await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
             root.UpdateLayout();
+            await ApplyWorkspacePresentationSizeSmokeAsync(workspace);
+            if (viewport.HasCurrentSource) viewport.VerifyFullscreenResolutionSmoke(workspace, check);
             check(IsMonitorFullscreen && AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen
                 && layout.ProgramMonitorPanel.IsMaximized && fullscreenHidden.Count > 0,
                 workspace + "：实际 F1 进入节目监视器全屏，隐藏编辑器外框");
@@ -43,12 +45,22 @@ public sealed partial class MainWindow
             await viewport.SendShellKeySmokeAsync(this, (VirtualKey)192); root.UpdateLayout();
             check(IsMonitorFullscreen && layout.MaximizedPanel == layout.ProgramMonitorPanel,
                 workspace + "：全屏内反引号不恢复被隐藏的其他面板");
+            var windowedSize = viewport.WindowedPreviewSize;
+            // Toggle twice on this UI turn before either page's debounce can
+            // restore its pixels; the second entry still sees a fullscreen frame.
+            ExitMonitorFullscreen(); EnterMonitorFullscreen(); root.UpdateLayout();
+            check(viewport.WindowedPreviewSize == windowedSize,
+                workspace + "：快速退出再进入全屏不会把大缓冲误记为窗口预览尺寸");
             await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1); root.UpdateLayout();
+            await ApplyWorkspacePresentationSizeSmokeAsync(workspace);
             check(!IsMonitorFullscreen && AppWindow.Presenter.Kind == originalPresenter.Kind
                 && layout.MaximizedPanel == originalMaximized && Grid.GetRow(content) == 2 && Grid.GetRowSpan(content) == 1,
                 workspace + "：再次 F1 恢复窗口和先前面板布局");
             check(viewport.LastFrame?.SessionId == session && viewport.LastFrame?.Frame == frame && !viewport.IsPlaying,
                 workspace + "：全屏来回保留原生渲染会话、暂停姿态和播放状态");
+            if (workspace != "live2d" && windowedSize is { } restoredSize)
+                check(viewport.LastFrame?.Pixels.Width == restoredSize.Width && viewport.LastFrame?.Pixels.Height == restoredSize.Height,
+                    workspace + "：快速全屏往返之后仍恢复原窗口预览像素尺寸");
 
             layout.RestorePanels(); layout.ToggleMaximize(layout.ProgramMonitorPanel);
             viewport.Focus(FocusState.Keyboard);
@@ -73,7 +85,12 @@ public sealed partial class MainWindow
             // These controls are deliberately inside the monitor. Testing only
             // inspector focus would not exercise the text-input exclusion.
             if (workspace == "scenes") await VerifyMonitorTextFocusSmokeAsync(layout, viewport, check);
-            if (viewport.HasCurrentSource) await VerifyPlayingFullscreenSmokeAsync(workspace, viewport, check);
+            if (viewport.HasCurrentSource)
+            {
+                if (workspace == "live2d") await Live2D.WithFullscreenPlaybackSmokeAsync(
+                    () => VerifyPlayingFullscreenSmokeAsync(workspace, viewport, check));
+                else await VerifyPlayingFullscreenSmokeAsync(workspace, viewport, check);
+            }
             if (workspace == "home") await viewport.RunGpuLayoutSmokeAsync(this, check);
         }
         Navigate("scenes"); root.UpdateLayout(); await Task.Delay(100);
@@ -100,6 +117,14 @@ public sealed partial class MainWindow
         await App.CaptureCheckpointAsync("graphics-settings"); CloseDrawer();
     }
 
+    Task ApplyWorkspacePresentationSizeSmokeAsync(string workspace) => workspace switch
+    {
+        "scenes" => Scene.ApplyPresentationSizeAsync(),
+        "live2d" => Live2D.ApplyPreviewSizeAsync(),
+        "home" => Home.ApplyPresentationSizeAsync(),
+        _ => Task.CompletedTask
+    };
+
     async Task VerifyPlayingFullscreenSmokeAsync(string workspace, NativeViewport viewport, Action<bool, string> check)
     {
         var before = viewport.LastFrame!;
@@ -121,6 +146,7 @@ public sealed partial class MainWindow
             transport["playingBeforeFullscreen"] = Frame(playing);
             viewport.Focus(FocusState.Keyboard); await viewport.SendShellKeySmokeAsync(this, VirtualKey.F1);
             root.UpdateLayout();
+            await ApplyWorkspacePresentationSizeSmokeAsync(workspace);
             var fullscreen = await Advance(playing);
             await viewport.WaitForGpuLayoutAsync();
             transport["fullscreen"] = Frame(fullscreen);
@@ -143,7 +169,8 @@ public sealed partial class MainWindow
             try
             {
                 await viewport.PauseForEditingAsync(); ExitMonitorFullscreen();
-                root.UpdateLayout(); await viewport.SeekAsync(before.Time); await viewport.WaitForGpuLayoutAsync();
+                root.UpdateLayout(); await ApplyWorkspacePresentationSizeSmokeAsync(workspace);
+                await viewport.SeekAsync(before.Time); await viewport.WaitForGpuLayoutAsync();
                 transport["restored"] = Frame(viewport.LastFrame);
                 transport["restoredFullscreen"] = IsMonitorFullscreen;
                 transport["restoredPlaying"] = viewport.IsPlaying;
@@ -157,7 +184,8 @@ public sealed partial class MainWindow
             ["sessionId"] = value.SessionId, ["frame"] = value.Frame, ["time"] = value.Time,
             ["duration"] = value.Duration, ["playing"] = value.IsPlaying, ["device"] = value.Device,
             ["width"] = value.Pixels.Width, ["height"] = value.Pixels.Height,
-            ["renderMilliseconds"] = value.RenderMilliseconds, ["scenePreviewScale"] = value.ScenePreviewScale
+            ["renderMilliseconds"] = value.RenderMilliseconds, ["scenePreviewScale"] = value.ScenePreviewScale,
+            ["initialization"] = value.Initialization?.ToJson(), ["audio"] = viewport.AudioDiagnosticsForSmoke()
         };
 
         async Task<OurNotes.Director.Core.PreviewFrame> Advance(OurNotes.Director.Core.PreviewFrame previous)

@@ -12,6 +12,7 @@ public sealed partial class NativeViewport
     readonly TextBlock audioStatus = new() { FontSize = 11, MaxWidth = 180, Foreground = Brush(205, 215, 230),
         TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
     string? soundtrackKey;
+    internal System.Text.Json.Nodes.JsonObject AudioDiagnosticsForSmoke() => previewAudio.Diagnostics();
     void AudioMessage(string message, bool exceptional = false)
     {
         audioStatus.Text = message; ToolTipService.SetToolTip(audioStatus, message);
@@ -55,7 +56,7 @@ public sealed partial class NativeViewport
             row.Children.Add(sound); Grid.SetColumn(sound, 3); bar.Child = row;
         }
     }
-    void ConfigureAudio(ScenePreviewSource source)
+    void ConfigureAudio(ScenePreviewSource source, bool prepareOnly = false)
     {
         try
         {
@@ -63,7 +64,7 @@ public sealed partial class NativeViewport
             { previewAudio.Clear(); soundtrackKey = null; AudioMessage("无声音片段"); return; }
             string key = PreviewAudioIdentity.Key(source);
             if (key == soundtrackKey && previewAudio.PositionSeconds is not null) return;
-            previewAudio.Configure(source); soundtrackKey = key;
+            previewAudio.Configure(source, prepareOnly); soundtrackKey = key;
         }
         catch (Exception error)
         { previewAudio.Clear(); soundtrackKey = null; AudioMessage("声音准备失败：" + error.Message, true); }

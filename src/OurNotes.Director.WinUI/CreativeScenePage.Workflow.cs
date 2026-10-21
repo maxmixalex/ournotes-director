@@ -101,7 +101,7 @@ internal sealed partial class CreativeScenePage
     Task<NativePlaybackTiming>? importAnalysis;
     internal JsonObject? LastStoryImportReport { get; private set; }
     internal void CancelStoryImport()
-    {if(importCancellation is not null){importCancellation.Cancel();cancelImport.IsEnabled=false;}}
+    {importCancellation?.Cancel();}
     async Task ImportNativeAsync(string json,string baseDirectory)
     {
         if(importingStory)throw new InvalidOperationException("正在打开另一段原剧情，请稍候。");
@@ -120,13 +120,12 @@ internal sealed partial class CreativeScenePage
         string? importNotice=null;
         void ShowImportNotice(string message)
         {
+            cancellation.Token.ThrowIfCancellationRequested();
             importNotice=message;notice.Severity=InfoBarSeverity.Informational;notice.Message=message;notice.IsOpen=true;
-            cancelImport.Visibility=Visibility.Visible;cancelImport.IsEnabled=true;
         }
         void HideImportNotice()
         {
             if(!ReferenceEquals(importCancellation,cancellation))return;
-            cancelImport.Visibility=Visibility.Collapsed;
             if(notice.Severity==InfoBarSeverity.Informational&&notice.Message==importNotice)notice.IsOpen=false;
         }
         SceneSnapshot? input=null;
@@ -173,13 +172,21 @@ internal sealed partial class CreativeScenePage
                 ()=>{Mark("editablePreviewMs");HideImportNotice();});
             Mark("bindTimelineMs");
             LastStoryImportReport=new JsonObject { ["schema"]="ournotes-director/story-import/3",["totalMs"]=total.Elapsed.TotalMilliseconds,["intermediatePreviewCreated"]=false,
-                ["commands"]=timing.Commands.Count,["clips"]=imported.Clips.Count,["stages"]=stages,["nativeAnalysis"]=timingDiagnostics?.ToJson() };
+                ["commands"]=timing.Commands.Count,["clips"]=imported.Clips.Count,["stages"]=stages,["nativeAnalysis"]=timingDiagnostics?.ToJson(),
+                ["editablePreviewInitialization"]=viewport.LastFrame?.Initialization?.ToJson(),
+                ["audio"]=viewport.AudioDiagnosticsForSmoke() };
             App.TraceStartup("Story import: "+LastStoryImportReport.ToJsonString());
         }
         finally
         {
             input?.Dispose();HideImportNotice();
-            if(ReferenceEquals(importCancellation,cancellation)){importingStory=false;importAnalysis=null;importCancellation=null;}
+            if(ReferenceEquals(importCancellation,cancellation))
+            {
+                importingStory=false;importAnalysis=null;importCancellation=null;
+                // A fullscreen resize can be deferred while importing. Cancellation
+                // may leave no new load/layout event to retry that skipped request.
+                if(!disposed){presentationTimer?.Stop();presentationTimer?.Start();}
+            }
         }
     }
 
@@ -203,6 +210,7 @@ internal sealed partial class CreativeScenePage
             {
                 requireOwner();
                 var size=PreviewSize(parsed.Output.Width,parsed.Output.Height);
+                viewport.SetCanvasDimensions(parsed.Output.Width,parsed.Output.Height);
                 var source=Source(candidate.FilePath,size.Width,size.Height,imported.Duration+1d/30);
                 string sourceKey=parsed.Root["source"]!.ToJsonString()+parsed.Root["output"]!.ToJsonString()+window.Settings.ArchivePath;
                 previewDirty=true;loadedSourceKey=null;started=true;
@@ -353,6 +361,7 @@ internal sealed partial class CreativeScenePage
             try
             {
                 var size=PreviewSize(parsed.Output.Width,parsed.Output.Height);var source=Source(input.FilePath,size.Width,size.Height,duration+1d/30);
+                viewport.SetCanvasDimensions(parsed.Output.Width,parsed.Output.Height);
                 bool same=viewport.HasCurrentSource&&loadedSourceKey==sourceKey;
                 if(same)await viewport.CommitSceneProjectAsync(source);
                 else await viewport.LoadSceneAsync(source,()=>
@@ -387,7 +396,7 @@ internal sealed partial class CreativeScenePage
             var last = viewport.LastFrame;
             double quality = SceneInteractionPreview.Scale(timeline.IsScrubbing, last?.Device ?? "",
                 last?.Performance?.SceneMilliseconds ?? 0, last?.ScenePreviewScale ?? 1);
-            if (document.Root["nativeOutput"]?["isolateActor"] is not null
+            if (viewport.IsFullscreenRendering || document.Root["nativeOutput"]?["isolateActor"] is not null
                 || SceneContent.Read(document.Canvas["content"]) == "characters") quality = 1;
             await viewport.SetScenePreviewScaleAsync(quality, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();

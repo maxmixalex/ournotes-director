@@ -75,7 +75,7 @@ public sealed unsafe partial class OffscreenGl
         if(surface is {} old)ReleaseSurface(old);
         surface=next;
     }
-    void ReleaseSurface(GlSurface surface)
+    internal void ReleaseSurface(GlSurface surface)
     {
         uint framebuffer=surface.Framebuffer,texture=surface.Texture;
         if(stencilBuffers.Remove(framebuffer,out uint stencil))Fn<Delete>("glDeleteRenderbuffers")(1,ref stencil);

@@ -87,13 +87,14 @@ public sealed class PreviewSoundtrack : IAsyncDisposable
         try
         {
             Thread.CurrentThread.Name ??= "OurNotes audio preparation";
+            cancellation.Token.ThrowIfCancellationRequested();
             if(ExternalVoiceTimeline.Supports(document))
             {
                 ProduceTimedVoices(source,document); return;
             }
             using var native = new AdvStoryRenderer(new Archive(source.ArchivePath), project.Site,
                 source.CubismPath, project.Adv, project.Language, source.Width, source.Height,
-                source.ProjectPath, source.FfmpegPath, 1, document, timingOnly: true);
+                source.ProjectPath, source.FfmpegPath, 1, document, timingOnly: true,cancellationToken:cancellation.Token);
             var mix = new float[AdvAudio.SamplesPerFrame * 2];
             var pcm = new byte[mix.Length * sizeof(short)];
             int limit = source.DurationMode == PreviewDurationMode.Automatic ? 30 * 36000

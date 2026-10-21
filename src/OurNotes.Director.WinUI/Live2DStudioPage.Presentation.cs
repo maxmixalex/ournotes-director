@@ -32,7 +32,7 @@ internal sealed partial class Live2DStudioPage
     (int Width, int Height, int Supersample) DesiredPreviewSize(OurNotes.Director.Desktop.Core.Live2DDocument current)
         => previewSizeOverride ?? viewport.RecommendedPreviewSize(current.Width, current.Height);
 
-    async Task ApplyPreviewSizeAsync()
+    internal async Task ApplyPreviewSizeAsync()
     {
         if (!active || disposed || document is null || !viewport.HasCurrentSource) return;
         await previewGate.WaitAsync(lifetime.Token);
@@ -40,10 +40,18 @@ internal sealed partial class Live2DStudioPage
         {
             if (!active || disposed || document is null || !ReferenceEquals(document, presentedDocument)
                 || !viewport.HasCurrentSource) return;
-            var size = DesiredPreviewSize(document);
+            var owner = document; long version = loadVersion;
+            var size = DesiredPreviewSize(owner);
             if (viewport.LastFrame is { } frame && frame.Pixels.Width == size.Width && frame.Pixels.Height == size.Height
                 && viewport.PreviewSupersample == size.Supersample) return;
             await viewport.ResizePreviewAsync(size.Width, size.Height, size.Supersample, lifetime.Token);
+            // F1 or layout can change while the native redraw is in flight. The
+            // retained old frame may already match that newer size, so its event
+            // can legitimately skip scheduling. Reconcile after this frame lands.
+            if (active && !disposed && version == loadVersion && viewport.HasCurrentSource
+                && ReferenceEquals(document, owner) && ReferenceEquals(presentedDocument, owner)
+                && DesiredPreviewSize(owner) != size)
+            { resolutionTimer!.Stop(); resolutionTimer.Start(); }
         }
         finally { previewGate.Release(); }
     }

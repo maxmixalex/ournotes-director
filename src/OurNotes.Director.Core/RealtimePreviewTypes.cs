@@ -55,6 +55,7 @@ public sealed record PreviewFrame(long Sequence, long SessionId, int Frame, doub
     IReadOnlyList<PreviewActorAnimation>? ActorAnimations=null, GpuPreviewSurface? GpuSurface=null, string? PresentationFallback=null)
 {
     public double ScenePreviewScale { get; init; } = 1;
+    public PreviewInitializationDiagnostics? Initialization { get; init; }
     public bool IsGpuPresented => GpuSurface is not null;
     public long CpuPixelTransferBytes => Pixels.ByteLength;
     public NativePlaybackTiming? NativeTiming=>Timing;

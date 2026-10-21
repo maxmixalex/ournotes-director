@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Controls;
 using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 
@@ -42,7 +44,15 @@ internal sealed partial class CreativeScenePage
             string[] beforeTargets=beforePreview.Targets.Select(target=>target.Id).ToArray();
             byte[] beforeDraft=await File.ReadAllBytesAsync(draftPath);
 
-            var cancelled=await Attempt(CancelStoryImport);
+            var cancelled=await Attempt(()=>
+            {
+                var close=MainWindow.Descendants<Button>(notice).Single(button=>button.Name=="CloseButton");
+                check(notice.ActionButton is null&&close.IsEnabled&&notice.IsOpen,
+                    "解析提示仅保留右侧关闭按钮，没有额外取消解析按钮");
+                new ButtonAutomationPeer(close).Invoke();
+                check(importCancellation?.IsCancellationRequested==true&&!notice.IsOpen,
+                    "点击解析提示的真实关闭按钮立即取消正在载入的原剧情");
+            });
             check(cancelled is OperationCanceledException&&ReferenceEquals(document,owner)&&document.ToJson()==before
                 &&undo.SequenceEqual(beforeUndo)&&redo.SequenceEqual(beforeRedo)
                 &&selectedActor==beforeActor&&selectedClip==beforeClip&&path==beforePath&&savedText==beforeSaved
@@ -90,7 +100,6 @@ internal sealed partial class CreativeScenePage
             if(originalDraft is null){if(File.Exists(draftPath))File.Delete(draftPath);}
             else await File.WriteAllBytesAsync(draftPath,originalDraft);
             notice.Severity=originalSeverity;notice.Message=originalMessage;notice.IsOpen=originalNotice;
-            cancelImport.Visibility=Visibility.Collapsed;
             DesktopSettings.AtomicWrite(App.SmokeEvidencePath("story-import-transaction.json"),new JsonObject
             { ["boundary"]="presented native candidate frame before source acceptance",["cases"]=cases }.ToJsonString(DesktopSettings.JsonOptions));
         }
@@ -100,6 +109,11 @@ internal sealed partial class CreativeScenePage
             var owner=document;string text=owner.ToJson();long version=loadVersion,oldSession=viewport.LastFrame?.SessionId??0;
             using var cancellation=new CancellationTokenSource();
             importingStory=true;importCancellation=cancellation;
+            notice.Message="正在载入可编辑预览…";notice.Severity=InfoBarSeverity.Informational;
+            notice.IsOpen=true;notice.ApplyTemplate();UpdateLayout();
+            notice.IsOpen=false;
+            check(!cancellation.IsCancellationRequested,"程序关闭解析提示不触发用户取消事件");
+            notice.IsOpen=true;UpdateLayout();
             var candidate=CreativeScene.Blank(document.Site,document.Language);
             candidate.Canvas["width"]=64;candidate.Canvas["height"]=64;
             candidate.AddClip("","hold",0,1,new JsonObject{["cmd"]="Delay",["Frames"]=0},"候选场景");

@@ -1,5 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/OurNotes.Director.Desktop.Core/OurNotes.Director.Desktop.Core.csproj" /></ItemGroup>
   <ItemGroup><Compile Include="../../src/OurNotes.Director.WinUI/TimelineScrubber.cs" Link="TimelineScrubber.cs" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../src/OurNotes.Director.WinUI/WindowsPreviewAudio.cs" Link="WindowsPreviewAudio.cs" />
+    <Compile Include="../../src/OurNotes.Director.WinUI/WindowsPreviewAudio.Device.cs" Link="WindowsPreviewAudio.Device.cs" />
+  </ItemGroup>
 </Project>
