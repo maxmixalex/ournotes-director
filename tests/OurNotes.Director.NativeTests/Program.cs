@@ -3,6 +3,12 @@
 try
 {
     if (await StoryTimingAnalysisTests.HandleDecoderWorkerAsync(args) is {} workerExit) return workerExit;
+    if (args.Length == 2 && args[0] == "--prepare-fixture-library")
+    {
+        await CreativeStagingNativeTests.PrepareFixtureLibraryAsync(args[1]);
+        Console.WriteLine("Prepared creative library resources for test fixture: " + Path.GetFullPath(args[1]));
+        return 0;
+    }
     if (args.Length == 3 && args[0] == "--model-cache") return ModelResourceCacheNativeTests.Run(args[1], args[2]);
     if (args.Length == 3 && args[0] == "--millsage-blur") return await MillsageBlurNativeTests.RunAsync(args[1], args[2]);
     if (args.Length == 3 && args[0] == "--millsage-replay") return await MillsageReplayNativeTests.RunAsync(args[1], args[2]);

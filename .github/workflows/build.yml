@@ -137,6 +137,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Millsage long-story replay and particle cache checks failed: $LASTEXITCODE" }
           & $test --specific-antialiasing artifacts/millsage-home-fixture artifacts/hotaru-quality-fixture $ffmpeg artifacts/specific-antialiasing-evidence
           if ($LASTEXITCODE -ne 0) { throw "Hotaru and Millsage antialiasing checks failed: $LASTEXITCODE" }
+          & $test --prepare-fixture-library artifacts/hotaru-quality-fixture
+          if ($LASTEXITCODE -ne 0) { throw "Hotaru creative library fixture preparation failed: $LASTEXITCODE" }
           ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -RealHomeFixtureDirectory artifacts/millsage-home-fixture -RealHotaruFixtureDirectory artifacts/hotaru-quality-fixture -RealMillsageFixtureDirectory artifacts/millsage-blur-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 900 -ProgressTimeoutSeconds 180
       - name: Preserve actual window evidence
         if: always()

@@ -93,7 +93,7 @@ static class CreativeStagingNativeTests
         }
         finally { File.WriteAllText(Path.Combine(output, "report.json"), report.ToJsonString()); }
     }
-    static async Task PrepareFixtureLibraryAsync(string fixture)
+    internal static async Task PrepareFixtureLibraryAsync(string fixture)
     {
         // The downloaded fixture has the complete site's index but only selected story
         // manifests. Restrict only this test copy while building the creative library.
