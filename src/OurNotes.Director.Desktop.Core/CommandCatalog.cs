@@ -294,8 +294,7 @@ public static class CommandCatalog
     private static CommandField[] Page(int defaultLimit = 50, int maximum = 10000) =>
         [Integer("limit", "每页数量", "本次最多返回或处理的条目数。", defaultLimit.ToString(System.Globalization.CultureInfo.InvariantCulture), 1, maximum, true), Integer("offset", "跳过条目数", "从零开始的分页位置。", "0", 0, int.MaxValue, true)];
     private static CommandField Quality() => Choice("cineform-quality", "CineForm 质量", "默认 film1 平衡画质和体积，high 更重视体积；仅对 CineForm 生效。", "film1",
-        new[] { "film3+", "film3", "film2+", "film2", "film1.5", "film1+", "film1", "high+", "high", "medium+", "medium", "low+", "low" }
-            .Select(value => new CommandChoice(value, value == "film1" ? "film1（推荐平衡）" : value == "high" ? "high（较小体积）" : value + " 质量档位")).ToArray(), advanced: true);
+        ExportQuality.CineFormChoices.Select(choice => new CommandChoice(choice.Value, choice.Label)).ToArray(), advanced: true);
     private static CommandField[] Dimensions(bool contact, bool home, bool project = false) =>
     [
         Integer("width", "画面宽度", project ? "留空使用项目设置；没有设置时为操作默认尺寸。" : "最终输出宽度；CineForm 要求为 16 的倍数。", project ? null : contact ? "640" : "1920", 16, OurNotes.Director.Core.RenderDimensions.MaxSide),

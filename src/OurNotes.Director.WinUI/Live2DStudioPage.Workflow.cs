@@ -38,6 +38,19 @@ internal sealed partial class Live2DStudioPage
     {
         var menu = new MenuFlyout();
         menu.Items.Add(StudioMenus.Item("适应画布", viewport.FitCanvas, "\uE9A6", true, "F"));
+        var antialiasing = new MenuFlyoutSubItem { Text = "预览抗锯齿" };
+        foreach (var (sampling, label) in new[] { (2, "2× · 流畅（默认）"), (4, "4× · 精细（较慢）") })
+        {
+            var choice = new ToggleMenuFlyoutItem { Text = label, Tag = sampling, IsChecked = previewSampling == sampling };
+            choice.Click += (_, _) =>
+            {
+                foreach (var item in antialiasing.Items.OfType<ToggleMenuFlyoutItem>())
+                    item.IsChecked = ReferenceEquals(item, choice);
+                SelectPreviewSampling(sampling);
+            };
+            antialiasing.Items.Add(choice);
+        }
+        menu.Items.Add(antialiasing);
         menu.Items.Add(StudioMenus.Item("标记入点", () => MarkRange(true), enabled: document is not null, shortcut: "I"));
         menu.Items.Add(StudioMenus.Item("标记出点", () => MarkRange(false), enabled: document is not null, shortcut: "O"));
         menu.Items.Add(StudioMenus.Item("清除区间", ClearRange, enabled: document?.Range is not null));

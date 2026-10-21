@@ -5,6 +5,9 @@ param(
     [string] $ReportDirectory = 'artifacts/desktop-smoke',
     [string] $FixtureDirectory,
     [string] $RealSceneFixtureDirectory,
+    [string] $RealHomeFixtureDirectory,
+    [string] $RealHotaruFixtureDirectory,
+    [string] $RealMillsageFixtureDirectory,
     [string] $OpenGLDriver,
     [ValidateRange(10, 900)] [int] $TimeoutSeconds = 120,
     [ValidateRange(10, 300)] [int] $ProgressTimeoutSeconds = 90
@@ -105,6 +108,15 @@ try {
     }
     if ($RealSceneFixtureDirectory) {
         $startInfo.Environment['OURNOTES_REAL_SCENE_FIXTURE'] = (Resolve-Path -LiteralPath $RealSceneFixtureDirectory).Path
+    }
+    if ($RealHomeFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_HOME_FIXTURE'] = (Resolve-Path -LiteralPath $RealHomeFixtureDirectory).Path
+    }
+    if ($RealHotaruFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_HOTARU_FIXTURE'] = (Resolve-Path -LiteralPath $RealHotaruFixtureDirectory).Path
+    }
+    if ($RealMillsageFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_MILLSAGE_FIXTURE'] = (Resolve-Path -LiteralPath $RealMillsageFixtureDirectory).Path
     }
     if ($OpenGLDriver) {
         $startInfo.Environment['OURNOTES_TEST_OPENGL'] = (Resolve-Path -LiteralPath $OpenGLDriver).Path

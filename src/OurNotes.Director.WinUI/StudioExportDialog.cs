@@ -19,7 +19,8 @@ internal static class StudioExportDialog
             NativeDependencies.CoreLibrary(Empty(window.Settings.NativeLibraryPath), Empty(window.Settings.CubismSdkPath)),
             NativeDependencies.MediaTool("ffmpeg", Empty(window.Settings.FFmpegPath)), 64, 64, full.End);
         var settings = await ChooseAsync(window, "导出 Live2D 角色", output.Width, output.Height, 30,
-            output.Codec == "h264" ? "cineform" : output.Codec, output.CineformQuality, full.Duration, live2d.Time,
+            output.Codec == "h264" ? "cineform" : output.Codec,
+            ExportQuality.InitialCineFormQuality(document.Root["output"] as JsonObject, true), full.Duration, live2d.Time,
             false, true, output.Supersample, initialKind: initialKind, isolated: true, transparencyRequired: true,
             initialRange: live2d.Range, actorCanvas: (progress, cancellation) => ActorCanvasAnalysis.AnalyzeAsync(
                 source, full.StartFrame, full.EndFrameExclusive, progress, cancellation), canvasMultiplier: live2d.CanvasMultiplier,
@@ -38,7 +39,8 @@ internal static class StudioExportDialog
         Func<string, int, Task<(int Width, int Height)>>? canvas = actorMetadata is null ? null
             : (codec, _) => Task.FromResult(SceneAssetExport.Canvas(actorMetadata, codec));
         var settings = await ChooseAsync(window, actorId is not null ? "导出角色素材" : singleActor ? "导出单人透明镜头" : "导出场景", output.Width, output.Height, 30, transparencyRequired && output.Codec == "h264" || actorId is not null ? "cineform" : output.Codec,
-            output.CineformQuality, scene.ResolvedDuration ?? scene.Duration, playhead, false, actorId is not null, actorId is not null ? 1 : output.Supersample,
+            ExportQuality.InitialCineFormQuality(document.Root["output"] as JsonObject, transparencyRequired),
+            scene.ResolvedDuration ?? scene.Duration, playhead, false, actorId is not null, actorId is not null ? 1 : output.Supersample,
             scene.DurationMode == StudioDurationMode.Automatic, nativeCanvas: canvas, initialKind: initialKind,
             isolated: actorId is not null, transparencyRequired: transparencyRequired, initialRange:initialRange);
         if (settings is null) return;
@@ -111,7 +113,7 @@ internal static class StudioExportDialog
         scope.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
         var format = Ui.Choice("视频格式", [("cineform", "透明 MOV · CineForm（推荐）"), ("prores", "透明 MOV · ProRes 4444"),
             ("ffv1", "无损 MKV · FFV1"), ("h264", "MP4 · H.264")], codec);
-        var qualityBox = Ui.Choice("CineForm 质量", [("film1", "均衡 · Film 1"), ("high", "较小体积 · High"), ("film3", "更高画质 · Film 3")], quality);
+        var qualityBox = Ui.Choice("CineForm 质量", ExportQuality.CineFormChoices, VideoEncoding.NormalizeCineFormQuality(quality));
         var resolution = Ui.Choice("画面尺寸", [("current", $"项目尺寸 · {width} × {height}"), ("1080", "横屏 · 1920 × 1080"),
             ("portrait", "竖屏 · 1088 × 1920"), ("1440", "横屏 · 2560 × 1440"), ("custom", "自定义")]);
         if (selected && nativeCanvas is not null) resolution.Items.Insert(1, new ComboBoxItem { Tag = "native", Content = "选中角色原始尺寸 · 自动适配完整动画" });

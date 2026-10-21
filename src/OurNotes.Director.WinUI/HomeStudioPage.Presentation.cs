@@ -33,7 +33,10 @@ internal sealed partial class HomeStudioPage
             bool fullscreen = viewport.IsFullscreenRendering;
             if (fullscreen) fullscreenPreviewSized = true;
             var normal = PreviewSize(output.Width, output.Height);
-            var size = fullscreen ? viewport.RecommendedPreviewSize(output.Width, output.Height, 1)
+            // The room contains hard geometric edges such as the garage railings.
+            // Matching the display pixels alone leaves these single-sampled;
+            // resolve a 2x native drawing canvas without enlarging the displayed frame.
+            var size = fullscreen ? viewport.RecommendedPreviewSize(output.Width, output.Height, 2)
                 : viewport.WindowedPreviewSize ?? (normal.Width, normal.Height, 1);
             if (viewport.LastFrame is not { } frame || frame.Pixels.Width != size.Width
                 || frame.Pixels.Height != size.Height || viewport.PreviewSupersample != size.Supersample)

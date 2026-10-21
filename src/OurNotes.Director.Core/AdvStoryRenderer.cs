@@ -167,8 +167,11 @@ public sealed class AdvStoryRenderer : IDisposable
             if(Player.MissingCommands.Length>0)throw new NotSupportedException("Native story commands not connected: "+string.Join(", ",Player.MissingCommands));
             Mark("sceneAndUiMs");
             constructorToken.ThrowIfCancellationRequested();
+            var modelInitializationBefore=archive.ModelInitializationTimings.ToDictionary(pair=>pair.Key,pair=>pair.Value);
             Scene.Preload(rows,constructorToken);
             Mark("nativeModelsMs");
+            foreach(var (name,milliseconds) in archive.ModelInitializationTimings)
+                initializationMilliseconds[name]=milliseconds-modelInitializationBefore.GetValueOrDefault(name);
             constructorToken.ThrowIfCancellationRequested();
             foreach(var row in rows.Where(r=>r.Command=="Director.Parameter"))_=(Scene.Character(row.Text("TargetName"))??throw new ArgumentException("Unknown actor: "+row.Text("TargetName"))).ParameterValue(row.Text("Parameter"));
             Player.Prepare=p=>Ui.Prepare();Player.Start();

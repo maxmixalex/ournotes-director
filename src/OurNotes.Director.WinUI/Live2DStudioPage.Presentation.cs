@@ -13,6 +13,8 @@ internal sealed partial class Live2DStudioPage
     long controlsRefreshStamp;
     Microsoft.UI.Dispatching.DispatcherQueueTimer? resolutionTimer;
     (int Width, int Height, int Supersample)? previewSizeOverride;
+    int previewSampling = 2;
+    Task previewQualityTask = Task.CompletedTask;
 
     void InitializeAdaptivePreview()
     {
@@ -30,7 +32,17 @@ internal sealed partial class Live2DStudioPage
     }
 
     (int Width, int Height, int Supersample) DesiredPreviewSize(OurNotes.Director.Desktop.Core.Live2DDocument current)
-        => previewSizeOverride ?? viewport.RecommendedPreviewSize(current.Width, current.Height);
+        => previewSizeOverride ?? viewport.RecommendedPreviewSize(current.Width, current.Height, previewSampling);
+
+    void SelectPreviewSampling(int sampling)
+    {
+        // This is a presentation preference for this workbench instance. Resizing
+        // the current renderer keeps its pose/session and leaves export settings alone.
+        previewSampling = sampling;
+        resolutionTimer?.Stop();
+        var pending = previewQualityTask = ApplyPreviewSizeAsync();
+        _ = SafeAsync(() => pending);
+    }
 
     internal async Task ApplyPreviewSizeAsync()
     {

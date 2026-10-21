@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch the public 40002 home regression fixture without modifying source manifests.
+"""Fetch a public home regression fixture (40002 by default), preserving source manifests.
 
 Usage: python scripts/fetch-home-fixture.py <new-fixture-directory>
 Only this test setup uses Python/network access. The native application does not.
@@ -24,13 +24,19 @@ SOURCES = (10855, 10853)  # Area and Hotaru tap sources of the same complete hom
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
+    parser.add_argument("--spot", type=int, default=SPOT, help="Original home spot ID (default: 40002)")
+    parser.add_argument("--sources", type=int, nargs="+", default=list(SOURCES), help="Area source followed by optional tap source IDs")
     args = parser.parse_args()
+    spot = args.spot
+    sources = tuple(dict.fromkeys(args.sources))
+    if spot <= 0 or not sources or any(adv <= 0 for adv in sources):
+        parser.error("Use positive original spot and story IDs.")
     root = args.archive.resolve()
     marker = root / "home-fixture.json"
     if root.exists() and any(root.iterdir()) and not marker.exists():
         raise ValueError("Use an empty fixture directory; an existing user archive must not be rewritten.")
     root.mkdir(parents=True, exist_ok=True)
-    identity = {"format": "ournotes-director/home-fixture", "spot": SPOT, "sources": list(SOURCES)}
+    identity = {"format": "ournotes-director/home-fixture", "spot": spot, "sources": list(sources)}
     if marker.exists():
         old = json.loads(marker.read_text(encoding="utf-8"))
         if any(old.get(key) != value for key, value in identity.items()):
@@ -64,20 +70,23 @@ def main():
 
     manifests = {}
     fingerprints = {}
-    for adv in SOURCES:
+    for adv in sources:
         relative = f"stories/{adv}.json"
         path = destination(relative)
         raw = path.read_bytes() if path.exists() else fetch(relative)
         document = json.loads(raw)
         if document.get("advId") != adv or document.get("host", {}).get("kind") != "home":
             raise ValueError("Unexpected home source: " + relative)
+        groups = document.get("story", {}).get("groups", [])
+        if not any(group.get("kind") == "spot" and group.get("id") == spot for group in groups):
+            raise ValueError("Home source does not belong to the requested spot: " + relative)
         manifests[adv] = document
         fingerprints[relative] = hashlib.sha256(raw).hexdigest()
         write(path, raw)  # Preserve every source number token and the original file table.
 
-    # This home disables global post processing. Its host shader index contains all
-    # room/Spine shaders; unrelated ADV videos, voices, models and post shaders are omitted.
-    selected = {key: entry for key, entry in manifests[SOURCES[0]]["files"].items()
+    # These regression homes have no active global post stack. Their host shader
+    # index contains room/Spine shaders; unrelated ADV media and models are omitted.
+    selected = {key: entry for key, entry in manifests[sources[0]]["files"].items()
                 if key.startswith("host/") or key in ("scene.json", "settings.json", "story.json")}
     assets = {}
 
@@ -130,13 +139,13 @@ def main():
         stored_bytes = sum(pool.map(obtain, sorted(assets.items())))
     # A small local discovery index may be generated; the original manifests and
     # all archive content remain byte-identical to the published source.
-    entries = [{"advId": adv, "manifest": f"stories/{adv}.json", "groups": []} for adv in SOURCES]
+    entries = [{"advId": adv, "manifest": f"stories/{adv}.json", "groups": []} for adv in sources]
     write(site / "stories.json", json.dumps({"stories": entries}).encode())
     write(root / "index" / "stories.jsonl", ("\n".join(json.dumps({**entry, "site": "intl"}) for entry in entries) + "\n").encode())
     write(root / "index" / "stats.json", b"{}")
     report = {**identity, "publicBase": BASE, "manifestSha256": fingerprints,
               "logicalFiles": len(selected), "assets": len(assets), "storedBytes": stored_bytes,
-              "note": "Source Hotaru_back component reference/world are null; they are intentionally not rewritten."}
+              "note": "Original component references and world transforms are preserved without rewriting."}
     write(marker, (json.dumps(report, indent=2) + "\n").encode())
     print(f"Ready: {root} ({stored_bytes} stored bytes; all decoded SHA-256 values verified)", flush=True)
 

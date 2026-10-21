@@ -10,7 +10,9 @@ public sealed class AdvPostFx
     readonly OffscreenGl gl;readonly UnityShaderLibrary shaders;
     readonly Dictionary<(string Name,int Width,int Height,bool Hdr),Surface> targets=[];
     readonly Dictionary<string,uint> curves=[];
-    readonly uint black,gray,depth;
+    readonly uint black,gray;
+    readonly Surface clearedDepth;
+    readonly Dictionary<(int Width,int Height),Surface> depthTargets=[];
     readonly Surface lut;
     static readonly string[] LutComponents=["WhiteBalance","ColorAdjustments","ChannelMixer","ShadowsMidtonesHighlights","SplitToning","LiftGammaGain","ColorCurves"];
     JsonObject? previousLut;
@@ -22,7 +24,7 @@ public sealed class AdvPostFx
     public AdvPostFx(OffscreenGl gl,UnityShaderLibrary shaders)
     {
         this.gl=gl;this.shaders=shaders;lut=Target("lut",256,16,false);
-        black=gl.Upload(new(1,1,[0,0,0,255]));gray=gl.Upload(new(1,1,[128,128,128,255]));depth=gl.FloatSurface(1,1,1,[1]).Texture;
+        black=gl.Upload(new(1,1,[0,0,0,255]));gray=gl.Upload(new(1,1,[128,128,128,255]));clearedDepth=gl.FloatSurface(1,1,1,[1]);
     }
     Surface Target(string name,int w,int h,bool hdr=true)
     {
@@ -42,10 +44,27 @@ public sealed class AdvPostFx
         {
             gl.ReleaseSurface(targets[key]);targets.Remove(key);
         }
+        foreach(var target in depthTargets.Values)gl.ReleaseSurface(target);
+        depthTargets.Clear();
     }
     internal long PresentationTargetBytes=>targets.Keys.Where(key=>key.Name!="lut")
-        .Sum(key=>(long)key.Width*key.Height*(key.Hdr?8:4));
-    internal int PresentationTargetCount=>targets.Keys.Count(key=>key.Name!="lut");
+        .Sum(key=>(long)key.Width*key.Height*(key.Hdr?8:4))
+        +depthTargets.Keys.Sum(key=>(long)key.Width*key.Height*2);
+    internal int PresentationTargetCount=>targets.Keys.Count(key=>key.Name!="lut")+depthTargets.Count;
+    Surface CameraDepth(Surface source)
+    {
+        var key=(source.Width,source.Height);
+        if(depthTargets.TryGetValue(key,out var existing))return existing;
+        // The ADV reference supplies a cleared camera-depth buffer. Bokeh's
+        // CoC pass uses texelFetch at full-resolution integer pixel coordinates,
+        // so a 1x1 constant texture reads out of bounds and can turn the entire
+        // scene into maximum foreground blur. Match the camera's full extent;
+        // R16F represents the cleared far-plane value 1 exactly. The GPU fill
+        // happens once per cached size, without a full-size CPU pixel array.
+        var depth=gl.FloatSurface(source.Width,source.Height,1);
+        gl.CopySurface(clearedDepth,depth);
+        return depthTargets[key]=depth;
+    }
     static float N(JsonNode node,string key)=>Actor.N(node[key]);
     static float[] V(JsonNode node,string key,bool color=false)=> (color?new[]{"r","g","b","a"}:new[]{"x","y","z","w"}).Select(k=>Actor.N(node[key]?[k])).ToArray();
     public static float Linear(float c)=>c<=.04045f?c/12.92f:c<1?(float)Math.Pow((c+.055f)/1.055f,2.4):c==1?1:(float)Math.Pow(c,2.2f);
@@ -105,7 +124,7 @@ public sealed class AdvPostFx
         float f=N(d,"focalLength")/1000,A=N(d,"focalLength")/N(d,"aperture"),P=N(d,"focusDistance"),maxCoC=f*A/(P-f),radius=Math.Min(14f/h,.05f),rcp=1/(ping.Width/(float)ping.Height),margin=2f/h,tz=camera.Far*(1/camera.Near),zc0=1-tz;
         var values=new Dictionary<string,float[]>{["_CoCParams"]=[P,maxCoC,radius,rcp],["_BokehKernel"]=BokehKernel(d,radius,rcp),["_DownSampleScaleFactor"]=[.5f,.5f,2,2],
             ["_BokehConstants"]=[margin,margin*2,0,0],["_SourceSize"]=Size(source),["_ZBufferParams"]=[zc0,tz,zc0/camera.Far,tz/camera.Far]};
-        var textures=new Dictionary<string,uint>{["_CameraDepthTexture"]=depth,["_FullCoCTexture"]=coc.Texture,["_DofTexture"]=ping.Texture};
+        var textures=new Dictionary<string,uint>{["_CameraDepthTexture"]=CameraDepth(source).Texture,["_FullCoCTexture"]=coc.Texture,["_DofTexture"]=ping.Texture};
         void Pass(int index,Surface input,Surface output){values["_BlitTexture_TexelSize"]=Texel(input);textures["_BlitTexture"]=input.Texture;Blit("Hidden/Universal Render Pipeline/BokehDepthOfField",index,output,values,textures,1,"_USE_FAST_SRGB_LINEAR_CONVERSION","_ENABLE_ALPHA_OUTPUT");}
         Pass(0,source,coc);Pass(1,source,ping);Pass(2,ping,pong);Pass(3,pong,ping);Pass(4,source,dst);return dst;
     }
@@ -124,8 +143,8 @@ public sealed class AdvPostFx
         if(N(b,"mode")!=0)throw new NotSupportedException("Object motion blur unsupported by reference");
         var m=camera.ViewProjection(source.Width/(float)source.Height);var matrix=new Matrix4x4(m[0],m[1],m[2],m[3],m[4],m[5],m[6],m[7],m[8],m[9],m[10],m[11],m[12],m[13],m[14],m[15]);
         if(!Matrix4x4.Invert(matrix,out var inv))throw new InvalidDataException("Singular camera matrix");float[] inverse=[inv.M11,inv.M12,inv.M13,inv.M14,inv.M21,inv.M22,inv.M23,inv.M24,inv.M31,inv.M32,inv.M33,inv.M34,inv.M41,inv.M42,inv.M43,inv.M44];
-        var dst=Target("motionBlur",source.Width,source.Height);
-        Blit("Hidden/Universal Render Pipeline/CameraMotionBlur",(int)N(b,"quality"),dst,new(){["_BlitTexture_TexelSize"]=Texel(source),["_SourceSize"]=Size(source),["_Intensity"]=[N(b,"intensity")],["_Clamp"]=[N(b,"clamp")],["_ViewProjM"]=motion!,["_PrevViewProjM"]=previousMotion!,["unity_MatrixInvVP"]=inverse,["_CameraDepthTexture_TexelSize"]=[1,1,1,1]},new(){["_BlitTexture"]=source.Texture,["_CameraDepthTexture"]=depth},0,"_ENABLE_ALPHA_OUTPUT");return dst;
+        var dst=Target("motionBlur",source.Width,source.Height);var depth=CameraDepth(source);
+        Blit("Hidden/Universal Render Pipeline/CameraMotionBlur",(int)N(b,"quality"),dst,new(){["_BlitTexture_TexelSize"]=Texel(source),["_SourceSize"]=Size(source),["_Intensity"]=[N(b,"intensity")],["_Clamp"]=[N(b,"clamp")],["_ViewProjM"]=motion!,["_PrevViewProjM"]=previousMotion!,["unity_MatrixInvVP"]=inverse,["_CameraDepthTexture_TexelSize"]=Texel(depth)},new(){["_BlitTexture"]=source.Texture,["_CameraDepthTexture"]=depth.Texture},0,"_ENABLE_ALPHA_OUTPUT");return dst;
     }
     // Home scenes use the same colour/bloom chain but have no ADV camera or camera-depth effects.
     public void RenderColor(JsonNode stack,int frame)

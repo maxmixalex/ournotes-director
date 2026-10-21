@@ -8,6 +8,7 @@ static class CreativeExportTests
 {
     internal static void Run(Action<bool, string> check)
     {
+        ExportQualityTests.Run(check);
         var scene = CreativeScene.Blank("intl", "zh-Hans");
         // These are document-only identifiers; the test does not pretend to render a real asset.
         string actor = scene.AddActor("document-fixture-model", "Fixture");

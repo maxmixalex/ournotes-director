@@ -598,6 +598,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         AdvStoryRenderer? native;
         readonly bool clean;
         readonly PreviewTextureCache textureCache=new();
+        readonly PreviewModelCache modelCache=new();
         readonly int referenceSupersample;
         double previewScale=1;
         string device="";
@@ -662,7 +663,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             cancellationToken.ThrowIfCancellationRequested();
             long hits=textureCache.Hits,decodes=textureCache.Decodes,sourceBytes=textureCache.SourceBytes,decodedBytes=textureCache.DecodedBytes;
             double decodeMilliseconds=textureCache.DecodeMilliseconds;
-            var archive=new Archive(Source.ArchivePath){PreviewTextures=textureCache,LoadCancellation=cancellationToken};
+            var modelStart=modelCache.Capture();
+            var archive=new Archive(Source.ArchivePath){PreviewTextures=textureCache,PreviewModels=modelCache,LoadCancellation=cancellationToken};
             AdvStoryRenderer? ready=null;
             try
             {
@@ -683,7 +685,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 Initialization=new(Stopwatch.GetElapsedTime(start).TotalMilliseconds,sourceMilliseconds,timings,
                     textureCache.Hits-hits,textureCache.Decodes-decodes,textureCache.SourceBytes-sourceBytes,
                     textureCache.DecodedBytes-decodedBytes,textureCache.DecodeMilliseconds-decodeMilliseconds,
-                    textureCache.RetainedBytes,textureCache.Count,textureCache.LimitBytes);
+                    textureCache.RetainedBytes,textureCache.Count,textureCache.LimitBytes,modelCache.DiagnosticsSince(modelStart));
                 device=ready.Device;native=ready;ready=null;NeedsReplay=false;
             }
             finally

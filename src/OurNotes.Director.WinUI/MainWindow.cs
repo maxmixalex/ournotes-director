@@ -260,6 +260,21 @@ public sealed partial class MainWindow : Window
             Phase("native/live2d");Navigate("live2d");root.UpdateLayout();await Task.Delay(100);await Live2D.RunRealSmokeTestAsync(Check);
             Phase("editing-interaction");await RunEditingInteractionSmokeAsync(Check);
         }
+        if(Environment.GetEnvironmentVariable("OURNOTES_REAL_HOTARU_FIXTURE") is {Length:>0} realHotaru)
+        {
+            Phase("native/hotaru-quality");Navigate("live2d");root.UpdateLayout();await Task.Delay(100);
+            await Live2D.RunModelQualitySmokeAsync(realHotaru,Check);
+        }
+        if(Environment.GetEnvironmentVariable("OURNOTES_REAL_MILLSAGE_FIXTURE") is {Length:>0} realMillsage)
+        {
+            Phase("native/millsage-blur");Navigate("scenes");root.UpdateLayout();await Task.Delay(100);
+            await Scene.RunOriginalQualitySmokeAsync(realMillsage,Check);
+        }
+        if(Environment.GetEnvironmentVariable("OURNOTES_REAL_HOME_FIXTURE") is {Length:>0} realHome)
+        {
+            Phase("native/home-quality");Navigate("home");root.UpdateLayout();await Task.Delay(100);
+            await Home.RunRealQualitySmokeAsync(realHome,Check);
+        }
         Phase("packaged-engine");
         var help=await Engine.RunAsync(new EngineRequest("help","引擎检查",["help"],Path.GetDirectoryName(reportPath)!));Check(help.Success&&help.Json?["commands"] is JsonArray,"原生导出执行器可用");
         Navigate("scenes");ActiveLayout?.RestorePanels();CloseDrawer();root.UpdateLayout();Save(true);

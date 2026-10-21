@@ -2,7 +2,9 @@
 
 `--codec cineform` 使用 GoPro CineForm 的 RGB + alpha 编码，将画面和透明通道一起写入 `.mov`。发布包自带所需 FFmpeg 编码器，导出时不需要另装 Adobe 软件或系统视频编码器。统一项目、剧情、主页渲染及 `media clip` 共用这一编码配置。
 
-默认质量为 `film1`，用于兼顾后期画质与文件体积；更重视体积可选 `high`。输出是有损中间文件，颜色和 alpha 都可能有小幅量化误差。需要精确保存每个 RGBA8 像素时，可使用 PNG 序列或 FFV1。
+命令行的通用默认质量为 `film1`，用于兼顾后期画质与文件体积；更重视体积可选 `high`。工作台新建的独立 Live2D 项目，以及场景中没有明确质量字段的透明角色导出，默认使用 `film3+`，减少细发和服装边缘的低透明度像素损失。已有项目明确保存的质量值保持不变；工作台的输出设置与导出窗口均提供全部 13 个档位。
+
+输出是有损中间文件，颜色和 alpha 都可能有小幅量化误差，`film3+` 也不例外。需要精确保存每个 RGBA8 像素时，可使用 PNG 序列或 FFV1。
 
 ## 导出示例
 
@@ -14,6 +16,9 @@
 
 # 同一项目使用体积更小的 high 档位
 ./advkit.exe render clip samples/unified/free-character.json --duration 5 --codec cineform --cineform-quality high -o output/character-small.mov
+
+# 优先保留细发、服装等弱透明边缘，体积相应增加
+./advkit.exe render clip samples/unified/free-character.json --duration 5 --codec cineform --cineform-quality film3+ -o output/character-detail.mov
 
 # 剧情画面也可以输出 CineForm MOV
 ./advkit.exe story clip 10060 --duration 10 --codec cineform -o output/story.mov
@@ -50,7 +55,8 @@
 
 | 设置 | 用途 |
 |---|---|
-| `film1` | 默认；后期剪辑、透明人物边缘和一般动画素材 |
+| `film3+` | 工作台新独立 Live2D 角色、场景中缺省透明角色导出的默认；优先保留弱透明边缘，文件较大 |
+| `film1` | 命令行通用默认；兼顾文件体积与一般动画素材画质 |
 | `high` | 更重视体积；正式使用前检查发丝、线条、柔和阴影和半透明边缘 |
 | `film2` | 更重视细节；文件通常更大 |
 
@@ -66,6 +72,8 @@ CineForm 按质量压缩，不承诺固定码率。片长、尺寸、帧率、�
 
 Windows 验收新增 `cineform-quality-report.json`：用真实 Live2D 帧和原生 GL 斜边分别对照 1 倍／4 倍采样、`film1`／`film3+` 编解码，记录所有 RGBA 像素、半透明边缘和预乘颜色误差，并保留输入与解码 PNG。下方历史样本的质量数字仍只适用于所注明的素材和编码条件。
 
+`specific-antialiasing-report.json` 进一步使用萤的演出服 `adv_live2d_hotaru_016_live_01`，比较 1／2／4 倍原生采样与 8 倍参考帧，再检查 `film1`／`film3+` 完整解码后的细发、裙边和弱 alpha。它还用主页 `40001`「一如既往的光景」右侧栏杆验证全屏预览的 2 倍采样。工作台不会将项目中已保存的 `film3+` 等选项回退成 `film1`。
+
 ### 本次完整动画的体积与误差
 
 本地 Linux 检查使用发布配置的 **FFmpeg 8.0.3**，将同一份渲染器直接输出的 RGBA8 PNG 序列分别编码再完整解码。素材为本次归档的 spot `40005`、来源剧情 `10868`、角色 `hotaru`、Spine `4.2.43` 的 `home_start`：4 秒非循环动画加结束帧，共 **121 帧、30 fps、1920×1080、2 倍超采样、fit 构图、透明背景**，不套全局后处理。
@@ -78,7 +86,7 @@ Windows 验收新增 `cineform-quality-report.json`：用真实 Live2D 帧和原
 | CineForm `high` | 67.66 MiB | 0.195 | 0.540 |
 | ProRes 4444 | 69.39 MiB | 0.170 | 0.122 |
 
-本样本中，`high` 比 `film1` 小 **7.33%**，代价是更高的颜色和 alpha 误差。`film1` 的预乘 RGB 平均误差低于半个 8-bit 级，因此保留为默认平衡档位。CineForm 的体积不一定小于 ProRes：本例 film1 稍大，high 稍小；其他角色、背景和动画的结果会不同。
+本样本中，`high` 比 `film1` 小 **7.33%**，代价是更高的颜色和 alpha 误差。`film1` 的预乘 RGB 平均误差低于半个 8-bit 级，因此保留为命令行通用默认平衡档位。CineForm 的体积不一定小于 ProRes：本例 film1 稍大，high 稍小；其他角色、背景和动画的结果会不同。
 
 半透明区域（源 alpha 为 1–254）的 alpha 平均误差分别为 film1 **0.475**、high **0.567**、ProRes **0.495**；最大 alpha 误差分别为 **6、8、1**。另外单独检查了全片 **216,127,003 个源 alpha=0 像素**，两档 CineForm 解码后均保持为 0；其余 alpha 值仍可能有量化误差。
 

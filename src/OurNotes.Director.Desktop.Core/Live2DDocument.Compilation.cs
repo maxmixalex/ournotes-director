@@ -55,7 +55,7 @@ public sealed partial class Live2DDocument
         ["format"] = DirectorProject.Format, ["version"] = 1,
         ["source"] = new JsonObject { ["adv"] = DirectorProject.LibrarySource, ["site"] = Site, ["language"] = Language },
         ["output"] = new JsonObject { ["width"] = Canvas?.ReferenceWidth ?? Width, ["height"] = Canvas?.ReferenceHeight ?? Height, ["supersample"] = 1,
-            ["clean"] = true, ["letterbox"] = "none", ["codec"] = "cineform", ["cineformQuality"] = "film1" },
+            ["clean"] = true, ["letterbox"] = "none", ["codec"] = "cineform", ["cineformQuality"] = ExportQuality.TransparentCineFormQuality },
         ["initialize"] = new JsonArray(), ["finalize"] = new JsonArray(), ["text"] = new JsonObject(),
         ["commands"] = new JsonArray(
             new JsonObject { ["cmd"] = "Character", ["TargetName"] = ActorId, ["Model"] = ModelId, ["AtFrame"] = 0 },

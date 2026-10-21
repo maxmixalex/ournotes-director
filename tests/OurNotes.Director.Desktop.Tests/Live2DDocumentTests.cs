@@ -34,6 +34,7 @@ public static class Live2DDocumentTests
             check(!compiled.Validate().HasErrors && compiled.Source.IsLibrary && compiled.Root["initialize"] is JsonArray && compiled.Root["finalize"] is JsonArray,
                 "A new single-model project needs only the material library and compiles to the existing native format");
             check(compiled.Root["output"]?["isolateActor"]?.ToString() == doc.ActorId && compiled.Root["output"]?["letterbox"]?.ToString() == "none", "Standalone preview/export uses native isolation");
+            check(compiled.Output.CineformQuality == "film3+", "A new standalone transparent model preserves faint edges with the highest CineForm quality by default");
             string saved = Path.Combine(directory, "model.live2d.json");
             doc.Save(saved); doc.Time = 1.2;
             check(!doc.HasUnsavedChanges && Math.Abs(doc.Time - 1.2) < 1e-9, "Moving a Live2D playhead does not dirty the saved document");
@@ -93,7 +94,10 @@ public static class Live2DDocumentTests
                 {"cmd":"Motion","TargetName":"actor","MotionName":"wave","ExpressionName":"smile","MotionFadeIn":1.2300e-4,"AtFrame":30},
                 {"cmd":"Delay","Frames":0,"AtFrame":150}],"text":{"source":{"simplifiedChinese":"原始演出"}}}
                 """, baseDirectory: directory);
+            source.SetOutput(cineformQuality: "film1");
             var captured = Live2DDocument.FromSceneActor(source, "actor", "test-model", Metadata(), 2.5, 5, new(60, 90, 30));
+            check(captured.ToSceneDocument(selectedMotionOnly: true).Output.CineformQuality == "film1",
+                "Exporting only a captured model's selected motion retains the source's explicit CineForm quality");
             var isolated = captured.ToSceneDocument().Root;
             var sourceRows = source.Root["commands"]!.AsArray().OfType<JsonObject>().ToArray();
             var isolatedRows = isolated["commands"]!.AsArray().OfType<JsonObject>().ToArray();

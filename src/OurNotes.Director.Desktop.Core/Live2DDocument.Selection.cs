@@ -65,7 +65,11 @@ public sealed partial class Live2DDocument
         // inherited episode is executed: initialize/finalize are explicitly empty.
         // This also works with small archives that have no separate library pack.
         if (root["performance"] is JsonObject performance)
+        {
             project["source"] = performance["source"]!.DeepClone();
+            if (performance["output"]?["cineformQuality"] is { } quality)
+                project["output"]!["cineformQuality"] = quality.DeepClone();
+        }
         return project;
     }
 

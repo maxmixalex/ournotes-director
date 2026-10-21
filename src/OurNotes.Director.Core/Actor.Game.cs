@@ -24,7 +24,12 @@ public sealed unsafe partial class Actor
     internal bool HasGameDrawingResources => gameDrawing is not null || textures.Length > 0;
     internal void EnableGameTiming() { timingAnimation = true; InitializeGameAnimation(); }
     public ActorDrawingWork DrawingWork=>gameDrawing?.DrawingWork??new(0,0,0);
-    public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl){timingAnimation=false;gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();}
+    public void EnableGameDrawing(Archive archive,string site,OffscreenGl gl)
+    {
+        long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        timingAnimation=false;gameDrawing??=new(archive,site,Manifest,gameModel,gamePrefab,Prefab,Core,gl,textures);InitializeGameAnimation();
+        archive.RecordModelInitialization("modelDrawingMs",started);
+    }
     bool HasEditorOverlay=>EditorOffsetX!=0||EditorOffsetY!=0||EditorScale!=1;
     float[] OverlayProjection(float[] projection)
     {

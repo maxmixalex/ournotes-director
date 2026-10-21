@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -10,7 +11,12 @@ public sealed class Archive
 {
     public string Root { get; }
     internal PreviewTextureCache? PreviewTextures{get;init;}
-    // A foreground construction token applies only to model texture loading. Shared
+    internal PreviewModelCache? PreviewModels{get;init;}
+    readonly Dictionary<string,double> modelInitializationMilliseconds=[];
+    internal IReadOnlyDictionary<string,double> ModelInitializationTimings=>modelInitializationMilliseconds;
+    internal void RecordModelInitialization(string name,long started)
+        =>modelInitializationMilliseconds[name]=modelInitializationMilliseconds.GetValueOrDefault(name)+Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+    // A foreground construction token applies only to model resource loading. Shared
     // audio decoders can outlive that request and must never retain its cancellation.
     internal CancellationToken LoadCancellation{get;set;}
     public Archive(string root)
@@ -45,42 +51,78 @@ public sealed class Archive
         return ReadJson(SitePath(site, $"{type}/{id}.json"));
     }
     public byte[] Decode(string site, string asset, long? size = null, long? stored = null)
+        =>Decode(site,asset,size,stored,null,default);
+    byte[] Decode(string site,string asset,long? size,long? stored,PreviewModelCache? cache,CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var match = Regex.Match(asset, @"^assets/([0-9a-f]{64})\.[a-z0-9]+(?:\.(gz|br))?$");
         if (!match.Success) throw new InvalidDataException($"Invalid asset: {asset}");
-        var bytes = File.ReadAllBytes(SitePath(site, asset));
-        if (stored.HasValue && stored != bytes.LongLength) throw new InvalidDataException($"Stored size mismatch: {asset}");
-        if (match.Groups[2].Success)
+        byte[] current=File.ReadAllBytes(SitePath(site,asset));
+        cancellationToken.ThrowIfCancellationRequested();
+        if(stored.HasValue&&stored!=current.LongLength)throw new InvalidDataException($"Stored size mismatch: {asset}");
+        byte[] Verified()
         {
-            using var input = new MemoryStream(bytes);
-            using Stream decoder = match.Groups[2].Value == "gz" ? new GZipStream(input, CompressionMode.Decompress) : new BrotliStream(input, CompressionMode.Decompress);
-            using var output = new MemoryStream(); decoder.CopyTo(output); bytes = output.ToArray();
+            byte[] bytes=current;
+            if(match.Groups[2].Success)
+            {
+                using var input=new MemoryStream(current,false);
+                using Stream decoder=match.Groups[2].Value=="gz"?new GZipStream(input,CompressionMode.Decompress):new BrotliStream(input,CompressionMode.Decompress);
+                using var output=new MemoryStream();
+                if(!cancellationToken.CanBeCanceled)decoder.CopyTo(output);
+                else
+                {
+                    byte[] buffer=new byte[81920];int read;
+                    while((read=decoder.Read(buffer))>0){cancellationToken.ThrowIfCancellationRequested();output.Write(buffer,0,read);}
+                }
+                bytes=output.ToArray();
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            if(size.HasValue&&size!=bytes.LongLength)throw new InvalidDataException($"Decoded size mismatch: {asset}");
+            if(Hash(bytes)!=match.Groups[1].Value)throw new InvalidDataException($"SHA-256 mismatch: {asset}");
+            cancellationToken.ThrowIfCancellationRequested();return bytes;
         }
-        if (size.HasValue && size != bytes.LongLength) throw new InvalidDataException($"Decoded size mismatch: {asset}");
-        if (Hash(bytes) != match.Groups[1].Value) throw new InvalidDataException($"SHA-256 mismatch: {asset}");
-        return bytes;
+        return cache?.ReadAsset(asset,current,size,Verified,cancellationToken)??Verified();
     }
     public static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
     public byte[] Materialize(string site, JsonNode entry)
+        =>Materialize(site,entry,null,default);
+    byte[] Materialize(string site,JsonNode entry,PreviewModelCache? cache,CancellationToken cancellationToken)
     {
-        if (entry["asset"] is not null) return Decode(site, S(entry, "asset"), Size(entry["size"]), Size(entry["stored"]));
+        cancellationToken.ThrowIfCancellationRequested();
+        if(entry["asset"] is not null)return Decode(site,S(entry,"asset"),Size(entry["size"]),Size(entry["stored"]),cache,cancellationToken);
         if (entry["parts"] is not JsonArray parts) throw new InvalidDataException("Unknown file entry");
-        using var output = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(output))
+        IEnumerable<(string Key,byte[] Bytes)> ReadParts()
         {
-            writer.WriteStartObject();
-            var keys = new HashSet<string>();
-            foreach (var part in parts)
+            var keys=new HashSet<string>();
+            foreach(var part in parts)
             {
-                var key = part![0]!.GetValue<string>();
-                if (!keys.Add(key)) throw new InvalidDataException($"Duplicate split key: {key}");
-                writer.WritePropertyName(key);
-                // Raw JSON preserves numeric lexemes including 1e999; never deserialize to double.
-                writer.WriteRawValue(Decode(site, part[1]!.GetValue<string>(), Size(part[2]), part.AsArray().Count > 3 ? Size(part[3]) : null));
+                cancellationToken.ThrowIfCancellationRequested();
+                string key=part![0]!.GetValue<string>();
+                if(!keys.Add(key))throw new InvalidDataException($"Duplicate split key: {key}");
+                yield return(key,Decode(site,part[1]!.GetValue<string>(),Size(part[2]),part.AsArray().Count>3?Size(part[3]):null,cache,cancellationToken));
             }
-            writer.WriteEndObject();
         }
-        return output.ToArray();
+        byte[] Build(IEnumerable<(string Key,byte[] Bytes)> values)
+        {
+            using var output=new MemoryStream();
+            using(var writer=new Utf8JsonWriter(output))
+            {
+                writer.WriteStartObject();
+                foreach(var part in values)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();writer.WritePropertyName(part.Key);
+                    // Raw JSON preserves numeric lexemes including 1e999; never deserialize to double.
+                    writer.WriteRawValue(part.Bytes);
+                }
+                writer.WriteEndObject();
+            }
+            cancellationToken.ThrowIfCancellationRequested();return output.ToArray();
+        }
+        if(cache is null)return Build(ReadParts());
+        // Every part, current stored file and manifest constraint must be checked
+        // before an already assembled object can be reused.
+        var verified=ReadParts().ToArray();
+        return cache.Materialize(entry.ToJsonString(),()=>Build(verified),cancellationToken);
     }
     public byte[] Logical(string site, JsonNode manifest, string path, string? language = null)
     {
@@ -94,6 +136,12 @@ public sealed class Archive
         byte[] bytes=Logical(site,manifest,path);
         LoadCancellation.ThrowIfCancellationRequested();
         return PreviewTextures?.Read(bytes,LoadCancellation)??Png.Decode(bytes,LoadCancellation);
+    }
+    internal byte[] ModelResource(string site,JsonNode manifest,string path)
+    {
+        LoadCancellation.ThrowIfCancellationRequested();
+        var entry=manifest["files"]?[path]??throw new FileNotFoundException($"Logical file not found: {path}");
+        return Materialize(site,entry,PreviewModels,LoadCancellation);
     }
     public JsonNode Model(string site, string id)
     {

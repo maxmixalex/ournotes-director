@@ -101,6 +101,12 @@ jobs:
         run: |
           python scripts/fetch-studio-fixture.py artifacts/real-scene-fixture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/fetch-studio-fixture.py artifacts/hotaru-quality-fixture --model adv_live2d_hotaru_016_live_01
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/fetch-studio-fixture.py artifacts/millsage-blur-fixture --adv 10060
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/fetch-home-fixture.py artifacts/millsage-home-fixture --spot 40001 --sources 10844 10836
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $test = (Resolve-Path artifacts/native-tests/OurNotes.Director.NativeTests.exe).Path
           & $test --home-fixture artifacts/studio-fixture
           if ($LASTEXITCODE -ne 0) { throw "Home fixture failed: $LASTEXITCODE" }
@@ -123,7 +129,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Real voice output queue checks failed: $LASTEXITCODE" }
           & $test --live2d artifacts/real-scene-fixture artifacts/live2d-evidence
           if ($LASTEXITCODE -ne 0) { throw "Native Live2D workbench checks failed: $LASTEXITCODE" }
-          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 600 -ProgressTimeoutSeconds 90
+          & $test --model-cache artifacts/real-scene-fixture artifacts/model-cache-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Model resource cache checks failed: $LASTEXITCODE" }
+          & $test --millsage-blur artifacts/millsage-blur-fixture artifacts/millsage-blur-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Millsage original-story depth checks failed: $LASTEXITCODE" }
+          & $test --specific-antialiasing artifacts/millsage-home-fixture artifacts/hotaru-quality-fixture $ffmpeg artifacts/specific-antialiasing-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Hotaru and Millsage antialiasing checks failed: $LASTEXITCODE" }
+          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -RealHomeFixtureDirectory artifacts/millsage-home-fixture -RealHotaruFixtureDirectory artifacts/hotaru-quality-fixture -RealMillsageFixtureDirectory artifacts/millsage-blur-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 900 -ProgressTimeoutSeconds 180
       - name: Preserve actual window evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -139,6 +151,9 @@ jobs:
             artifacts/staging-evidence/*
             artifacts/audio-output/*
             artifacts/live2d-evidence/*
+            artifacts/model-cache-evidence/*
+            artifacts/millsage-blur-evidence/*
+            artifacts/specific-antialiasing-evidence/*
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload Windows package
