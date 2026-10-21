@@ -36,6 +36,13 @@ public readonly record struct PreviewRenderDiagnostics(int Width,int Height,int 
     long MeshUploads,long MeshUploadBytes,long PoseRefreshes,long MaskPasses,long ModelDraws,
     long PresentationCopies);
 
+/// <summary>Bounded exact-image history. NativeFrame is the actual interpreter
+/// position; it can differ from a cached image only during an explicit scrub.</summary>
+public readonly record struct PreviewFrameCacheDiagnostics(int Frames,long RetainedBytes,long LimitBytes,
+    long Hits,long Misses,double StoreMilliseconds,double RestoreMilliseconds,int NativeFrame,
+    int CapturedFrames=0,double CaptureMilliseconds=0,IReadOnlyList<PreviewCachedFrameRange>? Ranges=null);
+public sealed record PreviewCachedFrameRange(int First,int Last);
+
 public sealed record PreviewLipSync(string TargetId,string Engine,bool IsActive,float MouthOpen,string? Missing);
 
 /// <summary>Actual active native requests; fades, physics and lip pose remain renderer state.</summary>
@@ -56,6 +63,9 @@ public sealed record PreviewFrame(long Sequence, long SessionId, int Frame, doub
 {
     public double ScenePreviewScale { get; init; } = 1;
     public PreviewInitializationDiagnostics? Initialization { get; init; }
+    public bool IsCached { get; init; }
+    public bool NativeStateSynchronized { get; init; } = true;
+    public PreviewFrameCacheDiagnostics? FrameCache { get; init; }
     public bool IsGpuPresented => GpuSurface is not null;
     public long CpuPixelTransferBytes => Pixels.ByteLength;
     public NativePlaybackTiming? NativeTiming=>Timing;

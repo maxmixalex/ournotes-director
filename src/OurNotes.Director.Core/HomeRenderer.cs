@@ -287,7 +287,7 @@ public static class HomeExport
         { throw VideoEncoding.EncoderFailure(encoder.ExitCode, errors!.GetAwaiter().GetResult(), ex); }
         finally
         {
-            if (encoder is not null) { if (!encoder.HasExited) encoder.Kill(true); encoder.Dispose(); }
+            VideoEncoding.StopEncoder(encoder, errors);
             if (File.Exists(temp)) File.Delete(temp);
             if (Directory.Exists(temp)) Directory.Delete(temp, true);
         }

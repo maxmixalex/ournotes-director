@@ -10,6 +10,9 @@ try
         return 0;
     }
     if (args.Length == 3 && args[0] == "--model-cache") return ModelResourceCacheNativeTests.Run(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--encoder-lifecycle") return await VideoEncodingLifecycleNativeTests.RunAsync(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--preview-frame-cache") return await PreviewFrameCacheNativeTests.RunAsync(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--millsage-story-parity") return await MillsageStoryParityNativeTests.RunAsync(args[1], args[2]);
     if (args.Length == 3 && args[0] == "--millsage-blur") return await MillsageBlurNativeTests.RunAsync(args[1], args[2]);
     if (args.Length == 3 && args[0] == "--millsage-replay") return await MillsageReplayNativeTests.RunAsync(args[1], args[2]);
     if (args.Length == 5 && args[0] == "--specific-antialiasing")

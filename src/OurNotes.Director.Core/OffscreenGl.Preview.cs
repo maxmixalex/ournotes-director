@@ -9,6 +9,26 @@ public sealed unsafe partial class OffscreenGl
     public bool PreferGpuPresentation { get => preferGpu; set => preferGpu = value; }
     public GpuPreviewSurface? GpuSurface => preferGpu ? gpuSurface : null;
     public string? GpuFallbackReason { get; private set; }
+    // Opt-in exact history readback for the editor. GPU presentation still returns
+    // its normal empty payload; export and ordinary GL clients do no extra work.
+    internal bool CapturePreviewPixels { get; set; }
+    internal Pixels? CapturedPreviewPixels { get; private set; }
+    internal double PreviewCaptureMilliseconds { get; private set; }
+    internal double PreviewCaptureScale { get; set; }=1;
+    GlSurface? previewHistorySurface;
+    Pixels CapturePresentedFrame(GlSurface source,int width,int height,int supersample,bool transparent)
+    {
+        long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            if(PreviewCaptureScale==1)return ResolvePresentation(source,width,height,supersample,false,!transparent)!;
+            int smallWidth=Math.Max(1,(width+3)/4),smallHeight=Math.Max(1,(height+3)/4);
+            EnsureSurface(ref previewHistorySurface,smallWidth,smallHeight);
+            CopySurface(source,previewHistorySurface!.Value,linear:true);
+            return ResolvePresentation(previewHistorySurface.Value,smallWidth,smallHeight,1,false,!transparent)!;
+        }
+        finally{PreviewCaptureMilliseconds=System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;}
+    }
 
     public void DisableGpuPresentation(string reason)
     {

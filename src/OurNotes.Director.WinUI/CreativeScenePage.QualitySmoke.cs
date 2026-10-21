@@ -72,6 +72,7 @@ internal sealed partial class CreativeScenePage
                 ["windowedSha256"] = windowedCpu ? Archive.Hash(before.Pixels.Rgba) : null,
                 ["restoredSha256"] = restoredCpu ? Archive.Hash(restored.Pixels.Rgba) : null, ["device"] = before.Device
             }.ToJsonString(DesktopSettings.JsonOptions));
+            await RunOriginalFrameHistorySmokeAsync(check);
         }
         finally { viewport.Pause(); window.ExitMonitorFullscreen(); }
     }

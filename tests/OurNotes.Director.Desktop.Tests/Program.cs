@@ -33,6 +33,7 @@ GpuPreferenceTests.Run(Check);
 CreativeSourceImporterTests.Run(Check);
 SceneInteractionPreviewTests.Run(Check);
 ResultRowTests.Run(Check);
+ResourceLibraryTests.Run(Check);
 await EngineRunnerTests.RunAsync(Check);
 await WindowsPreviewAudioTests.RunAsync(Check);
 Console.WriteLine($"Passed {count} desktop command, JSON document, result and task execution checks.");

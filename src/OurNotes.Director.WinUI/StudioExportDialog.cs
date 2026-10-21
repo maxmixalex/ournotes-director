@@ -13,6 +13,9 @@ internal static class StudioExportDialog
     internal static async Task ShowLive2DAsync(MainWindow window, Live2DDocument live2d, string initialKind = "clip")
     {
         var document = live2d.ToSceneDocument(selectedMotionOnly: true); var output = document.Output;
+        var metadata = live2d.Metadata;
+        Func<string, int, Task<(int Width, int Height)>>? originalCanvas = metadata["canvas"] is null ? null
+            : (codec, _) => Task.FromResult(SceneAssetExport.Canvas(metadata, codec));
         var full = TimelineRange.Full(live2d.Duration, 30);
         using var analysisInput = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-canvas"));
         var source = new ScenePreviewSource(window.Settings.ArchivePath, analysisInput.FilePath,
@@ -21,10 +24,10 @@ internal static class StudioExportDialog
         var settings = await ChooseAsync(window, "导出 Live2D 角色", output.Width, output.Height, 30,
             output.Codec == "h264" ? "cineform" : output.Codec,
             ExportQuality.InitialCineFormQuality(document.Root["output"] as JsonObject, true), full.Duration, live2d.Time,
-            false, true, output.Supersample, initialKind: initialKind, isolated: true, transparencyRequired: true,
+            false, true, output.Supersample, nativeCanvas: originalCanvas, initialKind: initialKind, isolated: true, transparencyRequired: true,
             initialRange: live2d.Range, actorCanvas: (progress, cancellation) => ActorCanvasAnalysis.AnalyzeAsync(
                 source, full.StartFrame, full.EndFrameExclusive, progress, cancellation), canvasMultiplier: live2d.CanvasMultiplier,
-            initialActorCanvas: live2d.Canvas is not null);
+            initialActorCanvas: live2d.Canvas is not null, initialNativeCanvas: false);
         if (settings is null) return;
         if (settings.CanvasFit is { } fit) document = SceneAssetExport.ApplyCanvasFit(document, fit);
         using var snapshot = document.CreateSnapshot(Path.Combine(DesktopSettings.DataDirectory, "export-inputs"));
@@ -105,7 +108,7 @@ internal static class StudioExportDialog
         int fps, string codec, string quality, double duration, double playhead, bool home, bool selected,
         int supersample = 2, bool automaticDuration = false, Func<string, int, Task<(int Width, int Height)>>? nativeCanvas = null, string initialKind = "clip", bool isolated = false, bool transparencyRequired = false, TimelineRange? initialRange = null,
         Func<IProgress<ActorCanvasProgress>?, CancellationToken, Task<ActorCanvasBounds>>? actorCanvas = null, double canvasMultiplier = 1,
-        bool initialActorCanvas = false)
+        bool initialActorCanvas = false, bool initialNativeCanvas = true)
     {
         var kind = Ui.Choice("导出内容", [("frame", "图片 · 当前姿态 PNG"), ("clip", "动画 · 视频"), ("sequence", "动画 · PNG 帧序列")], initialKind);
         var scope = Ui.Choice("导出范围", [("scene", "完整主页"), ("selected", "选中的角色"), ("all", "每个角色分别导出"), ("both", "完整主页与全部角色")], isolated && home ? "selected" : "scene");
@@ -116,7 +119,7 @@ internal static class StudioExportDialog
         var qualityBox = Ui.Choice("CineForm 质量", ExportQuality.CineFormChoices, VideoEncoding.NormalizeCineFormQuality(quality));
         var resolution = Ui.Choice("画面尺寸", [("current", $"项目尺寸 · {width} × {height}"), ("1080", "横屏 · 1920 × 1080"),
             ("portrait", "竖屏 · 1088 × 1920"), ("1440", "横屏 · 2560 × 1440"), ("custom", "自定义")]);
-        if (selected && nativeCanvas is not null) resolution.Items.Insert(1, new ComboBoxItem { Tag = "native", Content = "选中角色原始尺寸 · 自动适配完整动画" });
+        if (selected && nativeCanvas is not null) resolution.Items.Insert(1, new ComboBoxItem { Tag = "native", Content = "角色原始尺寸" });
         if (actorCanvas is not null) resolution.Items.Insert(1, new ComboBoxItem { Tag = "actor", Content = "仅角色 · 完整动作的最小矩形 × 倍数" });
         var multiplier = Number("画布倍数（X）", canvasMultiplier, 1, 10, .05);
         var actorCanvasOptions = Ui.Stack(6, multiplier, Ui.Text("1 倍包含完整动作；宽高各乘所设倍数。图片、帧序列和视频均使用固定范围。", 11, true));
@@ -305,7 +308,7 @@ internal static class StudioExportDialog
             catch (Exception failure) when (failure is ArgumentException or IOException or OverflowException)
             { args.Cancel = true; error.Title = "请调整导出设置"; error.Message = failure.Message; error.IsOpen = true; }
         };
-        if (isolated && selected && nativeCanvas is not null)
+        if (initialNativeCanvas && isolated && selected && nativeCanvas is not null)
             resolution.SelectedItem = resolution.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "native");
         else if (initialActorCanvas && actorCanvas is not null)
             resolution.SelectedItem = resolution.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "actor");

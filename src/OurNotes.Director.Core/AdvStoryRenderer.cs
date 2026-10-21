@@ -21,6 +21,10 @@ public sealed class AdvStoryRenderer : IDisposable
     public bool SegmentedCpuFrames { get => gl.SegmentedCpuFrames; set => gl.SegmentedCpuFrames = value; }
     public GpuPreviewSurface? GpuSurface => gl.GpuSurface;
     public string? GpuFallbackReason => gl.GpuFallbackReason;
+    internal bool CapturePreviewPixels { get=>gl.CapturePreviewPixels; set=>gl.CapturePreviewPixels=value; }
+    internal Pixels? CapturedPreviewPixels=>gl.CapturedPreviewPixels;
+    internal double PreviewCaptureMilliseconds=>gl.PreviewCaptureMilliseconds;
+    internal double PreviewCaptureScale{get=>gl.PreviewCaptureScale;set=>gl.PreviewCaptureScale=value;}
     public void DisableGpuPresentation(string reason) => gl.DisableGpuPresentation(reason);
 
     readonly OffscreenGl gl;
@@ -29,6 +33,11 @@ public sealed class AdvStoryRenderer : IDisposable
     readonly int referenceOutputHeight,referenceViewportHeight;
     OffscreenGl.DrawingCanvas? previewCanvas;
     OffscreenGl.DrawingCanvas? interactiveSceneCanvas;
+    OffscreenGl.DrawingCanvas? historyCanvas;
+    internal bool CanCaptureHistory=>isolateActor is null&&!charactersOnly;
+    // Media post-processing updates its camera history only when drawn. An extra
+    // small draw could change that history; copying its final FBO is still safe.
+    internal bool CanDrawHistory=>CanCaptureHistory&&!Video.Visible&&!Stills.Visible;
     /// <summary>Transient scene-only preview scale. Text/UI, native timing, captures,
     /// hit testing and the exported project keep their reference dimensions.</summary>
     public double ScenePreviewScale { get; private set; } = 1;
@@ -72,6 +81,7 @@ public sealed class AdvStoryRenderer : IDisposable
         }
         catch{next?.Dispose();throw;}
         Scene.ReleasePresentationTargets();
+        historyCanvas?.Dispose();historyCanvas=null;
         previewCanvas?.Dispose();previewCanvas=next;
         interactiveSceneCanvas?.Dispose();interactiveSceneCanvas=nextInteractive;
         outputWidth=width;outputHeight=height;supersample=sampling;
@@ -170,6 +180,7 @@ public sealed class AdvStoryRenderer : IDisposable
             var modelInitializationBefore=archive.ModelInitializationTimings.ToDictionary(pair=>pair.Key,pair=>pair.Value);
             Scene.Preload(rows,constructorToken);
             Mark("nativeModelsMs");
+            initializationMilliseconds["focusMaterialsMs"]=gl.FocusPreparationMilliseconds;
             foreach(var (name,milliseconds) in archive.ModelInitializationTimings)
                 initializationMilliseconds[name]=milliseconds-modelInitializationBefore.GetValueOrDefault(name);
             constructorToken.ThrowIfCancellationRequested();
@@ -180,8 +191,12 @@ public sealed class AdvStoryRenderer : IDisposable
         }catch{timingAudioPrefetch?.Dispose();Video?.Dispose();Stills?.Dispose();Frames?.Dispose();Ui?.Dispose();Scene?.Dispose();gl.Dispose();throw;}
     }
     public Pixels Frame(int frame,bool clean=false,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
+        =>FrameWithHistory(frame,clean,previewEdits,stopAtEnd,cancellationToken,null);
+
+    internal Pixels FrameWithHistory(int frame,bool clean,IReadOnlyList<JsonObject>? previewEdits,bool stopAtEnd,
+        CancellationToken cancellationToken,Action<int>? capture)
     {
-        AdvanceFrame(frame,previewEdits,stopAtEnd,cancellationToken);
+        AdvanceFrame(frame,previewEdits,stopAtEnd,cancellationToken,capture);
         Pixels pixels;
         using(gl.UseDrawingCanvas(previewCanvas))
         {
@@ -190,6 +205,38 @@ public sealed class AdvStoryRenderer : IDisposable
         }
         Loop.Drain();Player.ThrowIfFailed();return pixels;
     }
+
+    /// <summary>Draws the actual current pose into a small presentation canvas.
+    /// Simulation, stage captures and native coordinates remain on the reference
+    /// canvas. This method never advances or drains the interpreter.</summary>
+    internal PreviewFrameCache.Frame CaptureHistoryFrame(bool clean)
+    {
+        if(!CanDrawHistory)throw new InvalidOperationException("Extra history draws require a complete ADV scene without active media.");
+        int width=Math.Max(16,(outputWidth+3)/4),height=Math.Max(16,(outputHeight+3)/4);
+        int cropped=Math.Clamp((int)Math.Round(height*(referenceViewportHeight/(double)referenceOutputHeight)),1,height);
+        historyCanvas??=gl.CreateDrawingCanvas(width,cropped);
+        int oldWidth=outputWidth,oldHeight=outputHeight,oldSample=supersample,oldY=viewportY,oldViewport=viewportHeight;
+        var oldCanvas=previewCanvas;var oldInteractive=interactiveSceneCanvas;
+        bool gpu=gl.PreferGpuPresentation,capture=gl.CapturePreviewPixels;
+        try
+        {
+            outputWidth=width;outputHeight=height;supersample=1;viewportHeight=cropped;
+            viewportY=(int)MathF.Floor((height-cropped)/2f+.5f);previewCanvas=historyCanvas;interactiveSceneCanvas=null;
+            gl.PreferGpuPresentation=false;gl.CapturePreviewPixels=false;
+            Pixels pixels;
+            using(gl.UseDrawingCanvas(historyCanvas))
+            {
+                Draw(clean);
+                pixels=Measure("readbackAndResolve",()=>gl.Present(width,height,1,viewportY,DrawOutputLetterbox,TransparentOutput));
+            }
+            return new(Loop.Frame,pixels,.25,PreviewTargets(),Scene.PreviewLipSyncState(),Scene.PreviewAnimationState());
+        }
+        finally
+        {
+            outputWidth=oldWidth;outputHeight=oldHeight;supersample=oldSample;viewportY=oldY;viewportHeight=oldViewport;
+            previewCanvas=oldCanvas;interactiveSceneCanvas=oldInteractive;gl.PreferGpuPresentation=gpu;gl.CapturePreviewPixels=capture;
+        }
+    }
     public IReadOnlyList<PreviewTarget> PreviewTargets()
     {
         if(isolateActor is not null)return Scene.IsolatedPreviewTarget is {} isolated?[isolated]:[];
@@ -197,10 +244,31 @@ public sealed class AdvStoryRenderer : IDisposable
         double top=viewportY/(double)outputHeight,height=viewportHeight/(double)outputHeight;
         return Scene.PreviewTargets().Select(target=>target with{Y=top+target.Y*height,Height=target.Height*height,StagePlacement=target.StagePlacement is {} plane?plane with{ViewportHeight=height}:null}).ToArray();
     }
-    void AdvanceFrame(int frame,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default)
+    void AdvanceFrame(int frame,IReadOnlyList<JsonObject>? previewEdits=null,bool stopAtEnd=false,CancellationToken cancellationToken=default,
+        Action<int>? capture=null)
     {
         if(frame<Loop.Frame)throw new ArgumentException("Frame requests must be increasing");
-        Measure("simulation",()=>{while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished)){cancellationToken.ThrowIfCancellationRequested();Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();Player.Step();}});
+        double captureMilliseconds=0;
+        try
+        {
+            Measure("simulation",()=>
+            {
+                while(Loop.Frame<frame&&(!stopAtEnd||!Player.Finished))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Scene.AdvanceRenderState();Frames.AdvanceRenderState();Ui.Chat?.AdvanceRenderState();Loop.Drain();
+                    // Pending Stage captures have already consumed their original
+                    // render phase. Optional image history cannot resolve them early.
+                    if(capture is not null)
+                    {
+                        long started=Stopwatch.GetTimestamp();
+                        try{capture(Loop.Frame);}finally{captureMilliseconds+=Stopwatch.GetElapsedTime(started).TotalMilliseconds;}
+                    }
+                    Player.Step();
+                }
+            });
+        }
+        finally{milliseconds["simulation"]=milliseconds.GetValueOrDefault("simulation")-captureMilliseconds;}
         cancellationToken.ThrowIfCancellationRequested();
         if(previewEdits is {Count:>0})Scene.ApplyPreviewEdits(previewEdits,Player);
     }
@@ -266,7 +334,7 @@ public sealed class AdvStoryRenderer : IDisposable
         }
         gl.CopySurface(reduced, gl.CurrentSurface, linear: true);
     }
-    public void Dispose(){timingAudioPrefetch?.Dispose();interactiveSceneCanvas?.Dispose();Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
+    public void Dispose(){timingAudioPrefetch?.Dispose();historyCanvas?.Dispose();interactiveSceneCanvas?.Dispose();Video.Dispose();Stills.Dispose();Frames.Dispose();Ui.Dispose();Scene.Dispose();previewCanvas?.Dispose();gl.Dispose();}
     public static object Contact(Archive archive,string site,string dll,string id,string language,string? script,string output,int width,int height,double[] times,int columns,bool clean,bool overwrite,string ffmpeg,int supersample=2)
     {
         if(times.Length is <1 or >64||times.Any(t=>!double.IsFinite(t)||t<0||t>36000))throw new ArgumentException("Contact needs 1..64 times within ten hours");
@@ -324,6 +392,6 @@ public sealed class AdvStoryRenderer : IDisposable
             return JsonOutput.Object(("output", output), ("frames", written), ("width", width), ("height", height), ("supersample", supersample), ("fps", 30*speed), ("speed", speed), ("sourceDuration", written/30d), ("duration", outputDuration), ("audioHz", 48000), ("codec", codec), ("cineformQuality", codec=="cineform"?VideoEncoding.NormalizeCineFormQuality(cineformQuality):null), ("alpha", codec=="h264"?"none":"straight"), ("finished", finished), ("performance", JsonOutput.Object(("Device", renderer.Device), ("initializationMilliseconds", initializationMs), ("wallSeconds", wall.Elapsed.TotalSeconds), ("framesPerSecond", written/wall.Elapsed.TotalSeconds), ("cpuSubmissionMilliseconds", renderer.Timings), ("encoderWriteMilliseconds", encodeMs), ("audioMixMilliseconds", audioMs))));
         }catch(IOException error)when(encoder is not null&&encoder.HasExited&&encoder.ExitCode!=0)
         {throw VideoEncoding.EncoderFailure(encoder.ExitCode,errors?.GetAwaiter().GetResult()??"",error);}
-        finally{if(encoder is not null){if(!encoder.HasExited)encoder.Kill(true);encoder.Dispose();}foreach(var path in new[]{video,audio,mux})if(File.Exists(path))File.Delete(path);}
+        finally{VideoEncoding.StopEncoder(encoder,errors);foreach(var path in new[]{video,audio,mux})if(File.Exists(path))File.Delete(path);}
     }
 }

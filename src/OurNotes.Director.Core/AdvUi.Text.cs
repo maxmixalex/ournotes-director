@@ -17,7 +17,7 @@ public sealed partial class AdvUi
             var binding=fonts["texts"]![path]!;var style=node["textStyle"]!;
             var role=doc["textStyle"]?["roles"]?[Archive.S(style,"fontRole")];
             if(role is not null)fontLines.TryAdd(Archive.S(binding["localized"]??binding,"fontAsset"),role);
-            var record=new JsonObject{["path"]=path,["active"]=true};
+            var record=new JsonObject{["path"]=path,["active"]=true,["rect"]=new JsonObject()};
             entry=(new AdvTmpText(fonts,binding,fontLines),new AdvCanvasNode(record,null){AnchorMin=Vector2.Zero,AnchorMax=Vector2.Zero,Pivot=Vector2.Zero});textLayouts.Add(path,entry);
             if(language=="en"&&!Archive.S(node,"name").Contains("nowrap",StringComparison.OrdinalIgnoreCase))entry.Text.Wrapping=1;
         }

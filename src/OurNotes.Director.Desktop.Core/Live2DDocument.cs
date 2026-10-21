@@ -104,12 +104,8 @@ public sealed partial class Live2DDocument
     public static Live2DDocument Create(string modelId, string site = "intl", string language = "zh-Hans", JsonNode? metadata = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(modelId);
-        var output = new JsonObject { ["width"] = 1080, ["height"] = 1920 };
-        if (metadata?["canvas"] is not null)
-        {
-            var canvas = SceneAssetExport.Canvas(metadata);
-            output["width"] = canvas.Width; output["height"] = canvas.Height;
-        }
+        var canvas = ExportQuality.InitialLive2DCanvas(metadata);
+        var output = new JsonObject { ["width"] = canvas.Width, ["height"] = canvas.Height };
         return new(new JsonObject
         {
             ["format"] = Format, ["version"] = 1, ["model"] = modelId, ["actor"] = "live2d",

@@ -65,6 +65,9 @@ static class ActorCanvasTests
                  "parameters":[{"id":"Angle","min":-30,"max":30,"default":0}]}
                 """)!;
             var document = Live2DDocument.Create("document-test-model", metadata: metadata);
+            // The synthetic motion bounds above were measured in this explicitly
+            // authored reference canvas, rather than the new codec-aligned default.
+            document.SetOutput(1000, 1000);
             document.Time = 1; document.SetMotion("wave"); document.SetParameter("Angle", 12);
             document.SetTransform(new(.6, .4, .9, 7, .8)); document.Range = new(20, 50, 30);
             string path = Path.Combine(directory, "canvas.live2d.json"); document.Save(path);

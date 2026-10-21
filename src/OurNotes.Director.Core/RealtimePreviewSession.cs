@@ -42,6 +42,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     // Tests cancel after the old native context has been released, rather than
     // racing a timer against a queued request. Ordinary clients leave this unset.
     internal Action? SceneReconstructionStarted{get;set;}
+    // A same-binary correctness/performance control for native regression tests.
+    // Ordinary editor clients always retain bounded exact frame history.
+    internal bool EnableFrameHistory{get;set;}=true;
 
     public RealtimePreviewSession()
     {
@@ -78,6 +81,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     {
         if(renderer is not SceneState scene)throw new InvalidOperationException("Load a scene before committing its edits.");
         if(playing)throw new InvalidOperationException("Pause the scene before committing its current edits.");
+        SynchronizeDisplayedScene();
         scene.Commit(source);
         StartTiming(scene);
     });
@@ -110,10 +114,20 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     });
 
     public Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
+        =>Seek(seconds,false,false,cancellationToken);
+
+    /// <summary>Interactive pointer motion may present an exact previously rendered
+    /// frame without moving the native interpreter. Finish a gesture with SeekAsync;
+    /// playback, edits and parameter reads also synchronize the native pose first.</summary>
+    public Task ScrubAsync(double seconds,CancellationToken cancellationToken=default,bool allowReducedQuality=true)
+        =>Seek(seconds,true,allowReducedQuality,cancellationToken);
+
+    Task Seek(double seconds,bool allowCachedFrame,bool allowReducedQuality,CancellationToken cancellationToken)
     {
         if(!double.IsFinite(seconds)||seconds<0||seconds>36000)throw new ArgumentOutOfRangeException(nameof(seconds));
         cancellationToken.ThrowIfCancellationRequested();
-        return UpdateState(update=>{update.Time=seconds;update.SeekCancellation=cancellationToken;});
+        return UpdateState(update=>{update.Time=seconds;update.AllowCachedFrame=allowCachedFrame;
+            update.AllowReducedQuality=allowReducedQuality;update.SeekCancellation=cancellationToken;});
     }
 
     public Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)=>ApplySceneEditsAsync(rows,null);
@@ -161,7 +175,14 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         });
     }
 
-    public Task SynchronizeAsync()=>Enqueue(()=>{});
+    public Task SynchronizeAsync()=>Enqueue(()=>SynchronizeDisplayedScene());
+
+    void SynchronizeDisplayedScene(CancellationToken cancellationToken=default)
+    {
+        if(renderer is SceneState scene
+            &&(!scene.NativeReady||scene.NativeFrame!=frame||LastFrame?.IsCached==true&&scene.NeedsReplay))
+            Render(frame,[],replay:true,cancellationToken:cancellationToken);
+    }
 
     public Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
     {
@@ -202,6 +223,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             if(renderer is not SceneState scene)throw new InvalidOperationException("Load a scene before reading model parameters.");
+            SynchronizeDisplayedScene(cancellationToken);
             result=scene.Parameters(actorId);
         }).ConfigureAwait(false);
         return result!;
@@ -318,13 +340,18 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 if(update.Time.HasValue)throw new InvalidOperationException("定位过程中不能同时拖动人物。");
                 if(renderer is not SceneState stage)throw new InvalidOperationException("当前不是原作舞台。");
                 foreach(var move in update.StagePositions.Values)
-                {
                     if(move.Session!=sessionId||move.Frame!=frame)throw new InvalidOperationException("画面已改变，请重新拖动。");
+                SynchronizeDisplayedScene(update.SeekCancellation);
+                foreach(var move in update.StagePositions.Values)
+                {
                     stage.PreviewStagePosition(move.Actor,move.Slot,move.Position);
                 }
             }
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
-            Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation,isolationTransform:update.IsolationTransform);
+            bool imageOnly=update.AllowCachedFrame&&update.Time.HasValue&&update.SceneEdits.Count==0
+                &&update.IsolationTransform is null&&update.StagePositions.Count==0&&!playing&&Volatile.Read(ref playRequested)==0;
+            Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation,
+                isolationTransform:update.IsolationTransform,allowCachedFrame:imageOnly,allowReducedQuality:update.AllowReducedQuality);
             if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
             foreach(var waiter in update.Waiters)waiter.TrySetResult();
         }
@@ -343,14 +370,26 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     int FrameAt(double time)=>Math.Min(renderer!.EndFrame,checked((int)Math.Floor(time*renderer.Fps+1e-8)));
     void RequireRenderer(){if(renderer is null)throw new InvalidOperationException("Load a project into the native preview first.");}
 
-    void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false,CancellationToken cancellationToken=default,IsolatedActorTransform? isolationTransform=null)
+    void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false,CancellationToken cancellationToken=default,
+        IsolatedActorTransform? isolationTransform=null,bool allowCachedFrame=false,bool allowReducedQuality=false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var active=renderer!;long stamp=Stopwatch.GetTimestamp(),allocated=GC.GetAllocatedBytesForCurrentThread();
+        if(active is SceneState cacheOwner)cacheOwner.FrameHistoryEnabled=EnableFrameHistory;
         int gen0=GC.CollectionCount(0),gen1=GC.CollectionCount(1),gen2=GC.CollectionCount(2);
         TimeSpan gcPause=GC.GetTotalPauseDuration();long processAllocated=GC.GetTotalAllocatedBytes(false);
         var workBefore=PreviewNativeWork.Read();
-        int from=frame;
+        if(allowCachedFrame&&active is SceneState cachedScene&&cachedScene.TryCachedFrame(next,allowReducedQuality,out var cached))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            frame=next;
+            Publish(cached!.Pixels,Stopwatch.GetElapsedTime(stamp).TotalMilliseconds,cached.Targets,cached.LipSync,
+                new(0,0,0,0,GC.GetAllocatedBytesForCurrentThread()-allocated,0),cached.Animations,cached.Scale,true);
+            return;
+        }
+        // A cached picture can move the displayed playhead independently. Count
+        // actual interpreter steps, never distance from that displayed picture.
+        int from=active is SceneState origin?Math.Max(0,origin.NativeFrame):frame;
         if(active is SceneState scene&&(!scene.NativeReady||next<scene.NativeFrame||replay&&scene.NeedsReplay))
         {
             // Native ADV has a stateful interpreter and physics. Reconstruct only for
@@ -359,6 +398,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             Volatile.Write(ref scenePreviewScale,scene.ScenePreviewScale);
         }
         if(isolationTransform is not null)((SceneState)active).SetIsolatedTransform(isolationTransform);
+        if(active is SceneState history){history.HistoryBudgetMilliseconds=playing?8:200;history.PlaybackRender=playing;}
         var pixels=active.Render(next,edits,cancellationToken);
         frame=active is SceneState current?current.NativeFrame:next;
         if(active is SceneState finished&&finished.Finished&&!finished.NeedsReplay&&finished.Source.DurationMode==PreviewDurationMode.Automatic)
@@ -368,6 +408,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         long targetsStart=Stopwatch.GetTimestamp();var targets=active.Targets();var lips=active.LipSync();var animations=active.Animations();
         double targetsMs=Stopwatch.GetElapsedTime(targetsStart).TotalMilliseconds;
         var measured=active.Performance;
+        if(active is SceneState rendered)rendered.Remember(frame,pixels,targets,lips,animations);
         var workAfter=PreviewNativeWork.Read();
         var diagnostics=new PreviewRenderDiagnostics(pixels.Width,pixels.Height,(active as SceneState)?.Source.Supersample??1,
             GC.CollectionCount(0)-gen0,GC.CollectionCount(1)-gen1,GC.CollectionCount(2)-gen2,
@@ -383,10 +424,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     }
 
     void Publish(Pixels pixels,double milliseconds,IReadOnlyList<PreviewTarget>? targets=null,
-        IReadOnlyList<PreviewLipSync>? lips=null,PreviewPerformance? performance=null,IReadOnlyList<PreviewActorAnimation>? animations=null)
+        IReadOnlyList<PreviewLipSync>? lips=null,PreviewPerformance? performance=null,IReadOnlyList<PreviewActorAnimation>? animations=null,
+        double? actualScale=null,bool cached=false)
     {
         long now=Stopwatch.GetTimestamp();
         bool changed=!ReferenceEquals(LastFrame?.Pixels,pixels);
+        if(!changed)cached=LastFrame?.IsCached??cached;
         if(playing&&changed)
         {
             rateFrames++;
@@ -397,9 +440,12 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         var scene=active as SceneState;
         var result=new PreviewFrame(++sequence,sessionId,frame,frame/(double)active.Fps,pixels,targets??LastFrame?.Targets??[],
             milliseconds,playing?measuredRate:0,playing,active.Device,active.Duration,scene?.Source.DurationMode??PreviewDurationMode.Fixed,
-            scene?.Timing,performance??LastFrame?.Performance,lips??LastFrame?.LipSync,animations??LastFrame?.ActorAnimations,active.GpuSurface,active.GpuFallbackReason)
-            { ScenePreviewScale = changed ? scene?.ScenePreviewScale ?? 1 : LastFrame?.ScenePreviewScale ?? 1,
-                Initialization = scene?.Initialization };
+            scene?.Timing,performance??LastFrame?.Performance,lips??LastFrame?.LipSync,animations??LastFrame?.ActorAnimations,
+                cached?null:active.GpuSurface,active.GpuFallbackReason)
+            { ScenePreviewScale = actualScale??(changed ? scene?.ScenePreviewScale ?? 1 : LastFrame?.ScenePreviewScale ?? 1),
+                Initialization = scene?.Initialization, IsCached=cached,
+                NativeStateSynchronized=scene is null||scene.NativeReady&&!scene.NeedsReplay&&scene.NativeFrame==frame,
+                FrameCache=scene?.FrameCacheDiagnostics };
         Volatile.Write(ref lastFrame,result);
         FrameReady?.Invoke(this,result);
     }
@@ -568,6 +614,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     sealed class Update
     {
         public double? Time;
+        public bool AllowCachedFrame;
+        public bool AllowReducedQuality;
         public CancellationToken SeekCancellation;
         public HomeEditState? HomeEdits;
         public IsolatedActorTransform? IsolationTransform;
@@ -599,6 +647,19 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         readonly bool clean;
         readonly PreviewTextureCache textureCache=new();
         readonly PreviewModelCache modelCache=new();
+        readonly PreviewFrameCache frameCache=new();
+        bool frameCacheAllowed=true;
+        double lastHistoryMilliseconds=40,historyMilliseconds;
+        int capturedFrames;
+        public double HistoryBudgetMilliseconds{get;set;}=200;
+        int nextGpuCaptureFrame;
+        bool historyEnabled=true;
+        public bool PlaybackRender{get;set;}
+        public bool FrameHistoryEnabled
+        {
+            get=>historyEnabled;
+            set{if(historyEnabled&&!value)frameCache.Clear();historyEnabled=value;}
+        }
         readonly int referenceSupersample;
         double previewScale=1;
         string device="";
@@ -611,6 +672,9 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         public AdvCueCache CueCache{get;}=new();
         public NativePlaybackTiming? Timing{get;set;}
         public PreviewInitializationDiagnostics? Initialization{get;private set;}
+        public PreviewFrameCacheDiagnostics FrameCacheDiagnostics=>new(frameCache.Count,frameCache.RetainedBytes,frameCache.LimitBytes,
+            frameCache.Hits,frameCache.Misses,frameCache.StoreMilliseconds,frameCache.RestoreMilliseconds,NativeFrame,
+                capturedFrames,historyMilliseconds,frameCache.Ranges());
         public ScenePreviewSource Source{get;private set;}
         public int ReferenceWidth{get;}
         public int ReferenceHeight{get;}
@@ -686,7 +750,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                     textureCache.Hits-hits,textureCache.Decodes-decodes,textureCache.SourceBytes-sourceBytes,
                     textureCache.DecodedBytes-decodedBytes,textureCache.DecodeMilliseconds-decodeMilliseconds,
                     textureCache.RetainedBytes,textureCache.Count,textureCache.LimitBytes,modelCache.DiagnosticsSince(modelStart));
-                device=ready.Device;native=ready;ready=null;NeedsReplay=false;
+                device=ready.Device;native=ready;ready=null;NeedsReplay=false;frameCacheAllowed=true;nextGpuCaptureFrame=0;
             }
             finally
             {
@@ -712,11 +776,13 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 throw new ArgumentException("Changing source, viewport or presentation requires reloading the scene.");
             if(!double.IsFinite(source.Duration)||source.Duration<=0||source.Duration>36000)throw new ArgumentOutOfRangeException(nameof(source));
             var document=DirectorProject.Document(source.ProjectPath);
+            if(!JsonNode.DeepEquals(Document,document))frameCache.Clear();
             bool changedProgram=new[]{"source","initialize","commands","finalize","text"}
                 .Any(key=>!JsonNode.DeepEquals(Document[key],document[key]))
                 ||!string.Equals(Path.GetDirectoryName(Path.GetFullPath(source.ProjectPath)),
                     Path.GetDirectoryName(Path.GetFullPath(Source.ProjectPath)),
                     OperatingSystem.IsWindows()?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal);
+            if(changedProgram)frameCache.Clear();
             // Adaptive presentation can have resized while a UI snapshot was saving.
             // The live FBO dimensions are authoritative; output canvas checks stay strict.
             // CPU snapshot storage is a live client's transport preference, not a
@@ -726,26 +792,84 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             Duration=source.Duration;NeedsReplay|=changedProgram;project=next;
             Document=document;ProjectHash=Archive.Hash(Encoding.UTF8.GetBytes(Document.ToJsonString()));
             Timing=!changedProgram&&Timing is {} timing?timing with{ProjectHash=ProjectHash}:null;
+            frameCacheAllowed=true;
         }
         public override Pixels Render(int frame,IReadOnlyList<JsonObject> edits,CancellationToken cancellationToken=default)
         {
             var native=Native;
+            if(edits.Count>0)InvalidateLiveFrames();
+            // GPU playback readback is sampled using the last measured readback
+            // plus compression cost, targeting at most 2 ms per source frame on
+            // average. Paused seeks can retain their requested frame immediately.
+            native.CapturePreviewPixels=frameCacheAllowed&&FrameHistoryEnabled
+                &&(long)Source.Width*Source.Height*4<=frameCache.LimitBytes&&!frameCache.Contains(frame,ScenePreviewScale)
+                &&(!PlaybackRender||frame>=nextGpuCaptureFrame);
+            native.PreviewCaptureScale=PlaybackRender&&native.CanCaptureHistory ? .25 : 1;
             double simulation=native.Timings.GetValueOrDefault("simulation"),readback=native.Timings.GetValueOrDefault("readbackAndResolve"),total=native.Timings.Values.Sum();
-            var pixels=native.Frame(frame,clean,edits,Source.DurationMode==PreviewDurationMode.Automatic,cancellationToken);
+            // At most six nearby exact frames, adapted to the measured
+            // cost of a quarter-size draw. A slow sample may finish after the soft
+            // budget, but no subsequent sample starts beyond it. Frame zero never
+            // incurs this work, and normal playback has a much smaller allowance.
+            double spent=0,budget=HistoryBudgetMilliseconds;
+            int count=Math.Clamp((int)(budget/Math.Max(1,lastHistoryMilliseconds)),1,6);
+            int first=Math.Max(native.Loop.Frame,frame-count);
+            bool collect=frameCacheAllowed&&FrameHistoryEnabled&&native.CanCaptureHistory&&frame>native.Loop.Frame
+                &&edits.Count==0&&budget>=lastHistoryMilliseconds;
+            void Capture(int current)
+            {
+                if(current<first||spent>=budget||!native.CanDrawHistory||frameCache.Contains(current,.25))return;
+                cancellationToken.ThrowIfCancellationRequested();long started=Stopwatch.GetTimestamp();
+                var sample=native.CaptureHistoryFrame(clean);
+                cancellationToken.ThrowIfCancellationRequested();frameCache.Store(sample);
+                double elapsed=Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                spent+=elapsed;historyMilliseconds+=elapsed;
+                // One cold driver draw must not permanently disable useful later
+                // attempts. Keep the estimate conservative and the actual budget
+                // counter honest; every attempt still observes cancellation.
+                lastHistoryMilliseconds=Math.Min(200,elapsed);capturedFrames++;
+            }
+            var pixels=native.FrameWithHistory(frame,clean,edits,Source.DurationMode==PreviewDurationMode.Automatic,cancellationToken,collect?Capture:null);
             double simulationDelta=native.Timings.GetValueOrDefault("simulation")-simulation,readbackDelta=native.Timings.GetValueOrDefault("readbackAndResolve")-readback;
             measured=new(simulationDelta,Math.Max(0,native.Timings.Values.Sum()-total-simulationDelta-readbackDelta),readbackDelta,0,0,0);
             return pixels;
         }
         public NativePlaybackTiming FinishedTiming()=>new(ProjectHash,true,Native.Player.CompletionFrame,
             (Native.Player.CompletionFrame!.Value+1)/30d,Native.Player.CommandTimings(),Native.Loop.Frame);
-        public void PreviewStagePosition(string actor,int slot,System.Numerics.Vector3 position)=>Native.Scene.PreviewStagePosition(actor,slot,position);
+        void InvalidateLiveFrames(){frameCache.Clear();frameCacheAllowed=false;}
+        public bool TryCachedFrame(int number,bool allowReducedQuality,out PreviewFrameCache.Frame? cached)
+        {
+            cached=null;
+            return frameCacheAllowed&&FrameHistoryEnabled&&!NeedsReplay&&frameCache.TryGet(number,
+                allowReducedQuality&&Native.CanCaptureHistory ? .25 : ScenePreviewScale,out cached);
+        }
+        public void Remember(int number,Pixels pixels,IReadOnlyList<PreviewTarget> targets,
+            IReadOnlyList<PreviewLipSync> lips,IReadOnlyList<PreviewActorAnimation> animations)
+        {
+            if(frameCacheAllowed&&FrameHistoryEnabled&&!NeedsReplay)
+            {
+                if(PlaybackRender&&number<nextGpuCaptureFrame)return;
+                double before=frameCache.StoreMilliseconds;
+                double scale=Native.CapturedPreviewPixels is not null?Math.Min(ScenePreviewScale,Native.PreviewCaptureScale):ScenePreviewScale;
+                frameCache.Store(new(number,Native.CapturedPreviewPixels??pixels,scale,targets,lips,animations));
+                if(Native.CapturedPreviewPixels is not null)
+                {
+                    double cost=Native.PreviewCaptureMilliseconds+frameCache.StoreMilliseconds-before;
+                    nextGpuCaptureFrame=number+Math.Clamp((int)Math.Ceiling(cost/2),1,30);
+                }
+                else if(PlaybackRender)nextGpuCaptureFrame=number+Math.Clamp((int)Math.Ceiling((frameCache.StoreMilliseconds-before)/2),1,30);
+            }
+        }
+        public void PreviewStagePosition(string actor,int slot,System.Numerics.Vector3 position)
+        {InvalidateLiveFrames();Native.Scene.PreviewStagePosition(actor,slot,position);}
         public void SetIsolatedTransform(IsolatedActorTransform transform)
         {
+            if(transform!=isolationTransform)frameCache.Clear();
             Native.SetIsolatedTransform(transform);isolationTransform=Native.IsolationTransform;
         }
         public bool Resize(int width,int height,int supersample)
         {
             if(width==Source.Width&&height==Source.Height&&supersample==Source.Supersample)return false;
+            frameCache.Clear();
             native?.ResizePreview(width,height,supersample);
             Source=Source with{Width=width,Height=height,Supersample=supersample};return true;
         }

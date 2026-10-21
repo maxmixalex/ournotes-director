@@ -32,8 +32,9 @@ internal sealed partial class Live2DStudioPage
         if (windowedCpu)
             check(before.Pixels.Rgba.Where((_, index) => index % 4 == 3).Any(alpha => alpha is > 0 and < 255),
                 "萤演出服 CPU 预览保留真实半透明角色边缘");
-        check(current.ToSceneDocument().Output.CineformQuality == "film3+",
-            "新独立角色项目默认使用 film3+ 保留较弱的透明边缘覆盖率");
+        var defaultOutput = current.ToSceneDocument().Output;
+        check(defaultOutput is { Width: 1280, Height: 1920, CineformQuality: "film1", Supersample: 1 },
+            "新独立角色项目采用 1280×1920、Film 1 和 1× 的均衡导出默认值");
         await VerifyPreviewAntialiasingSmokeAsync(check);
         string unchanged = current.ToJson();
         var exporting = ExportAsync("clip");
@@ -42,12 +43,19 @@ internal sealed partial class Live2DStudioPage
         {
             dialog = await WaitForSmokeDialogAsync(exporting);
             var quality = SmokeControl<ComboBox>(dialog, "CineForm 质量");
-            check(Ui.Selected(quality) == "film3+" && quality.Items.Count == 13,
-                "萤演出服的真实导出窗口显示全部质量档位，默认 Film 3+ 没有被回退成 Film 1");
-            SmokeChoice(dialog, "CineForm 质量", "film1");
-            check(Ui.Selected(quality) == "film1", "真实质量控件仍允许明确选择均衡 Film 1");
+            check(Ui.Selected(quality) == "film1" && quality.Items.Count == 13,
+                "萤演出服的真实导出窗口显示全部质量档位，默认采用均衡 Film 1");
+            var resolution = SmokeControl<ComboBox>(dialog, "画面尺寸");
+            var advanced = SmokeTree(dialog).OfType<Expander>().Single(item => item.Header?.ToString() == "高级画质与帧率");
+            advanced.IsExpanded = true; dialog.UpdateLayout();
+            check(Ui.Selected(resolution) == "current" && Ui.Selected(SmokeControl<ComboBox>(dialog, "边缘质量")) == "1"
+                && resolution.Items.OfType<ComboBoxItem>().Any(item => item.Tag?.ToString() == "native"),
+                "真实导出窗口默认项目尺寸和 1×，仍可明确选择角色原始尺寸");
+            advanced.IsExpanded = false;
             SmokeChoice(dialog, "CineForm 质量", "film3+");
-            check(Ui.Selected(quality) == "film3+", "真实质量控件可重新选中最高 Film 3+");
+            check(Ui.Selected(quality) == "film3+", "真实质量控件仍可明确选中最高 Film 3+");
+            SmokeChoice(dialog, "CineForm 质量", "film1");
+            check(Ui.Selected(quality) == "film1", "最高质量选项可切回均衡 Film 1，不影响默认项目设置");
             await App.CapturePopupCheckpointAsync(dialog, "hotaru-export-quality");
         }
         finally
@@ -93,6 +101,8 @@ internal sealed partial class Live2DStudioPage
             {
                 ["schema"] = "ournotes-director/model-quality-smoke/1", ["ok"] = true, ["model"] = model,
                 ["cineformQuality"] = current.ToSceneDocument().Output.CineformQuality,
+                ["exportWidth"] = defaultOutput.Width, ["exportHeight"] = defaultOutput.Height,
+                ["exportSupersample"] = defaultOutput.Supersample,
                 ["windowedWidth"] = before.Pixels.Width, ["windowedHeight"] = before.Pixels.Height,
                 ["fullscreenWidth"] = fullscreen.Pixels.Width, ["fullscreenHeight"] = fullscreen.Pixels.Height,
                 ["supersample"] = viewport.PreviewSupersample, ["frame"] = before.Frame,

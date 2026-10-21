@@ -18,6 +18,7 @@ public sealed class DesktopSettings
     public string CubismSdkPath { get; set; } = "";
     public string NativeLibraryPath { get; set; } = "";
     public List<string> RecentProjects { get; } = [];
+    public List<string> ResourceLibraries { get; } = [];
     public Dictionary<string, Dictionary<string, string?>> Forms { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, WorkspaceLayoutSettings> WorkspaceLayouts { get; } = new(StringComparer.Ordinal);
     public string? LoadWarning { get; private set; }
@@ -70,6 +71,8 @@ public sealed class DesktopSettings
             settings.CubismSdkPath = Read("cubismSdk", ""); settings.NativeLibraryPath = Read("nativeLibrary", "");
             if (root["recentProjects"] is JsonArray recent)
                 settings.RecentProjects.AddRange(recent.OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var s) ? s : "").Where(s => s.Length > 0).Take(12));
+            if (root["resourceLibraries"] is JsonArray libraries)
+                settings.ResourceLibraries.AddRange(libraries.OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var s) ? s : "").Where(s => s.Length > 0).Take(40));
             if (root["forms"] is JsonObject forms)
                 foreach (var pair in forms)
                     if (pair.Value is JsonObject form)
@@ -97,6 +100,14 @@ public sealed class DesktopSettings
         if (RecentProjects.Count > 12) RecentProjects.RemoveRange(12, RecentProjects.Count - 12);
     }
 
+    public void RememberResourceLibrary(string path)
+    {
+        path = Path.GetFullPath(path);
+        ResourceLibraries.RemoveAll(value => string.Equals(value, path, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+        ResourceLibraries.Insert(0, path);
+        if (ResourceLibraries.Count > 40) ResourceLibraries.RemoveRange(40, ResourceLibraries.Count - 40);
+    }
+
     public void Save(string? path = null)
     {
         path ??= Path.Combine(DataDirectory, "settings.json");
@@ -119,6 +130,7 @@ public sealed class DesktopSettings
             ["language"] = Language, ["theme"] = Theme, ["engine"] = EnginePath, ["ffmpeg"] = FFmpegPath,
             ["ffprobe"] = FFprobePath, ["cubismSdk"] = CubismSdkPath, ["nativeLibrary"] = NativeLibraryPath,
             ["recentProjects"] = new JsonArray(RecentProjects.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()), ["forms"] = forms,
+            ["resourceLibraries"] = new JsonArray(ResourceLibraries.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()),
             ["workspaceLayouts"] = layouts
         };
         AtomicWrite(path, root.ToJsonString(JsonOptions));

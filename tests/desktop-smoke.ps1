@@ -8,6 +8,7 @@ param(
     [string] $RealHomeFixtureDirectory,
     [string] $RealHotaruFixtureDirectory,
     [string] $RealMillsageFixtureDirectory,
+    [string] $ResourceDownloadFixtureDirectory,
     [string] $OpenGLDriver,
     [ValidateRange(10, 900)] [int] $TimeoutSeconds = 120,
     [ValidateRange(10, 300)] [int] $ProgressTimeoutSeconds = 90
@@ -37,6 +38,7 @@ New-Item -ItemType Directory -Path $ReportDirectory -Force | Out-Null
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('ournotes-desktop-smoke-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $process = $null
+$resourceServer = $null
 try {
     # Exercise the exact reader while a writer replaces the destination. The
     # held reader sees a complete old report; a new reader sees the new one.
@@ -122,6 +124,24 @@ try {
         $startInfo.Environment['OURNOTES_TEST_OPENGL'] = (Resolve-Path -LiteralPath $OpenGLDriver).Path
         $startInfo.Environment['GALLIUM_DRIVER'] = 'llvmpipe'
         $startInfo.Environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
+    }
+    if ($ResourceDownloadFixtureDirectory) {
+        $fixtureReady = Join-Path $scratch 'resource-origin.json'
+        $serverInfo = [Diagnostics.ProcessStartInfo]::new((Get-Command python).Source)
+        $serverInfo.UseShellExecute = $false
+        $serverInfo.ArgumentList.Add((Join-Path $PSScriptRoot 'resource-download-fixture.py'))
+        $serverInfo.ArgumentList.Add((Resolve-Path -LiteralPath $ResourceDownloadFixtureDirectory).Path)
+        $serverInfo.ArgumentList.Add($fixtureReady)
+        $resourceServer = [Diagnostics.Process]::Start($serverInfo)
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (-not (Test-Path -LiteralPath $fixtureReady)) {
+            if ($resourceServer.HasExited -or [DateTime]::UtcNow -gt $readyDeadline) { throw 'The bounded resource download fixture failed to start.' }
+            Start-Sleep -Milliseconds 50
+        }
+        $fixtureInfo = Get-Content -LiteralPath $fixtureReady -Raw | ConvertFrom-Json
+        $startInfo.Environment['OURNOTES_RESOURCE_FIXTURE_ORIGIN'] = $fixtureInfo.origin
+        $startInfo.Environment['OURNOTES_METADATA_BASE'] = $fixtureInfo.origin + '/metadata'
+        $startInfo.Environment['OURNOTES_STORY_SITE_INTL'] = $fixtureInfo.origin + '/intl'
     }
     foreach ($name in @('CUBISM_NATIVE_SDK', 'CUBISM_MOTIONSYNC_DLL', 'FFMPEG_PATH', 'FFPROBE_PATH')) {
         [void] $startInfo.Environment.Remove($name)
@@ -212,6 +232,10 @@ finally {
     if ($null -ne $process) {
         if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
         $process.Dispose()
+    }
+    if ($null -ne $resourceServer) {
+        if (-not $resourceServer.HasExited) { $resourceServer.Kill($true); $resourceServer.WaitForExit() }
+        $resourceServer.Dispose()
     }
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }

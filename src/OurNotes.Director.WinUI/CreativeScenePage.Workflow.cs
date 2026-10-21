@@ -401,7 +401,10 @@ internal sealed partial class CreativeScenePage
             await viewport.SetScenePreviewScaleAsync(quality, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if(disposed || !ReferenceEquals(owner, document)) return;
-            await viewport.SeekAsync(target,cancellationToken);
+            if(timeline.IsScrubbing)await viewport.ScrubAsync(target,cancellationToken,
+                allowReducedQuality:!viewport.IsFullscreenRendering&&document.Root["nativeOutput"]?["isolateActor"] is null
+                    &&SceneContent.Read(document.Canvas["content"])!="characters");
+            else await viewport.SeekAsync(target,cancellationToken);
         }
     }
     async Task<bool> SeekAfterScrubAsync(double seconds)

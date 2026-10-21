@@ -8,11 +8,13 @@ static class ExportQualityTests
 {
     internal static void Run(Action<bool, string> check)
     {
-        check(ExportQuality.InitialCineFormQuality(null, true) == "film3+"
+        check(ExportQuality.InitialCineFormQuality(null, true) == "film1"
             && ExportQuality.InitialCineFormQuality(new JsonObject(), false) == VideoEncoding.DefaultCineFormQuality,
-            "Transparent export prefers faint-edge quality without changing the general CineForm default");
+            "New transparent and general exports start with balanced CineForm quality");
         check(ExportQuality.InitialCineFormQuality(new JsonObject { ["cineformQuality"] = "film1" }, true) == "film1",
             "An explicit existing balanced-quality choice takes precedence over the transparent default");
+        check(ExportQuality.InitialCineFormQuality(new JsonObject { ["cineformQuality"] = "film3+" }, true) == "film3+",
+            "An explicit existing highest-quality choice is not reduced by the new balanced default");
         string[] supported = ["film3+", "film3", "film2+", "film2", "film1.5", "film1+", "film1", "high+", "high", "medium+", "medium", "low+", "low"];
         check(ExportQuality.CineFormChoices.Select(choice => choice.Value).SequenceEqual(supported)
             && CommandCatalog.Get("render.clip").Fields.Single(field => field.Key == "cineform-quality")

@@ -65,7 +65,7 @@ public sealed partial class MainWindow : Window
         var tabs=Ui.Row(0,sceneTab,live2dTab,homeTab);tabs.HorizontalAlignment=HorizontalAlignment.Center;header.Children.Add(tabs);Grid.SetColumn(tabs,1);
         sceneTab.Click+=(_,_)=>Navigate("scenes");live2dTab.Click+=(_,_)=>Navigate("live2d");homeTab.Click+=(_,_)=>Navigate("home");
         var actions=Ui.Row(2,StudioLayout.Tool("素材库",ShowResourceManager,"\uE8B7"),StudioLayout.Tool("",()=>Navigate("tasks"),"\uE9F9"),StudioLayout.Tool("",()=>Navigate("settings"),"\uE713"));
-        ToolTipService.SetToolTip(actions.Children[1],"导出任务");ToolTipService.SetToolTip(actions.Children[2],"设置");header.Children.Add(actions);Grid.SetColumn(actions,2);root.Children.Add(header);Grid.SetRow(header,1);
+        ToolTipService.SetToolTip(actions.Children[1],"后台任务");ToolTipService.SetToolTip(actions.Children[2],"设置");header.Children.Add(actions);Grid.SetColumn(actions,2);root.Children.Add(header);Grid.SetRow(header,1);
         root.Children.Add(content);Grid.SetRow(content,2);
         var footer=new Grid{Padding=new(8,3,8,3),ColumnSpacing=10};footer.ColumnDefinitions.Add(new(){Width=GridLength.Auto});footer.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});footer.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         status.FontSize=archiveStatus.FontSize=11;
@@ -85,7 +85,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 bool dirty=scene?.HasUnsavedChanges==true||home?.HasUnsavedChanges==true||live2d?.HasUnsavedChanges==true;
-                if((Jobs.IsBusy||dirty)&&!await ConfirmAsync("关闭工作台？",Jobs.IsBusy?"还有导出任务。关闭会停止任务并保存各工作台草稿。":"未保存的修改会保留为草稿。","关闭"))return;
+                if((Jobs.IsBusy||dirty)&&!await ConfirmAsync("关闭工作台？",Jobs.IsBusy?"还有后台任务。关闭会停止任务并保存各工作台草稿。":"未保存的修改会保留为草稿。","关闭"))return;
                 scene?.SaveDraft();home?.SaveDraft();live2d?.SaveDraft();scene?.Deactivate();home?.Deactivate();live2d?.Deactivate();ActiveLayout?.SaveLayout();
                 foreach(var tool in tools.Values.OfType<CommandPage>())tool.SaveForm();
                 SaveSettings();await Jobs.DisposeAsync();if(scene is not null)await scene.DisposeAsync();if(home is not null)await home.DisposeAsync();if(live2d is not null)await live2d.DisposeAsync();
@@ -130,8 +130,9 @@ public sealed partial class MainWindow : Window
             live2dTab.Style=(Style)Application.Current.Resources[key=="live2d"?"WorkspaceSelectedTabStyle":"WorkspaceTabStyle"];
             homeTab.Style=(Style)Application.Current.Resources[key=="home"?"WorkspaceSelectedTabStyle":"WorkspaceTabStyle"];return;
         }
+        if(key=="resources"){ShowResourceManager();return;}
         var page=GetToolPage(key);if(page is SettingsPage settings)settings.Refresh();if(page is TasksPage tasks)tasks.Refresh();
-        ShowDrawer(key,key switch{"tasks"=>"导出任务","settings"=>"设置","archive"=>"下载素材",_=>"高级素材工具"},page);
+        ShowDrawer(key,key switch{"tasks"=>"后台任务","settings"=>"设置","archive"=>"下载素材",_=>"高级素材工具"},page);
     }
     internal StudioLayout? ActiveLayout=>FindLayout(content.Content as DependencyObject);
     static StudioLayout? FindLayout(DependencyObject? parent)
@@ -161,7 +162,7 @@ public sealed partial class MainWindow : Window
     FrameworkElement GetToolPage(string key)
     {
         if(tools.TryGetValue(key,out var page))return page;
-        page=key switch{"tasks"=>new TasksPage(this),"settings"=>new SettingsPage(this),"scene-tools"=>new ScenePage(this),
+        page=key switch{"resources"=>new ResourceLibraryPage(this),"tasks"=>new TasksPage(this),"settings"=>new SettingsPage(this),"scene-tools"=>new ScenePage(this),
             "archive"=>new CommandPage(this,CommandGroup.Archive),"home-tools"=>new CommandPage(this,CommandGroup.Home),"stories"=>new CommandPage(this,CommandGroup.Stories),
             "models"=>new CommandPage(this,CommandGroup.Models),"assets"=>new CommandPage(this,CommandGroup.Assets),"media"=>new CommandPage(this,CommandGroup.Media),
             "diagnostics"=>new CommandPage(this,CommandGroup.Diagnostics),_=>throw new ArgumentException("未知工具："+key)};tools[key]=page;return page;
@@ -171,15 +172,7 @@ public sealed partial class MainWindow : Window
     internal void CloseDrawer(){bool visible=drawer.Visibility==Visibility.Visible;drawer.Visibility=Visibility.Collapsed;drawerContent.Content=null;drawerKey=null;if(visible)ActiveLayout?.FocusActivePanel();}
     internal void ShowResourceManager()
     {
-        var path=Ui.Text(string.IsNullOrWhiteSpace(Settings.ArchivePath)?"选择已有素材，或下载需要的乐队。":Settings.ArchivePath,13,true);
-        var panel=Ui.Stack(16,path,Ui.Row(8,StudioLayout.AsyncTool("选择素材文件夹",async()=>
-        {if(await PickFolderAsync() is not {} folder)return;Settings.ArchivePath=folder;SaveSettings();ApplySettings();path.Text=folder;},"\uE8B7"),
-            StudioLayout.Tool("下载 / 更新素材",()=>Navigate("archive"),"\uE896")),
-            new Expander{Header="高级素材工具",HorizontalAlignment=HorizontalAlignment.Stretch,Content=Ui.Stack(8,
-                StudioLayout.Tool("剧情与对白",()=>Navigate("stories")),StudioLayout.Tool("模型与动作",()=>Navigate("models")),
-                StudioLayout.Tool("原生场景检查",()=>Navigate("scene-tools")),StudioLayout.Tool("主页批量处理",()=>Navigate("home-tools")),
-                StudioLayout.Tool("媒体处理",()=>Navigate("media")),StudioLayout.Tool("诊断",()=>Navigate("diagnostics")))});
-        ShowDrawer("resources","素材库",panel);
+        var page=(ResourceLibraryPage)GetToolPage("resources");ShowDrawer("resources","素材库",page);_ = page.RefreshAsync();
     }
     internal void OpenCommand(string id,IReadOnlyDictionary<string,string?>? values=null)
     {
@@ -191,7 +184,7 @@ public sealed partial class MainWindow : Window
         var definition=CommandCatalog.Get(id);var build=CommandLineBuilder.Build(id,values,context??Settings.Context());
         if(!build.IsValid)throw new ArgumentException(string.Join(Environment.NewLine,build.Errors.Select(e=>e.Message)));
         var task=Jobs.Enqueue(new EngineRequest(id,definition.Label,build.Arguments,context?.WorkingDirectory??Environment.CurrentDirectory,build.OutputPath,build.OutputKind));status.Text=definition.Label+"已加入任务";
-        var result=await task.Completion;if(id=="archive"&&result.Success&&result.OutputPath is {} archive){Settings.ArchivePath=archive;SaveSettings();ApplySettings();}return result;
+        var result=await task.Completion;if(id=="archive"&&result.Success&&result.OutputPath is {} archive){Settings.ArchivePath=archive;Settings.RememberResourceLibrary(archive);SaveSettings();ApplySettings();}return result;
     }
     internal async Task<EngineResult> QueryAsync(string id,IReadOnlyDictionary<string,string?>? values=null,CancellationToken cancellationToken=default)
     {
@@ -204,6 +197,7 @@ public sealed partial class MainWindow : Window
         var running=Jobs.Tasks.FirstOrDefault(t=>t.Status==DesktopTaskStatus.Running);progress.Visibility=running is null?Visibility.Collapsed:Visibility.Visible;
         progress.IsIndeterminate=running?.Fraction is null;progress.Value=running?.Fraction??0;status.Text=running is null?task.Request.Title+" · "+task.StatusLabel:running.Request.Title+" · "+running.Message;
         if(drawerKey=="tasks"&&tools.TryGetValue("tasks",out var page))((TasksPage)page).RefreshProgress(task);
+        if(tools.TryGetValue("resources",out var resources))((ResourceLibraryPage)resources).RefreshProgress(task);
     });
     internal async Task<string?> PickFileAsync(bool save=false,string? suggestedName=null,IReadOnlyList<string>? extensions=null)
     {
@@ -274,6 +268,11 @@ public sealed partial class MainWindow : Window
         {
             Phase("native/home-quality");Navigate("home");root.UpdateLayout();await Task.Delay(100);
             await Home.RunRealQualitySmokeAsync(realHome,Check);
+        }
+        if(Environment.GetEnvironmentVariable("OURNOTES_RESOURCE_FIXTURE_ORIGIN") is {Length:>0})
+        {
+            Phase("resources/download");ShowResourceManager();root.UpdateLayout();await Task.Delay(100);
+            await ((ResourceLibraryPage)GetToolPage("resources")).RunDownloadSmokeAsync(Check);
         }
         Phase("packaged-engine");
         var help=await Engine.RunAsync(new EngineRequest("help","引擎检查",["help"],Path.GetDirectoryName(reportPath)!));Check(help.Success&&help.Json?["commands"] is JsonArray,"原生导出执行器可用");

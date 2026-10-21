@@ -91,6 +91,7 @@ public sealed partial class AdvScene : IDisposable
     }
     public Actor? Character(string name)=>actors.GetValueOrDefault((name,costumes.GetValueOrDefault(name)));
     public AdvTransform Slot(int pos)=>pos is 1 or 3 or 5 or 7 or 9?slots[(pos-1)/2]:throw new ArgumentException("PositionType has no character slot: "+pos);
+    bool HasStageActor(int pos)=>(pos is 1 or 3 or 5 or 7 or 9)&&actors.Values.Any(actor=>ReferenceEquals(actor.Prefab.Root.Parent,Slot(pos)));
     public Vector3 FocusPoint(int pos)=>pos>=1&&pos<=9?anchors[pos-1].WorldPosition:Vector3.Zero;
     static float Param(AdvRow r,int index)=>float.TryParse(r.Text("Parameter"+index),NumberStyles.Float,CultureInfo.InvariantCulture,out float v)&&float.IsFinite(v)?v:0;
     static AdvEase Ease(AdvRow r,AdvEase fallback=AdvEase.OutQuad)=>Enum.TryParse<AdvEase>(r.Text("Parameter2"),false,out var e)&&Enum.IsDefined(e)?e:fallback;
@@ -112,7 +113,13 @@ public sealed partial class AdvScene : IDisposable
     }
     public void Show(string name,int pos,string motion="",string expression="",float fade=0)
     {
-        if(shown.ContainsKey(pos))return;var actor=Character(name);positions[name]=pos;if(actor is null)return;
+        // AdvCharacterField.ExistsCharacter tests the slot's actual children. An
+        // In can move an already visible character without an intervening Out.
+        if(HasStageActor(pos))return;var actor=Character(name);positions[name]=pos;if(actor is null)return;
+        // Keep one renderer entry for that model after reparenting. Otherwise the
+        // old slot both draws the moved actor again and blocks the next In there
+        // (10060: hotaru 5 -> 1 -> 9, then kanata enters the now-empty slot 5).
+        RemoveStageActor(actor);
         if(directorActors.Remove(actor)){
             var character=actor.Prefab.Find("Live2DCharacter").Component;
             actor.Prefab.Root.Position=AdvPrefab.Vector(character["BasePosition"]);
@@ -186,7 +193,7 @@ public sealed partial class AdvScene : IDisposable
                 if(duration>0){pendingCapture=new(loop);yield return pendingCapture;captureActive=true;captureAlpha=1;}
                 SetStage(row.Text("TargetAssetName"));
                 if(duration>0){yield return Tween("capture",()=>1,0,duration,AdvEase.OutQuad,v=>captureAlpha=v);captureActive=false;}yield break;
-            case "In":if(name==""||shown.ContainsKey(pos))yield break;Show(name,pos,row.Text("MotionName"),row.Text("ExpressionName"),row.Number("MotionFadeIn"));if(Character(name) is Actor inActor)inActor.GameLighting=!row.Text("Parameter1").Equals("unlit",StringComparison.OrdinalIgnoreCase);foreach(var w in FadeSlot(pos,0,1,duration))yield return w;yield break;
+            case "In":if(name==""||HasStageActor(pos))yield break;Show(name,pos,row.Text("MotionName"),row.Text("ExpressionName"),row.Number("MotionFadeIn"));if(Character(name) is Actor inActor)inActor.GameLighting=!row.Text("Parameter1").Equals("unlit",StringComparison.OrdinalIgnoreCase);foreach(var w in FadeSlot(pos,0,1,duration))yield return w;yield break;
             case "Out":if(pos==0)pos=positions.GetValueOrDefault(name);foreach(var w in FadeSlot(pos,1,0,duration>0?duration:.05f))yield return w;if(!p.Cancelled){var actor=Character(name);if(actor is not null){RemoveStageActor(actor);actor.Prefab.Root.Parent=null;}}yield break;
             case "MoveToDirection":yield return MoveSlot(pos,new(Param(row,1),Param(row,2),Param(row,3)),duration);yield break;
             case "MoveToRight":case "MoveToLeft":case "MoveToUp":case "MoveToDown":case "MoveToForward":case "MoveToBack":

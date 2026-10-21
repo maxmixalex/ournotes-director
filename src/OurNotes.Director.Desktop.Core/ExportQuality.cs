@@ -4,10 +4,24 @@ using OurNotes.Director.Core;
 namespace OurNotes.Director.Desktop.Core;
 
 /// <summary>Lossy encoder quality is independent of geometric supersampling.
-/// Transparent character defaults retain more faint hair and costume coverage.</summary>
+/// New exports use a practical starting point; explicit project choices win.</summary>
 public static class ExportQuality
 {
-    public const string TransparentCineFormQuality = "film3+";
+    public const string TransparentCineFormQuality = VideoEncoding.DefaultCineFormQuality;
+    public const int DefaultLive2DLongSide = 1920;
+
+    public static (int Width, int Height) InitialLive2DCanvas(JsonNode? metadata)
+    {
+        var original = metadata?["canvas"] is not null ? SceneAssetExport.Canvas(metadata) : (Width: 1080, Height: 1920);
+        long longest = Math.Max(original.Width, original.Height), scale = Math.Min(DefaultLive2DLongSide, longest);
+        // Preserve the model's canvas proportion, then expand only to the codec's
+        // pixel alignment. Integer division avoids floating rounding turning an
+        // exact 1920-pixel long side into another complete 8/16-pixel block.
+        int Align(int size, int alignment, int minimum) => Math.Max(minimum,
+            checked((int)((size * scale + longest * alignment - 1) / (longest * alignment)) * alignment));
+        int width = Align(original.Width, 16, 16), height = Align(original.Height, 8, 32);
+        return (width, height);
+    }
 
     public static IReadOnlyList<(string Value, string Label)> CineFormChoices { get; } =
         Array.AsReadOnly<(string Value, string Label)>([

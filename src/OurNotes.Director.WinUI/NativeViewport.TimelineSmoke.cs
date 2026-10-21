@@ -24,8 +24,10 @@ public sealed partial class NativeViewport
         await Task.Delay(70);
     }
 
-    internal sealed record ScrubSample(double Milliseconds, int Frame, long Session, bool Playing, string? Pixels);
-    internal async Task<IReadOnlyList<ScrubSample>> SendTimelineScrubSmokeAsync(Window window, FrameworkElement ruler, double startX, double endX)
+    internal sealed record ScrubSample(double Milliseconds, int Frame, long Session, bool Playing, string? Pixels,
+        bool Cached=false,bool NativeStateSynchronized=true,int NativeFrame=-1);
+    internal async Task<IReadOnlyList<ScrubSample>> SendTimelineScrubSmokeAsync(Window window, FrameworkElement ruler, double startX, double endX,
+        string evidenceName="timeline-scrub-trace.json")
     {
         nint hwnd = await PrepareSmokeInputAsync(window);
         var start = SurfaceScreenPoint(hwnd, ruler.TransformToVisual(surface).TransformPoint(new Point(startX, 12)));
@@ -48,7 +50,8 @@ public sealed partial class NativeViewport
                 for (int row = 0; row < frame.Pixels.Height; row++) hash.AppendData(frame.Pixels.GetRgbaRow(row));
                 pixels = Convert.ToHexString(hash.GetHashAndReset());
             }
-            if (held) samples.Add(new(at, frame.Frame, frame.SessionId, frame.IsPlaying, pixels));
+            if (held) samples.Add(new(at, frame.Frame, frame.SessionId, frame.IsPlaying, pixels,
+                frame.IsCached,frame.NativeStateSynchronized,frame.FrameCache?.NativeFrame??frame.Frame));
             performance.Add((at, frame with { Pixels = new(frame.Pixels.Width, frame.Pixels.Height, []) },
                 PresentationQueueMilliseconds, PresentationMilliseconds));
         }
@@ -120,6 +123,9 @@ public sealed partial class NativeViewport
                         ["timeMs"] = measured.Time, ["frame"] = measured.Frame.Frame, ["session"] = measured.Frame.SessionId,
                         ["playing"] = measured.Frame.IsPlaying, ["pixels"] = sample?.Pixels, ["held"] = sample is not null,
                         ["scenePreviewScale"] = measured.Frame.ScenePreviewScale,
+                        ["cached"] = measured.Frame.IsCached,["nativeStateSynchronized"] = measured.Frame.NativeStateSynchronized,
+                        ["nativeFrame"] = measured.Frame.FrameCache?.NativeFrame,
+                        ["pixelWidth"] = measured.Frame.Pixels.Width,["pixelHeight"] = measured.Frame.Pixels.Height,
                         ["renderMs"] = measured.Frame.RenderMilliseconds, ["queueMs"] = measured.Queue,
                         ["presentationMs"] = measured.Presentation, ["simulationMs"] = p?.SimulationMilliseconds,
                         ["sceneMs"] = p?.SceneMilliseconds, ["readbackMs"] = p?.ReadbackMilliseconds,
@@ -144,7 +150,7 @@ public sealed partial class NativeViewport
                     ["pressedMs"] = pressedAt, ["releasedMs"] = releasedAt, ["frames"] = frames,
                     ["inputs"] = pointer, ["operations"] = actions
                 };
-                DesktopSettings.AtomicWrite(App.SmokeEvidencePath("timeline-scrub-trace.json"), report.ToJsonString(DesktopSettings.JsonOptions));
+                DesktopSettings.AtomicWrite(App.SmokeEvidencePath(evidenceName), report.ToJsonString(DesktopSettings.JsonOptions));
             }
         }
         return samples;

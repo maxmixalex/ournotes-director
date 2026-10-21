@@ -393,6 +393,8 @@ public sealed unsafe partial class OffscreenGl : IDisposable
     public long PresentationCompositePasses { get; private set; }
     Pixels? PresentCore(int width,int height,int supersample,int viewportY,Action<int,int,int> drawBands,bool queued,bool transparent,bool fullCanvas)
     {
+        CapturedPreviewPixels=null;
+        PreviewCaptureMilliseconds=0;
         int sw=checked(width*supersample),sh=checked(height*supersample);
         if(fullCanvas&&(!transparent||viewportY!=0||sw!=Width||sh!=Height))throw new ArgumentException("Direct presentation requires the complete transparent canvas.");
         var target=new GlSurface(mainTexture,main,Width,Height);
@@ -404,8 +406,16 @@ public sealed unsafe partial class OffscreenGl : IDisposable
                 glViewport(0,viewportY*supersample,Width,Height);Composite(mainTexture,1);PresentationCompositePasses++;PreviewNativeWork.PresentationCopies++;
                 glViewport(0,0,sw,sh);drawBands(sw,sh,Height);
             }
-            if(!queued&&TryGpuPresentation(target,width,height,supersample))return new Pixels(width,height,[]);
-            return ResolvePresentation(target,width,height,supersample,queued,!transparent);
+            if(!queued&&TryGpuPresentation(target,width,height,supersample))
+            {
+                if(CapturePreviewPixels)
+                    CapturedPreviewPixels=CapturePresentedFrame(target,width,height,supersample,transparent);
+                return new Pixels(width,height,[]);
+            }
+            var pixels=ResolvePresentation(target,width,height,supersample,queued,!transparent);
+            if(!queued&&CapturePreviewPixels&&PreviewCaptureScale<1)
+                CapturedPreviewPixels=CapturePresentedFrame(target,width,height,supersample,transparent);
+            return pixels;
         }finally{Fn<Bind>("glBindFramebuffer")(0x8D40,drawTarget);glViewport(0,0,Width,Height);}
     }
     public Pixels Read(int width,int height)=>ReadPixels(width,height,Width,Height);

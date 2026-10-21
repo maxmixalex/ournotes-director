@@ -195,6 +195,13 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         await AwaitPresentationAsync(cancellationToken);
         RecordPreviewOperation("seek.end");
     }
+    public async Task ScrubAsync(double seconds,CancellationToken cancellationToken=default,bool allowReducedQuality=true)
+    {
+        RecordPreviewOperation("scrub.begin");
+        await session.ScrubAsync(seconds,cancellationToken,allowReducedQuality);
+        await AwaitPresentationAsync(cancellationToken);
+        RecordPreviewOperation("scrub.end");
+    }
     public async Task PauseForEditingAsync()
     { session.Pause(); await session.SynchronizeAsync(); await AwaitPresentationAsync(); }
     public async Task PreviewStagePositionAsync(string actor,int slot,System.Numerics.Vector3 position,long expectedSession,int expectedFrame)

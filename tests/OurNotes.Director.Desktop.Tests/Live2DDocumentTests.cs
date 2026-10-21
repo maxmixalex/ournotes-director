@@ -34,7 +34,23 @@ public static class Live2DDocumentTests
             check(!compiled.Validate().HasErrors && compiled.Source.IsLibrary && compiled.Root["initialize"] is JsonArray && compiled.Root["finalize"] is JsonArray,
                 "A new single-model project needs only the material library and compiles to the existing native format");
             check(compiled.Root["output"]?["isolateActor"]?.ToString() == doc.ActorId && compiled.Root["output"]?["letterbox"]?.ToString() == "none", "Standalone preview/export uses native isolation");
-            check(compiled.Output.CineformQuality == "film3+", "A new standalone transparent model preserves faint edges with the highest CineForm quality by default");
+            check(compiled.Output.CineformQuality == "film1" && compiled.Output.Supersample == 1,
+                "A new standalone transparent model starts with balanced CineForm and one sample per output pixel");
+            var largeMetadata = Metadata(); largeMetadata["canvas"]!["width"] = 6000; largeMetadata["canvas"]!["height"] = 9000;
+            var practical = Live2DDocument.Create("large-model", metadata: largeMetadata);
+            check(practical.Width == 1280 && practical.Height == 1920
+                && SceneAssetExport.Canvas(practical.Metadata) == (6000, 9000)
+                && practical.ToSceneDocument().Output is { Width: 1280, Height: 1920, CineformQuality: "film1", Supersample: 1 },
+                "New 54 MP model artwork gets a proportional 1920-pixel starting canvas without changing its original metadata");
+            var oldLarge = JsonNode.Parse(practical.ToJson())!.AsObject();
+            oldLarge["output"]!["width"] = 6000; oldLarge["output"]!["height"] = 9000;
+            var preservedLarge = Live2DDocument.Parse(oldLarge.ToJsonString());
+            check(preservedLarge.Width == 6000 && preservedLarge.Height == 9000
+                && Live2DDocument.FromDraft(preservedLarge.ToDraft()).Width == 6000,
+                "Opening or recovering an existing model project preserves its explicit original-size canvas");
+            var defaultCanvas = Live2DDocument.Create("model-without-canvas");
+            check(defaultCanvas.Width == 1088 && defaultCanvas.Height == 1920,
+                "A model without canvas metadata receives a CineForm-compatible portrait default");
             string saved = Path.Combine(directory, "model.live2d.json");
             doc.Save(saved); doc.Time = 1.2;
             check(!doc.HasUnsavedChanges && Math.Abs(doc.Time - 1.2) < 1e-9, "Moving a Live2D playhead does not dirty the saved document");

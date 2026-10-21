@@ -1,11 +1,14 @@
 using System.Numerics;
+using System.Diagnostics;
 
 namespace OurNotes.Director.Core;
 
 public sealed unsafe partial class OffscreenGl
 {
+    internal double FocusPreparationMilliseconds { get; private set; }
     internal void PrepareFocusMaterials(UnityShaderLibrary shaders, float radius)
     {
+        long started=Stopwatch.GetTimestamp();
         // Drivers can specialize the same shader for power-of-two samplers and
         // for framebuffers with a depth/stencil attachment, even with testing
         // disabled. A fixed 16x16 color-only draw leaves both real paths cold.
@@ -38,5 +41,6 @@ public sealed unsafe partial class OffscreenGl
                 _ = Read(size.Width, size.Height);
             }
         }
+        FocusPreparationMilliseconds+=Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     }
 }

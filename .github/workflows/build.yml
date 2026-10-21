@@ -117,6 +117,8 @@ jobs:
           $env:OURNOTES_TEST_OPENGL = $mesa.FullName
           $env:OURNOTES_TEST_PACKAGE = (Resolve-Path artifacts/win-x64).Path
           $ffmpeg = (Resolve-Path artifacts/win-x64/tools/ffmpeg.exe).Path
+          & $test --encoder-lifecycle $ffmpeg artifacts/encoder-lifecycle-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Real encoder lifecycle checks failed: $LASTEXITCODE" }
           & $test --creative-audio $ffmpeg artifacts/creative-audio
           if ($LASTEXITCODE -ne 0) { throw "Creative audio checks failed: $LASTEXITCODE" }
           & $test --preview-editing
@@ -135,11 +137,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Millsage original-story depth checks failed: $LASTEXITCODE" }
           & $test --millsage-replay artifacts/millsage-blur-fixture artifacts/millsage-replay-evidence
           if ($LASTEXITCODE -ne 0) { throw "Millsage long-story replay and particle cache checks failed: $LASTEXITCODE" }
+          & $test --millsage-story-parity artifacts/millsage-blur-fixture artifacts/millsage-story-parity-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Millsage original story model/effect parity checks failed: $LASTEXITCODE" }
+          & $test --preview-frame-cache artifacts/millsage-blur-fixture artifacts/preview-frame-cache-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Exact preview frame cache checks failed: $LASTEXITCODE" }
           & $test --specific-antialiasing artifacts/millsage-home-fixture artifacts/hotaru-quality-fixture $ffmpeg artifacts/specific-antialiasing-evidence
           if ($LASTEXITCODE -ne 0) { throw "Hotaru and Millsage antialiasing checks failed: $LASTEXITCODE" }
           & $test --prepare-fixture-library artifacts/hotaru-quality-fixture
           if ($LASTEXITCODE -ne 0) { throw "Hotaru creative library fixture preparation failed: $LASTEXITCODE" }
-          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -RealHomeFixtureDirectory artifacts/millsage-home-fixture -RealHotaruFixtureDirectory artifacts/hotaru-quality-fixture -RealMillsageFixtureDirectory artifacts/millsage-blur-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 900 -ProgressTimeoutSeconds 180
+          ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -RealHomeFixtureDirectory artifacts/millsage-home-fixture -RealHotaruFixtureDirectory artifacts/hotaru-quality-fixture -RealMillsageFixtureDirectory artifacts/millsage-blur-fixture -ResourceDownloadFixtureDirectory artifacts/real-scene-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 900 -ProgressTimeoutSeconds 180
       - name: Preserve actual window evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -158,6 +164,9 @@ jobs:
             artifacts/model-cache-evidence/*
             artifacts/millsage-blur-evidence/*
             artifacts/millsage-replay-evidence/*
+            artifacts/millsage-story-parity-evidence/*
+            artifacts/preview-frame-cache-evidence/*
+            artifacts/encoder-lifecycle-evidence/*
             artifacts/specific-antialiasing-evidence/*
           if-no-files-found: ignore
           retention-days: 14

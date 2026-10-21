@@ -46,4 +46,13 @@ internal sealed partial class ClipTimeline
         double a = Math.Clamp(start * scale, 2, maximum - 2), b = Math.Clamp(end * scale, a + 1, maximum);
         return (ruler, a, b, At(b));
     }
+    internal (FrameworkElement Element,double StartX,double EndX,double EndTime) ReverseScrubCoordinates(double start,double end)
+    {
+        if(end<0||end>=start)throw new ArgumentOutOfRangeException(nameof(end));
+        fitPending=false;scale=Math.Clamp((Math.Max(100,ruler.ActualWidth)-80)/(start-end),zoom.Minimum,zoom.Maximum);
+        zoom.Value=scale;Draw();UpdateLayout();scroll.UpdateLayout();
+        scroll.ChangeView(Math.Max(0,end*scale-40),null,null,true);Draw();UpdateLayout();
+        double a=start*scale-scroll.HorizontalOffset,b=end*scale-scroll.HorizontalOffset;
+        return(ruler,a,b,At(b+scroll.HorizontalOffset));
+    }
 }

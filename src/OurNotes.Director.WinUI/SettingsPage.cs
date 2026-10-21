@@ -66,7 +66,7 @@ internal sealed partial class SettingsPage : UserControl
     private async Task SaveAsync()
     {
         string archive = _archive.Text.Trim(), output = _output.Text.Trim();
-        if (archive.Length > 0 && !Directory.Exists(archive)) throw new ArgumentException("素材归档目录不存在。请重新选择，或先到“下载与归档”创建归档。");
+        if (archive.Length > 0 && !Directory.Exists(archive)) throw new ArgumentException("素材归档目录不存在。请重新选择，或先到右上角“素材库”下载资源。");
         if (output.Length == 0) throw new ArgumentException("请选择默认导出目录。");
         output = Path.GetFullPath(output);
         foreach (var (key, box) in _tools)
@@ -85,6 +85,7 @@ internal sealed partial class SettingsPage : UserControl
         if (gpuChanged) WindowsGpuPreference.Apply(gpuPreference, gpuEngine);
         GpuPreferencePolicy.Store(settings, gpuPreference);
         settings.ArchivePath = archive.Length == 0 ? "" : Path.GetFullPath(archive); settings.OutputDirectory = output;
+        if (settings.ArchivePath.Length > 0) settings.RememberResourceLibrary(settings.ArchivePath);
         settings.Site = Ui.Selected(_site); settings.Language = Ui.Selected(_language); settings.Theme = Ui.Selected(_theme);
         settings.EnginePath = engine; settings.FFmpegPath = _tools["ffmpeg"].Text.Trim(); settings.FFprobePath = _tools["ffprobe"].Text.Trim();
         settings.CubismSdkPath = _tools["cubism"].Text.Trim(); settings.NativeLibraryPath = _tools["native"].Text.Trim();

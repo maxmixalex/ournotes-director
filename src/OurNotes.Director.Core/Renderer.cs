@@ -85,6 +85,6 @@ public sealed class Renderer : IDisposable
                 if(encoder!=null){encoder.StandardInput.Close();encoder.WaitForExit();var errors=errorTask!.GetAwaiter().GetResult();if(encoder.ExitCode!=0)throw new IOException($"ffmpeg exited {encoder.ExitCode}: {errors}");File.Move(temporary!,output,overwrite);temporary=null;}
             }
             complete=true;SaveReport();return JsonOutput.Object(("output", output), ("sidecar", sidecar), ("complete", complete), ("frameCount", mode=="frame"?1:mode=="contact"?Math.Min(9,total):total), ("written", written), ("reused", reused), ("elapsedSeconds", watch.Elapsed.TotalSeconds), ("Device", renderer.Device), ("alpha", mode=="clip"&&codec=="h264"?"none":"straight"), ("jobHash", jobHash));
-        }finally{if(encoder!=null){if(!encoder.HasExited)encoder.Kill(true);encoder.Dispose();}if(temporary!=null&&File.Exists(temporary))File.Delete(temporary);}
+        }finally{VideoEncoding.StopEncoder(encoder,errorTask);if(temporary!=null&&File.Exists(temporary))File.Delete(temporary);}
     }
 }
