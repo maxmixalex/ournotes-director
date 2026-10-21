@@ -350,8 +350,10 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             int next=update.Time.HasValue?FrameAt(update.Time.Value):frame;
             bool imageOnly=update.AllowCachedFrame&&update.Time.HasValue&&update.SceneEdits.Count==0
                 &&update.IsolationTransform is null&&update.StagePositions.Count==0&&!playing&&Volatile.Read(ref playRequested)==0;
+            // Pointer scrubbing prioritizes the requested frame over optional neighboring history draws.
             Render(next,update.SceneEdits.Values.ToArray(),replay:update.Time.HasValue,cancellationToken:update.SeekCancellation,
-                isolationTransform:update.IsolationTransform,allowCachedFrame:imageOnly,allowReducedQuality:update.AllowReducedQuality);
+                isolationTransform:update.IsolationTransform,allowCachedFrame:imageOnly,allowReducedQuality:update.AllowReducedQuality,
+                allowIntermediateHistory:!update.AllowCachedFrame);
             if(playing){playFrom=frame;playClock=Stopwatch.GetTimestamp();PlaybackClock?.Start(frame/(double)renderer!.Fps);}
             foreach(var waiter in update.Waiters)waiter.TrySetResult();
         }

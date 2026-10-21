@@ -117,6 +117,7 @@ public sealed partial class NativeViewport
                 foreach (var measured in performance)
                 {
                     var p = measured.Frame.Performance;
+                    var cache = measured.Frame.FrameCache;
                     var sample = samples.FirstOrDefault(value => value.Milliseconds == measured.Time);
                     frames.Add((JsonNode)new JsonObject
                     {
@@ -124,7 +125,11 @@ public sealed partial class NativeViewport
                         ["playing"] = measured.Frame.IsPlaying, ["pixels"] = sample?.Pixels, ["held"] = sample is not null,
                         ["scenePreviewScale"] = measured.Frame.ScenePreviewScale,
                         ["cached"] = measured.Frame.IsCached,["nativeStateSynchronized"] = measured.Frame.NativeStateSynchronized,
-                        ["nativeFrame"] = measured.Frame.FrameCache?.NativeFrame,
+                        ["nativeFrame"] = cache?.NativeFrame,
+                        ["cachedFrames"] = cache?.Frames, ["cacheRetainedBytes"] = cache?.RetainedBytes,
+                        ["cacheHits"] = cache?.Hits, ["cacheMisses"] = cache?.Misses,
+                        ["cacheStoreMs"] = cache?.StoreMilliseconds, ["cacheRestoreMs"] = cache?.RestoreMilliseconds,
+                        ["capturedFrames"] = cache?.CapturedFrames, ["captureMs"] = cache?.CaptureMilliseconds,
                         ["pixelWidth"] = measured.Frame.Pixels.Width,["pixelHeight"] = measured.Frame.Pixels.Height,
                         ["renderMs"] = measured.Frame.RenderMilliseconds, ["queueMs"] = measured.Queue,
                         ["presentationMs"] = measured.Presentation, ["simulationMs"] = p?.SimulationMilliseconds,
@@ -145,6 +150,8 @@ public sealed partial class NativeViewport
                 var report = new JsonObject
                 {
                     ["initialFrame"] = initial.Frame, ["initialSession"] = initial.SessionId,
+                    ["initialCapturedFrames"] = initial.FrameCache?.CapturedFrames,
+                    ["initialCaptureMs"] = initial.FrameCache?.CaptureMilliseconds,
                     ["width"] = initial.Pixels.Width, ["height"] = initial.Pixels.Height, ["device"] = initial.Device,
                     ["startX"] = start.X, ["startY"] = start.Y, ["endX"] = end.X, ["endY"] = end.Y,
                     ["pressedMs"] = pressedAt, ["releasedMs"] = releasedAt, ["frames"] = frames,

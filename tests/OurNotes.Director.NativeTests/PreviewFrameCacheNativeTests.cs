@@ -101,14 +101,22 @@ static class PreviewFrameCacheNativeTests
             var hit=await Measure("repeat114",()=>session.ScrubAsync(114));
             Check(hit.IsCached&&hit.NativeStateSynchronized&&ExactImageState(miss,hit),
                 "The same newly visited fractional frame is subsequently restored losslessly from history");
-            var forward=await Measure("forwardResumesHistory114_1",()=>session.SeekAsync(114.1));
-            Check(!forward.IsCached&&forward.NativeStateSynchronized&&forward.Frame==3423
+            var scrubbed=await Measure("forwardScrubMiss114_1",()=>session.ScrubAsync(114.1));
+            Check(!scrubbed.IsCached&&scrubbed.NativeStateSynchronized&&scrubbed.Frame==3423
+                &&scrubbed.SessionId==miss.SessionId&&scrubbed.Performance?.SimulationFrames==3
+                &&SameIntermediateHistory(hit,scrubbed),
+                "An explicit forward scrub miss advances the real native state without optional intermediate capture");
+            var scrubbedHit=await Measure("repeatForwardScrub114_1",()=>session.ScrubAsync(114.1));
+            Check(scrubbedHit.IsCached&&scrubbedHit.NativeStateSynchronized&&ExactImageState(scrubbed,scrubbedHit),
+                "The explicit forward scrub still retains its exact final FBO and displayed state");
+            var forward=await Measure("forwardResumesHistory114_2",()=>session.SeekAsync(114.2));
+            Check(!forward.IsCached&&forward.NativeStateSynchronized&&forward.Frame==3426
                 &&forward.SessionId==miss.SessionId&&forward.Performance?.SimulationFrames==3
-                &&forward.FrameCache is {} forwardCache&&miss.FrameCache is {} missCache
-                &&forwardCache.CapturedFrames>missCache.CapturedFrames
-                &&forwardCache.CaptureMilliseconds>missCache.CaptureMilliseconds,
-                "A stable forward seek after reconstruction resumes bounded intermediate history capture");
-            var forwardHit=await Measure("repeatForward114_1",()=>session.ScrubAsync(114.1));
+                &&forward.FrameCache is {} forwardCache&&scrubbed.FrameCache is {} scrubbedCache
+                &&forwardCache.CapturedFrames>scrubbedCache.CapturedFrames
+                &&forwardCache.CaptureMilliseconds>scrubbedCache.CaptureMilliseconds,
+                "A normal forward seek after an explicit scrub resumes bounded intermediate history capture");
+            var forwardHit=await Measure("repeatForward114_2",()=>session.ScrubAsync(114.2));
             Check(forwardHit.IsCached&&forwardHit.NativeStateSynchronized&&ExactImageState(forward,forwardHit),
                 "The stable forward target still retains its exact final FBO and displayed state");
             await session.ScrubAsync(115);
@@ -116,7 +124,7 @@ static class PreviewFrameCacheNativeTests
             var forwardSettled=await Measure("strictForwardSettle115",()=>session.SeekAsync(115));
             Check(forwardPending.IsCached&&!forwardPending.NativeStateSynchronized
                 &&!forwardSettled.IsCached&&forwardSettled.NativeStateSynchronized&&forwardSettled.Frame==3450
-                &&forwardSettled.SessionId==forward.SessionId&&forwardSettled.Performance?.SimulationFrames==27
+                &&forwardSettled.SessionId==forward.SessionId&&forwardSettled.Performance?.SimulationFrames==24
                 &&SameIntermediateHistory(forwardPending,forwardSettled),
                 "Strict forward catch-up to the displayed cached frame omits intermediate capture without rebuilding");
             await session.ScrubAsync(115.5);
