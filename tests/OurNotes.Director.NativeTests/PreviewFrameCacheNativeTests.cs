@@ -89,29 +89,53 @@ static class PreviewFrameCacheNativeTests
             Check(!settled.IsCached&&settled.NativeStateSynchronized&&settled.FrameCache?.NativeFrame==3450
                 &&settled.Performance?.SimulationFrames==3450&&ExactImageState(reference[3450],settled),
                 "Mouse-up strict seek restores the real 115-second native state and exact full-quality image");
+            Check(SameIntermediateHistory(beforeCancel,settled),
+                "Mouse-up reconstruction performs no optional intermediate history draws or capture work");
 
             await session.SetScenePreviewScaleAsync(.25);
             var miss=await Measure("firstMiss114",()=>session.ScrubAsync(114));
             Check(!miss.IsCached&&miss.NativeStateSynchronized&&miss.Frame==3420&&miss.FrameCache?.NativeFrame==3420,
                 "An uncached backward target performs native replay and publishes its own exact frame");
+            Check(SameIntermediateHistory(settled,miss),
+                "An uncached backward reconstruction performs no optional intermediate history draws or capture work");
             var hit=await Measure("repeat114",()=>session.ScrubAsync(114));
             Check(hit.IsCached&&hit.NativeStateSynchronized&&ExactImageState(miss,hit),
                 "The same newly visited fractional frame is subsequently restored losslessly from history");
+            var forward=await Measure("forwardResumesHistory114_1",()=>session.SeekAsync(114.1));
+            Check(!forward.IsCached&&forward.NativeStateSynchronized&&forward.Frame==3423
+                &&forward.SessionId==miss.SessionId&&forward.Performance?.SimulationFrames==3
+                &&forward.FrameCache is {} forwardCache&&miss.FrameCache is {} missCache
+                &&forwardCache.CapturedFrames>missCache.CapturedFrames
+                &&forwardCache.CaptureMilliseconds>missCache.CaptureMilliseconds,
+                "A stable forward seek after reconstruction resumes bounded intermediate history capture");
+            var forwardHit=await Measure("repeatForward114_1",()=>session.ScrubAsync(114.1));
+            Check(forwardHit.IsCached&&forwardHit.NativeStateSynchronized&&ExactImageState(forward,forwardHit),
+                "The stable forward target still retains its exact final FBO and displayed state");
+            await session.ScrubAsync(115);
+            var forwardPending=session.LastFrame!;
+            var forwardSettled=await Measure("strictForwardSettle115",()=>session.SeekAsync(115));
+            Check(forwardPending.IsCached&&!forwardPending.NativeStateSynchronized
+                &&!forwardSettled.IsCached&&forwardSettled.NativeStateSynchronized&&forwardSettled.Frame==3450
+                &&forwardSettled.SessionId==forward.SessionId&&forwardSettled.Performance?.SimulationFrames==27
+                &&SameIntermediateHistory(forwardPending,forwardSettled),
+                "Strict forward catch-up to the displayed cached frame omits intermediate capture without rebuilding");
             await session.ScrubAsync(115.5);
             var pending=session.LastFrame!;
             var parameters=await session.ReadActorParametersAsync("hotaru_child");
             var parameterState=session.LastFrame!;
             Check(pending.IsCached&&!pending.NativeStateSynchronized&&parameters.Count>0
-                &&parameterState.NativeStateSynchronized&&parameterState.Frame==3465&&parameterState.FrameCache?.NativeFrame==3465,
-                "Reading model parameters first synchronizes the native interpreter to the displayed cached frame");
+                &&parameterState.NativeStateSynchronized&&parameterState.Frame==3465&&parameterState.FrameCache?.NativeFrame==3465
+                &&SameIntermediateHistory(pending,parameterState),
+                "Reading model parameters synchronizes the displayed native frame without optional intermediate capture");
 
             await session.ScrubAsync(115.8);
             var playStart=session.LastFrame!;
             session.Play(115.8+1/30d);await session.SynchronizeAsync();session.Pause();await session.SynchronizeAsync();
             var played=session.LastFrame!;
             Check(playStart.IsCached&&played.NativeStateSynchronized&&played.ScenePreviewScale==1
-                &&played.Frame==3474&&played.FrameCache?.NativeFrame==3474&&ExactImageState(reference[3474],played),
-                "Playback from a cached image restores native state and full quality before starting its clock");
+                &&played.Frame==3474&&played.FrameCache?.NativeFrame==3474&&ExactImageState(reference[3474],played)
+                &&SameIntermediateHistory(playStart,played),
+                "Playback restores native state and full quality before starting its clock without optional intermediate capture");
             using(var cancel=new CancellationTokenSource())
             {
                 var before=session.LastFrame;session.SceneReconstructionStarted=cancel.Cancel;bool cancelled=false;
@@ -146,6 +170,8 @@ static class PreviewFrameCacheNativeTests
     static bool ExactImageState(PreviewFrame a,PreviewFrame b)=>a.Pixels.Rgba.AsSpan().SequenceEqual(b.Pixels.Rgba)
         &&a.Targets.SequenceEqual(b.Targets)&&(a.ActorAnimations??[]).SequenceEqual(b.ActorAnimations??[])
         &&(a.LipSync??[]).SequenceEqual(b.LipSync??[])&&a.ScenePreviewScale==b.ScenePreviewScale;
+    static bool SameIntermediateHistory(PreviewFrame before,PreviewFrame after)=>before.FrameCache is {} a&&after.FrameCache is {} b
+        &&a.CapturedFrames==b.CapturedFrames&&a.CaptureMilliseconds==b.CaptureMilliseconds;
     static JsonObject Snapshot(string name,PreviewFrame frame,double elapsed)=>new()
     {
         ["name"]=name,["frame"]=frame.Frame,["seconds"]=frame.Time,["session"]=frame.SessionId,["scale"]=frame.ScenePreviewScale,

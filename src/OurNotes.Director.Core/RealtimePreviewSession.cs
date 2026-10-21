@@ -181,7 +181,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     {
         if(renderer is SceneState scene
             &&(!scene.NativeReady||scene.NativeFrame!=frame||LastFrame?.IsCached==true&&scene.NeedsReplay))
-            Render(frame,[],replay:true,cancellationToken:cancellationToken);
+            Render(frame,[],replay:true,cancellationToken:cancellationToken,allowIntermediateHistory:false);
     }
 
     public Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
@@ -250,7 +250,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
                 // the budget may already differ, or the displayed pixels may.
                 bool restoreQuality=state.ScenePreviewScale!=1||LastFrame?.ScenePreviewScale!=1;
                 if(restoreQuality){state.SetScenePreviewScale(1);Volatile.Write(ref scenePreviewScale,1);}
-                if(restoreQuality||state.NeedsReplay||state.NativeFrame!=frame)Render(frame,[],replay:true);
+                if(restoreQuality||state.NeedsReplay||state.NativeFrame!=frame)Render(frame,[],replay:true,allowIntermediateHistory:false);
             }
             if(Volatile.Read(ref playRequested)==0)return;
             playbackEndFrame=exclusiveEndSeconds is {} stop?Math.Min(renderer!.EndFrame,Math.Max(frame,checked((int)Math.Ceiling(stop*renderer.Fps-1e-8))-1)):null;
@@ -371,7 +371,8 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
     void RequireRenderer(){if(renderer is null)throw new InvalidOperationException("Load a project into the native preview first.");}
 
     void Render(int next,IReadOnlyList<JsonObject> edits,bool replay=false,CancellationToken cancellationToken=default,
-        IsolatedActorTransform? isolationTransform=null,bool allowCachedFrame=false,bool allowReducedQuality=false)
+        IsolatedActorTransform? isolationTransform=null,bool allowCachedFrame=false,bool allowReducedQuality=false,
+        bool allowIntermediateHistory=true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var active=renderer!;long stamp=Stopwatch.GetTimestamp(),allocated=GC.GetAllocatedBytesForCurrentThread();
@@ -390,15 +391,19 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
         // A cached picture can move the displayed playhead independently. Count
         // actual interpreter steps, never distance from that displayed picture.
         int from=active is SceneState origin?Math.Max(0,origin.NativeFrame):frame;
+        // Restoring the displayed native state must not pay for optional nearby
+        // pictures, even when catching up to a cached frame only moves forward.
+        if(!allowCachedFrame&&next==frame&&LastFrame?.IsCached==true)allowIntermediateHistory=false;
         if(active is SceneState scene&&(!scene.NativeReady||next<scene.NativeFrame||replay&&scene.NeedsReplay))
         {
             // Native ADV has a stateful interpreter and physics. Reconstruct only for
             // a backward seek; normal playback and live edits retain models/context.
             scene.Rebuild(cancellationToken,SceneReconstructionStarted);sessionId++;from=0;
+            allowIntermediateHistory=false;
             Volatile.Write(ref scenePreviewScale,scene.ScenePreviewScale);
         }
         if(isolationTransform is not null)((SceneState)active).SetIsolatedTransform(isolationTransform);
-        if(active is SceneState history){history.HistoryBudgetMilliseconds=playing?8:200;history.PlaybackRender=playing;}
+        if(active is SceneState history){history.HistoryBudgetMilliseconds=allowIntermediateHistory?(playing?8:200):0;history.PlaybackRender=playing;}
         var pixels=active.Render(next,edits,cancellationToken);
         frame=active is SceneState current?current.NativeFrame:next;
         if(active is SceneState finished&&finished.Finished&&!finished.NeedsReplay&&finished.Source.DurationMode==PreviewDurationMode.Automatic)
@@ -814,7 +819,7 @@ public sealed class RealtimePreviewSession : IAsyncDisposable
             int count=Math.Clamp((int)(budget/Math.Max(1,lastHistoryMilliseconds)),1,6);
             int first=Math.Max(native.Loop.Frame,frame-count);
             bool collect=frameCacheAllowed&&FrameHistoryEnabled&&native.CanCaptureHistory&&frame>native.Loop.Frame
-                &&edits.Count==0&&budget>=lastHistoryMilliseconds;
+                &&edits.Count==0&&budget>0&&budget>=lastHistoryMilliseconds;
             void Capture(int current)
             {
                 if(current<first||spent>=budget||!native.CanDrawHistory||frameCache.Contains(current,.25))return;
