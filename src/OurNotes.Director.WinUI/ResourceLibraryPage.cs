@@ -63,7 +63,7 @@ internal sealed partial class ResourceLibraryPage : UserControl
             deepScan, Ui.Row(8, download, cancel, StudioLayout.Tool("查看任务", () => window.Navigate("tasks"))), downloadProgress, downloadMessage);
         Content = Ui.Scroll(Ui.Stack(12, notice, libraries, path,
             Ui.Row(5, StudioLayout.AsyncTool("添加本地素材库", AttachAsync, "\uE710"), StudioLayout.AsyncTool("刷新", () => RefreshAsync(true), "\uE72C"), folder, remove),
-            summary, filters, count, list, more, details, Ui.Row(8, open, verify), downloadPanel,
+            summary, downloadPanel, filters, count, list, more, details, Ui.Row(8, open, verify),
             new Expander { Header = "高级素材工具", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Ui.Stack(6,
                 StudioLayout.Tool("剧情、对白与语音", () => window.Navigate("stories")), StudioLayout.Tool("模型、动作与表情", () => window.Navigate("models")),
                 StudioLayout.Tool("舞台、特效与其他文件", () => window.Navigate("assets")), StudioLayout.Tool("诊断", () => window.Navigate("diagnostics"))) }));

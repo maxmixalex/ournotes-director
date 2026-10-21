@@ -21,7 +21,14 @@ internal sealed partial class ResourceLibraryPage
             downloadPanel.IsExpanded = true; destination.Text = target; band.Text = "millsage";
             downloadSites.SelectedIndex = 0; languages.Text = "zh-Hans"; concurrency.Value = 4;
             UpdateLayout();
-            check(download.IsLoaded && download.IsEnabled && libraries.IsLoaded, "素材库的本地管理和下载控件出现在真实窗口中");
+            report["beforeDownloadReady"] = DownloadLayout();
+            // Expander reveals its content on a later visual-state tick. Layout
+            // alone cannot wait for Loaded or make an offscreen action visible.
+            await RevealAsync(download, "download form");
+            report["downloadReady"] = DownloadLayout();
+            check(download.IsLoaded && download.IsEnabled && libraries.IsLoaded && InViewport(download),
+                "素材库的本地管理和下载控件完成真实加载，下载按钮位于滚动视口中");
+            await App.CaptureCheckpointAsync("resource-library-download-form");
             Invoke(download);
             await WaitUntilAsync(() => downloadTask is not null, "download task creation");
             var cancelled = downloadTask!;
@@ -35,10 +42,12 @@ internal sealed partial class ResourceLibraryPage
                 if (transferred < 12) await Task.Delay(20);
             }
             report["assetRequestsBeforeCancel"] = transferred;
+            await RevealAsync(cancel, "cancel action");
             Invoke(cancel);
             var cancelledResult = await cancelled.Completion.WaitAsync(TimeSpan.FromSeconds(30));
             await WaitUntilAsync(() => download.IsEnabled, "cancelled download UI");
             check(cancelledResult.Cancelled && cancelled.Status == DesktopTaskStatus.Cancelled && transferred >= 12, "停止下载按钮中断已开始传输素材的实际归档子进程，任务保留可重试状态");
+            await RevealAsync(download, "retry action");
             Invoke(download);
             await WaitUntilAsync(() => downloadTask is not null && !ReferenceEquals(downloadTask, cancelled), "retry task creation");
             var first = downloadTask!;
@@ -58,8 +67,9 @@ internal sealed partial class ResourceLibraryPage
             await CheckSelectedAsync();
             check(details.Text.StartsWith("校验通过", StringComparison.Ordinal), "从素材管理界面校验刚下载的剧情、语言和依赖模型内容哈希");
             report["verified"] = details.Text;
+            await RevealAsync(list, "downloaded library");
             await App.CaptureCheckpointAsync("resource-library-downloaded");
-            PrepareUpdate(); Invoke(download);
+            PrepareUpdate(); await RevealAsync(download, "update action"); Invoke(download);
             await WaitUntilAsync(() => downloadTask is not null && !ReferenceEquals(downloadTask, first), "incremental update creation");
             var update = downloadTask!; var updateResult = await update.Completion.WaitAsync(TimeSpan.FromSeconds(120));
             report["update"] = updateResult.Result?.DeepClone();
@@ -71,6 +81,7 @@ internal sealed partial class ResourceLibraryPage
             check(rows.Count > 0 && rows.All(row => row.Kind == "model"), "模型分类读取新下载素材库中的真实 Live2D 模型");
             list.SelectedIndex = 0; string selectedModel = Selected!.Id;
             await window.Live2D.PrepareResourceOpenSmokeAsync();
+            await RevealAsync(open, "open model action");
             var clicked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             RoutedEventHandler opened = (_, _) => clicked.TrySetResult(); open.Click += opened;
             try { Invoke(open); await clicked.Task.WaitAsync(TimeSpan.FromSeconds(15)); await window.Live2D.WaitForReadyAsync(); }
@@ -78,10 +89,42 @@ internal sealed partial class ResourceLibraryPage
             await window.Live2D.VerifyResourceOpenSmokeAsync(selectedModel, check);
             report["openedModel"] = selectedModel;
             window.ShowResourceManager(); await RefreshAsync(true); downloadPanel.IsExpanded = false; UpdateLayout();
+            await RevealAsync(list, "downloaded models");
             await App.CaptureCheckpointAsync("resource-library-models");
             report["ok"] = true;
         }
-        finally { DesktopSettings.AtomicWrite(App.SmokeEvidencePath("resource-manager.json"), report.ToJsonString(DesktopSettings.JsonOptions)); }
+        finally
+        {
+            report["finalLayout"] = DownloadLayout();
+            DesktopSettings.AtomicWrite(App.SmokeEvidencePath("resource-manager.json"), report.ToJsonString(DesktopSettings.JsonOptions));
+        }
+
+        async Task RevealAsync(FrameworkElement element, string phase)
+        {
+            await WaitUntilAsync(() => IsLoaded && element.IsLoaded && element.XamlRoot == XamlRoot
+                && element.ActualWidth > 0 && element.ActualHeight > 0, phase + " layout");
+            if (InViewport(element)) return;
+            element.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .5 });
+            await WaitUntilAsync(() => InViewport(element), phase + " visibility");
+        }
+        bool InViewport(FrameworkElement element)
+        {
+            if (!IsLoaded || !element.IsLoaded || element.XamlRoot != XamlRoot || Content is not ScrollViewer scroll
+                || element.ActualWidth <= 0 || element.ActualHeight <= 0) return false;
+            for (DependencyObject? node = element; node is not null && !ReferenceEquals(node, scroll);
+                node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+                if (node is UIElement control && control.Visibility != Visibility.Visible) return false;
+            var point = element.TransformToVisual(scroll).TransformPoint(new(0, 0));
+            return point.Y >= -1 && point.Y + element.ActualHeight <= scroll.ActualHeight + 1
+                && point.X + element.ActualWidth > 0 && point.X < scroll.ActualWidth;
+        }
+        JsonObject DownloadLayout() => new()
+        {
+            ["pageLoaded"] = IsLoaded, ["librariesLoaded"] = libraries.IsLoaded,
+            ["downloadLoaded"] = download.IsLoaded, ["downloadEnabled"] = download.IsEnabled,
+            ["downloadWidth"] = download.ActualWidth, ["downloadHeight"] = download.ActualHeight,
+            ["sameXamlRoot"] = download.XamlRoot == XamlRoot, ["downloadVisible"] = InViewport(download)
+        };
 
         static void Invoke(Button button)
         {
