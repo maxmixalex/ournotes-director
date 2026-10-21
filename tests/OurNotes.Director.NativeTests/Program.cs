@@ -5,6 +5,7 @@ try
     if (await StoryTimingAnalysisTests.HandleDecoderWorkerAsync(args) is {} workerExit) return workerExit;
     if (args.Length == 3 && args[0] == "--model-cache") return ModelResourceCacheNativeTests.Run(args[1], args[2]);
     if (args.Length == 3 && args[0] == "--millsage-blur") return await MillsageBlurNativeTests.RunAsync(args[1], args[2]);
+    if (args.Length == 3 && args[0] == "--millsage-replay") return await MillsageReplayNativeTests.RunAsync(args[1], args[2]);
     if (args.Length == 5 && args[0] == "--specific-antialiasing")
         return SpecificAntialiasingNativeTests.Run(args[4], args[1], args[2], args[3]);
     if (args.Length == 3 && args[0] == "--story-analysis")

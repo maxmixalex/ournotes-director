@@ -16,6 +16,7 @@ public sealed partial class AdvParticles
     }
     public JsonNode Data{get;}
     readonly AdvRandom shared;AdvRandom random;
+    readonly AdvParticleCurveCache? curveCache;bool curveScope;
     readonly List<Particle> particles=[];
     public IReadOnlyList<Particle> Particles=>particles;
     public float Time{get;private set;}
@@ -42,7 +43,8 @@ public sealed partial class AdvParticles
         ShapeScale=mode==2?lossy:Vector3.One;
         LocalToWorld=v=>x*(v.X*scale.X)+y*(v.Y*scale.Y)+z*(v.Z*scale.Z);
         WorldToLocal=v=>new(Divide(Vector3.Dot(v,x),scale.X),Divide(Vector3.Dot(v,y),scale.Y),Divide(Vector3.Dot(v,z),scale.Z));
-        EmitterPosition=transform.WorldPosition;
+        // Reassign every step: a canvas host may rescale the previous value.
+        EmitterPosition=new(matrix[12],matrix[13],matrix[14]);
         ShapeToWorld=v=>{if(mode!=0)return LocalToWorld(v);var p=AdvMatrix.Transform(matrix,new(v,0));return new(p.X,p.Y,p.Z);};
     }
     public AdvAnimator.Access? Bind(string attribute)
@@ -54,12 +56,14 @@ public sealed partial class AdvParticles
     JsonNode Initial=>Data["InitialModule"]!;
     float Duration=>N(Data,"lengthInSec");
     static float N(JsonNode n,string key)=>Actor.N(n[key]);
-    static float C(JsonNode? n,float t,float r=1)=>AdvParticleCurve.Value(n,t,r);
+    float C(JsonNode? n,float t,float r=1)=>curveScope?curveCache!.Value(n,t,r):AdvParticleCurve.Value(n,t,r);
     static bool Enabled(JsonNode? n)=>Actor.B(n?["enabled"]);
     static Vector3 Normalize(Vector3 v)=>v.LengthSquared()>1e-24f?Vector3.Normalize(v):Vector3.Zero;
-    public AdvParticles(JsonNode data,AdvRandom shared)
+    public AdvParticles(JsonNode data,AdvRandom shared):this(data,shared,false){}
+    internal AdvParticles(JsonNode data,AdvRandom shared,bool cacheStepCurves)
     {
         Data=data.DeepClone();this.shared=shared;random=Actor.B(Data["autoRandomSeed"])?shared:new((uint)N(Data,"randomSeed"));
+        if(cacheStepCurves)curveCache=new();
     }
     public void Play()
     {
@@ -91,7 +95,9 @@ public sealed partial class AdvParticles
     }
     void Step(float dt)
     {
-        stepDelta=dt;try{StepCore(dt);foreach(var birth in pendingBirths)Spawn(birth.Age,1,birth.Position,birth.NormalizedTime);pendingBirths.Clear();foreach(var sub in subEmitters.Select(e=>e.System).Distinct())if(sub!.ActiveInHierarchy())sub.Step(dt);}finally{previousEmitter=EmitterPosition;}
+        stepDelta=dt;curveScope=curveCache is not null;
+        try{StepCore(dt);foreach(var birth in pendingBirths)Spawn(birth.Age,1,birth.Position,birth.NormalizedTime);pendingBirths.Clear();foreach(var sub in subEmitters.Select(e=>e.System).Distinct())if(sub!.ActiveInHierarchy())sub.Step(dt);}
+        finally{previousEmitter=EmitterPosition;curveScope=false;curveCache?.Clear();}
     }
     void StepCore(float dt)
     {

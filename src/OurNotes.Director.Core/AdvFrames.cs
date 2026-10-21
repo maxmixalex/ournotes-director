@@ -50,7 +50,7 @@ public sealed class AdvFrames : IDisposable
                 frame.Layout=new(frame.Nodes.Values,n=>frame.Text.Texts.TryGetValue(n,out var text)&&text.Enabled?text.PreferredSize(n.Width):null);
             }
             if(!timingOnly&&frame.Nodes.Values.Any(n=>n.Component("ParticleSystem") is not null))
-                frame.Particles=new(frame.Nodes,particleRandom,width,height,Actor.N(ui["uiCamera"]?["camera"]?["orthographic size"],5),gl,shaders!,Texture);
+                frame.Particles=new(frame.Nodes,particleRandom,width,height,Actor.N(ui["uiCamera"]?["camera"]?["orthographic size"],5),gl,shaders!,Texture,cacheStepCurves:true);
             foreach(var node in frame.Nodes.Values){var a=node.Component("Animator");if(a?["m_Controller"] is null)continue;
                 var animator=new AdvCanvasAnimator(node,a,records,b=>frame.Nodes.TryGetValue(node.Path+(b.Path==""?"":"/"+b.Path),out var target)?target.Bind(b):null);frame.Animators.Add(animator);
                 if(adv["_animator"]?["gameObject"]?.ToString()==node.Path){frame.Main=animator.Animator;animator.KeepStateOnDisable=true;}

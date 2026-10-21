@@ -12,11 +12,13 @@ public sealed class AdvCanvasParticles
     readonly float width,height,canvasScale;int lastFrame=-1;
     readonly Dictionary<AdvCanvasNode,AdvTransform> transforms=[];
     public AdvCanvasParticles(IReadOnlyDictionary<string,AdvCanvasNode> nodes,AdvRandom random,float width,float height,float cameraSize,OffscreenGl gl,UnityShaderLibrary shaders,Func<JsonNode,uint> texture,float planeDistance=100)
+        :this(nodes,random,width,height,cameraSize,gl,shaders,texture,false,planeDistance){}
+    internal AdvCanvasParticles(IReadOnlyDictionary<string,AdvCanvasNode> nodes,AdvRandom random,float width,float height,float cameraSize,OffscreenGl gl,UnityShaderLibrary shaders,Func<JsonNode,uint> texture,bool cacheStepCurves,float planeDistance=100)
     {
         this.nodes=nodes;this.width=width;this.height=height;canvasScale=2*cameraSize/height;this.gl=gl;this.shaders=shaders;this.texture=texture;
         var canvasTransform=new AdvTransform{Position=new(-width*canvasScale/2,-height*canvasScale/2,planeDistance),Scale=new(canvasScale)};
         foreach(var node in nodes.Values)transforms[node]=new(){Parent=node.Parent is null?canvasTransform:transforms[node.Parent]};
-        foreach(var node in nodes.Values)if(node.Component("ParticleSystem") is JsonNode component){if(Actor.N(component["moveWithTransform"]) is not (0 or 1))throw new NotSupportedException("UI particle custom simulation space");node.Particles=new(component,random);}
+        foreach(var node in nodes.Values)if(node.Component("ParticleSystem") is JsonNode component){if(Actor.N(component["moveWithTransform"]) is not (0 or 1))throw new NotSupportedException("UI particle custom simulation space");node.Particles=new(component,random,cacheStepCurves);}
         foreach(var node in nodes.Values)if(node.Particles is not null){node.Particles.ActiveInHierarchy=()=>node.ActiveInHierarchy;node.Particles.LinkSubEmitters(reference=>nodes.GetValueOrDefault(Archive.S(reference,"gameObject"))?.Particles);}
         foreach(var node in nodes.Values)if(node.Component("UIParticle") is JsonNode ui){
             if(Actor.N(ui["m_MeshSharing"])!=0||Actor.B(ui["m_UseCustomView"]))throw new NotSupportedException("Unsupported UIParticle sharing/view configuration");var group=new Group(node,ui);

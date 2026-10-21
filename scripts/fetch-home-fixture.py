@@ -21,6 +21,17 @@ SPOT = 40002
 SOURCES = (10855, 10853)  # Area and Hotaru tap sources of the same complete home.
 
 
+def belongs_to_spot(group, spot):
+    if not isinstance(group, dict):
+        return False
+    if group.get("kind") == "spot":
+        return group.get("id") == spot
+    # A tap group's own ID identifies the talk, not its home spot. The source
+    # manifest records that relationship explicitly in the nested spot object.
+    parent = group.get("spot")
+    return group.get("kind") == "spotTalk" and isinstance(parent, dict) and parent.get("id") == spot
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
@@ -78,7 +89,7 @@ def main():
         if document.get("advId") != adv or document.get("host", {}).get("kind") != "home":
             raise ValueError("Unexpected home source: " + relative)
         groups = document.get("story", {}).get("groups", [])
-        if not any(group.get("kind") == "spot" and group.get("id") == spot for group in groups):
+        if not any(belongs_to_spot(group, spot) for group in groups):
             raise ValueError("Home source does not belong to the requested spot: " + relative)
         manifests[adv] = document
         fingerprints[relative] = hashlib.sha256(raw).hexdigest()

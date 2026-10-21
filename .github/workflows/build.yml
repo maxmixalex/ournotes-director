@@ -133,6 +133,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Model resource cache checks failed: $LASTEXITCODE" }
           & $test --millsage-blur artifacts/millsage-blur-fixture artifacts/millsage-blur-evidence
           if ($LASTEXITCODE -ne 0) { throw "Millsage original-story depth checks failed: $LASTEXITCODE" }
+          & $test --millsage-replay artifacts/millsage-blur-fixture artifacts/millsage-replay-evidence
+          if ($LASTEXITCODE -ne 0) { throw "Millsage long-story replay and particle cache checks failed: $LASTEXITCODE" }
           & $test --specific-antialiasing artifacts/millsage-home-fixture artifacts/hotaru-quality-fixture $ffmpeg artifacts/specific-antialiasing-evidence
           if ($LASTEXITCODE -ne 0) { throw "Hotaru and Millsage antialiasing checks failed: $LASTEXITCODE" }
           ./tests/desktop-smoke.ps1 -Package packages/ournotes-director-win-x64.zip -ReportDirectory artifacts/desktop-smoke -FixtureDirectory artifacts/studio-fixture -RealSceneFixtureDirectory artifacts/real-scene-fixture -RealHomeFixtureDirectory artifacts/millsage-home-fixture -RealHotaruFixtureDirectory artifacts/hotaru-quality-fixture -RealMillsageFixtureDirectory artifacts/millsage-blur-fixture -OpenGLDriver $mesa.FullName -TimeoutSeconds 900 -ProgressTimeoutSeconds 180
@@ -153,6 +155,7 @@ jobs:
             artifacts/live2d-evidence/*
             artifacts/model-cache-evidence/*
             artifacts/millsage-blur-evidence/*
+            artifacts/millsage-replay-evidence/*
             artifacts/specific-antialiasing-evidence/*
           if-no-files-found: ignore
           retention-days: 14

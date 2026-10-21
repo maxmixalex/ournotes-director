@@ -43,7 +43,8 @@ public sealed unsafe partial class Actor : IDisposable
     static readonly float[] White=[1,1,1,1],Black=[0,0,0,0];
     public static float N(JsonNode? n,float fallback=0)=>n is null?fallback:
         n is JsonValue value&&value.TryGetValue<float>(out float number)?number:float.Parse(n.ToString(),CultureInfo.InvariantCulture);
-    public static bool B(JsonNode? n)=>n is not null && n.ToString() is "true" or "1";
+    public static bool B(JsonNode? n)=>n is JsonValue value&&value.TryGetValue<bool>(out bool flag)?flag:
+        n is not null&&n.ToString() is "true" or "1";
     public Actor(Archive archive,string site,string dll,ActorSpec spec,OffscreenGl? gl,uint seed,AdvRandom? randomStream=null)
     {
         long phase=Stopwatch.GetTimestamp();

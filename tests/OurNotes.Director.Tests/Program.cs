@@ -65,6 +65,7 @@ try
 {
     JsonOutputTests.Run(Assert);
     SegmentedPixelsTests.Run(Assert);
+    ParticleEvaluationTests.Run(Assert);
     ShotTemplateTests.Run(Assert);
     NativeDependencyTests.Run(Assert);
     VideoEncodingTests.Run(Assert);
