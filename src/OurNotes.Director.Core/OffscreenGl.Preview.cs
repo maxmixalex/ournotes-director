@@ -9,6 +9,26 @@ public sealed unsafe partial class OffscreenGl
     public bool PreferGpuPresentation { get => preferGpu; set => preferGpu = value; }
     public GpuPreviewSurface? GpuSurface => preferGpu ? gpuSurface : null;
     public string? GpuFallbackReason { get; private set; }
+    // Opt-in exact history readback for the editor. GPU presentation still returns
+    // its normal empty payload; export and ordinary GL clients do no extra work.
+    internal bool CapturePreviewPixels { get; set; }
+    internal Pixels? CapturedPreviewPixels { get; private set; }
+    internal double PreviewCaptureMilliseconds { get; private set; }
+    internal double PreviewCaptureScale { get; set; }=1;
+    GlSurface? previewHistorySurface;
+    Pixels CapturePresentedFrame(GlSurface source,int width,int height,int supersample,bool transparent)
+    {
+        long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            if(PreviewCaptureScale==1)return ResolvePresentation(source,width,height,supersample,false,!transparent)!;
+            int smallWidth=Math.Max(1,(width+3)/4),smallHeight=Math.Max(1,(height+3)/4);
+            EnsureSurface(ref previewHistorySurface,smallWidth,smallHeight);
+            CopySurface(source,previewHistorySurface!.Value,linear:true);
+            return ResolvePresentation(previewHistorySurface.Value,smallWidth,smallHeight,1,false,!transparent)!;
+        }
+        finally{PreviewCaptureMilliseconds=System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;}
+    }
 
     public void DisableGpuPresentation(string reason)
     {
@@ -18,6 +38,10 @@ public sealed unsafe partial class OffscreenGl
     bool TryGpuPresentation(GlSurface source, int width, int height, int scale)
     {
         if (!preferGpu) return false;
+        if (gpuSurface is not null && (gpuSurface.Width != width || gpuSurface.Height != height))
+        {
+            gpuSurface.Dispose(); gpuSurface = null; gpuAttempted = false;
+        }
         if (!gpuAttempted)
         {
             gpuAttempted = true;
@@ -27,9 +51,9 @@ public sealed unsafe partial class OffscreenGl
         if (gpuSurface is null) return false;
         try
         {
-            gpuComposite ??= Surface(width, height);
+            EnsureSurface(ref gpuComposite, width, height);
             gpuCompositeShader ??= new("Opaque editor checkerboard", PreviewCompositeSource);
-            Blit(gpuCompositeShader, gpuComposite.Value,
+            Blit(gpuCompositeShader, gpuComposite!.Value,
                 new Dictionary<string, float[]> { ["scale"] = [scale], ["outputHeight"] = [height] },
                 new Dictionary<string, uint> { ["sourceImage"] = source.Texture });
             if (gpuSurface.Present(gpuComposite.Value.Framebuffer, width, height, out var failure)) return true;
@@ -58,7 +82,7 @@ public sealed unsafe partial class OffscreenGl
             ivec2 origin=pixel*scale;
             vec4 color=vec4(0);
             for(int y=0;y<scale;y++)for(int x=0;x<scale;x++)
-                color+=texelFetch(sourceImage,origin+ivec2(x,y),0);
+                color+=floor(clamp(texelFetch(sourceImage,origin+ivec2(x,y),0),0.0,1.0)*255.0+0.5)/255.0;
             color/=float(scale*scale);
             int tile=(pixel.x/24+(outputHeight-1-pixel.y)/24)%2;
             vec3 checker=tile==0?vec3(57,63,75)/255.0:vec3(43,49,60)/255.0;

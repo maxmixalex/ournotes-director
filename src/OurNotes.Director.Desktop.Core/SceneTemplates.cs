@@ -25,14 +25,20 @@ public static class SceneTemplates
     {
         _ = Get(key);
         ArgumentNullException.ThrowIfNull(source);
-        if (string.IsNullOrWhiteSpace(source.Adv) || string.IsNullOrWhiteSpace(source.Site) || string.IsNullOrWhiteSpace(source.Language))
-            throw new ArgumentException("模板需要已选来源的 adv、site 和 language。", nameof(source));
+        if (string.IsNullOrWhiteSpace(source.Site) || string.IsNullOrWhiteSpace(source.Language))
+            throw new ArgumentException("模板需要素材站点和语言。", nameof(source));
+        if (key == "story-patch" && source.IsLibrary)
+            throw new ArgumentException("原剧情补丁需要选择要继承的原剧情。", nameof(source));
         if (key != "story-patch" && string.IsNullOrWhiteSpace(model))
             throw new ArgumentException("请从归档模型列表选择人物模型。", nameof(model));
         if (key == "duet-background" && string.IsNullOrWhiteSpace(secondModel))
             throw new ArgumentException("双人模板需要第二个人物模型。", nameof(secondModel));
 
-        JsonObject sourceJson = new() { ["adv"] = source.Adv, ["site"] = source.Site, ["language"] = source.Language };
+        JsonObject sourceJson = new() { ["site"] = source.Site, ["language"] = source.Language };
+        if (!source.IsLibrary) sourceJson["adv"] = source.Adv;
+        // Old Shot files default to story 10060 when adv is absent. New library-based
+        // legacy templates must explicitly retain the library source through that adapter.
+        else if (key == "legacy-shot") sourceJson["adv"] = DirectorProject.LibrarySource;
         if (key == "legacy-shot")
         {
             var legacy = new JsonObject

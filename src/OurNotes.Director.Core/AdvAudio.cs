@@ -49,7 +49,7 @@ public sealed class AdvAudio
         }
         loop.On(AdvPhase.Update,Update);
     }
-    public AdvSound Play(long soundId,bool repeat=false,float crossFade=0,bool automaticCrossFade=false,double startSeconds=0,bool fadeIn=false,float volume=1)
+    public AdvCue GetCue(long soundId)
     {
         if(!cues.TryGetValue(soundId,out var cue)){
             cue=ResolveCue?.Invoke(soundId)??throw new InvalidDataException($"Sound {soundId} not preloaded");
@@ -58,6 +58,11 @@ public sealed class AdvAudio
             decodedNodes.Add(soundId,decodedOrder.AddLast(soundId));DecodedCacheBytes+=(long)cue.Pcm.Length*sizeof(float);
         }
         else if(decodedNodes.TryGetValue(soundId,out var cached)){decodedOrder.Remove(cached);decodedOrder.AddLast(cached);}
+        return cue;
+    }
+    public AdvSound Play(long soundId,bool repeat=false,float crossFade=0,bool automaticCrossFade=false,double startSeconds=0,bool fadeIn=false,float volume=1)
+    {
+        var cue=GetCue(soundId);
         if(!double.IsFinite(startSeconds)||startSeconds<0||!float.IsFinite(crossFade)||crossFade<0||!float.IsFinite(volume))throw new ArgumentException("Invalid audio playback options");
         if(automaticCrossFade&&cue.Category==0){foreach(var old in playing.Values.Where(i=>i.Cue.Category==0).ToArray())Stop(old.Id,crossFade);fadeIn=true;}
         int offset=checked((int)Math.Round(Math.Truncate(startSeconds*1000)/1000*SampleRate,MidpointRounding.AwayFromZero));
@@ -111,9 +116,9 @@ public sealed class AdvAudio
         return position>=end?start+(position-start)%(end-start):position;
     }
     // Source channel zero, before gain: suitable for the later native MotionSync/CRI Lips integration.
-    public float[] PcmSince(AdvSound sound,ref long previousSample)
+    public float[] PcmSince(AdvSound sound,ref long previousSample,int lookAheadSamples=0)
     {
-        long now=Math.Max(0,Position(sound)-sound.StartSample);int count=checked((int)Math.Max(0,now-previousSample));
+        long now=Math.Max(0,Position(sound)-sound.StartSample+lookAheadSamples);int count=checked((int)Math.Max(0,now-previousSample));
         var result=new float[count];
         for(int i=0;i<count;i++){long at=Wrap(sound,sound.StartSample+previousSample+i);if(at>=0&&at<sound.Cue.Samples)result[i]=sound.Cue.Pcm[checked((int)at)*sound.Cue.Channels];}
         previousSample=now;return result;
@@ -185,8 +190,25 @@ public sealed class AdvAudio
         }
         foreach(var name in names)ChangeVolume(name,volume);
     }
-    public static AdvCue Decode(Archive archive,string site,JsonNode manifest,JsonNode episode,long soundId,string ffmpeg="ffmpeg")
+    public static AdvCue Decode(Archive archive,string site,JsonNode manifest,JsonNode episode,long soundId,string ffmpeg="ffmpeg",CancellationToken cancellationToken=default)
+        =>Decode(archive,site,manifest,episode,soundId,ffmpeg,cancellationToken,long.MaxValue);
+
+    internal static Func<Func<long,CancellationToken,long,AdvCue>> IndependentDecoder(Archive archive,string site,JsonNode manifest,JsonNode episode,string ffmpeg)
     {
+        // Freeze exactly the resources already loaded by this native interpreter.
+        // Each worker gets independent JsonNode lazy state, without reading a newer
+        // manifest or concurrently materializing a playback-owned JSON object.
+        string manifestJson=manifest.ToJsonString(),episodeJson=episode.ToJsonString();
+        return ()=>
+        {
+            var workerManifest=JsonNode.Parse(manifestJson)!;var workerEpisode=JsonNode.Parse(episodeJson)!;
+            return (id,token,limit)=>Decode(archive,site,workerManifest,workerEpisode,id,ffmpeg,token,limit);
+        };
+    }
+
+    internal static AdvCue Decode(Archive archive,string site,JsonNode manifest,JsonNode episode,long soundId,string ffmpeg,CancellationToken cancellationToken,long maximumBytes)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         var sound=episode["sounds"]?[soundId.ToString(CultureInfo.InvariantCulture)]??throw new InvalidDataException("Sound absent from episode");
         if(sound["_isRandomPitch"]?.GetValue<bool>()==true)throw new NotSupportedException("Random pitch is not implemented by reference engine");
         var sheet=episode["cuesheets"]![Archive.S(sound,"_soundCueSheetID")]!;
@@ -200,17 +222,39 @@ public sealed class AdvAudio
         try
         {
             File.WriteAllBytes(temporary,encoded);
+            cancellationToken.ThrowIfCancellationRequested();
             var start=new ProcessStartInfo(ffmpeg){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             foreach(var a in new[]{"-v","error","-nostdin","-i",temporary,"-f","f32le","-ar","48000","-ac",channels.ToString(CultureInfo.InvariantCulture),"pipe:1"})start.ArgumentList.Add(a);
             using var process=Process.Start(start)??throw new IOException("FFmpeg did not start");
-            using var output=new MemoryStream();var read=process.StandardOutput.BaseStream.CopyToAsync(output);var error=process.StandardError.ReadToEndAsync();
-            try{read.GetAwaiter().GetResult();process.WaitForExit();if(process.ExitCode!=0)throw new IOException(error.GetAwaiter().GetResult());}
-            finally{if(!process.HasExited)process.Kill(true);}
-            var bytes=output.ToArray();if(bytes.Length==0||bytes.Length%(4*channels)!=0)throw new InvalidDataException("Empty or invalid decoded float PCM: "+error.GetAwaiter().GetResult());
-            var pcm=new float[bytes.Length/4];Buffer.BlockCopy(bytes,0,pcm,0,bytes.Length);
+            using var output=new MemoryStream();var read=ReadPcm(process.StandardOutput.BaseStream,output,maximumBytes,cancellationToken);var error=process.StandardError.ReadToEndAsync();
+            try{read.GetAwaiter().GetResult();process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();cancellationToken.ThrowIfCancellationRequested();if(process.ExitCode!=0)throw new IOException(error.GetAwaiter().GetResult());}
+            finally
+            {
+                if(!process.HasExited)try{process.Kill(true);}catch(InvalidOperationException){ }
+                process.WaitForExit(); // Reap cancelled children before deleting their seekable input.
+                _=error.GetAwaiter().GetResult();
+            }
+            int byteCount=checked((int)output.Length);if(byteCount==0||byteCount%(4*channels)!=0)throw new InvalidDataException("Empty or invalid decoded float PCM: "+error.GetAwaiter().GetResult());
+            // The stream owns an exposable buffer. Copy once into the immutable
+            // cue rather than allocating another complete PCM byte array first.
+            var pcm=new float[byteCount/4];Buffer.BlockCopy(output.GetBuffer(),0,pcm,0,byteCount);
             return new(soundId,sound["_category"]!.GetValue<int>(),pcm,channels,meta["loopStart"]?.GetValue<int>(),meta["loopEnd"]?.GetValue<int>());
         }
         finally{NativeTemporary.Delete(temporary);}
+    }
+    static async Task ReadPcm(Stream input,MemoryStream output,long maximumBytes,CancellationToken cancellationToken)
+    {
+        byte[] buffer=System.Buffers.ArrayPool<byte>.Shared.Rent(65536);
+        try
+        {
+            int count;
+            while((count=await input.ReadAsync(buffer.AsMemory(),cancellationToken).ConfigureAwait(false))>0)
+            {
+                if(output.Length>maximumBytes-count)throw new AdvAudioPrefetchLimitException();
+                output.Write(buffer,0,count);
+            }
+        }
+        finally{System.Buffers.ArrayPool<byte>.Shared.Return(buffer);}
     }
 }
 public sealed class AdvSound(int id,AdvCue cue,int frame,int startSample,bool repeat)

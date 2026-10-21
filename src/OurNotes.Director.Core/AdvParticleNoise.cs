@@ -6,11 +6,15 @@ namespace OurNotes.Director.Core;
 public static class AdvParticleNoise
 {
     static readonly int[] p=Permutation();
+    // The two-dimensional field has eight fixed gradient angles. Keep the
+    // reference's double precision and angle arithmetic without repeating its
+    // trigonometry for every corner of every particle noise sample.
+    static readonly (double Cos,double Sin)[] gradients=Enumerable.Range(0,8).Select(i=>{double a=i*Math.PI/4;return(Math.Cos(a),Math.Sin(a));}).ToArray();
     static int[] Permutation(){var random=new AdvRandom(0);var a=Enumerable.Range(0,256).ToArray();for(int i=255;i>0;i--){int j=(int)(random.Next()%(i+1));(a[i],a[j])=(a[j],a[i]);}return Enumerable.Range(0,512).Select(i=>a[i&255]).ToArray();}
     static double Fade(double t)=>t*t*t*(t*(t*6-15)+10);
     static double Lerp(double a,double b,double t)=>a+(b-a)*t;
     static double N1(double x){int ix=(int)Math.Floor(x)&255;double f=x-Math.Floor(x);static double G(int h,double d)=>((h&1)!=0?-d:d)*(1+((h>>1)&7))/8;return Math.Clamp(2*Lerp(G(p[ix],f),G(p[ix+1],f-1),Fade(f)),-1,1);}
-    static double N2(double x,double y){int ix=(int)Math.Floor(x)&255,iy=(int)Math.Floor(y)&255;double fx=x-Math.Floor(x),fy=y-Math.Floor(y);static double G(int h,double dx,double dy){double a=(h&7)*Math.PI/4;return Math.Cos(a)*dx+Math.Sin(a)*dy;}
+    static double N2(double x,double y){int ix=(int)Math.Floor(x)&255,iy=(int)Math.Floor(y)&255;double fx=x-Math.Floor(x),fy=y-Math.Floor(y);static double G(int h,double dx,double dy){var g=gradients[h&7];return g.Cos*dx+g.Sin*dy;}
         return Math.Clamp(Math.Sqrt(2)*Lerp(Lerp(G(p[p[ix]+iy],fx,fy),G(p[p[ix+1]+iy],fx-1,fy),Fade(fx)),Lerp(G(p[p[ix]+iy+1],fx,fy-1),G(p[p[ix+1]+iy+1],fx-1,fy-1),Fade(fx)),Fade(fy)),-1,1);}
     static double N3(double x,double y,double z){int ix=(int)Math.Floor(x)&255,iy=(int)Math.Floor(y)&255,iz=(int)Math.Floor(z)&255;double fx=x-Math.Floor(x),fy=y-Math.Floor(y),fz=z-Math.Floor(z),u=Fade(fx),v=Fade(fy),w=Fade(fz);
         static double G(int h,double a,double b,double c){h&=15;double x=h<8?a:b,y=h<4?b:h is 12 or 14?a:c;return ((h&1)!=0?-x:x)+((h&2)!=0?-y:y);}

@@ -12,6 +12,10 @@ static class NativeTestGraphics
     {
         if(!OperatingSystem.IsWindows()||handle!=0||Environment.GetEnvironmentVariable("OURNOTES_TEST_OPENGL") is not {Length:>0} driver)return;
         if(!Path.IsPathFullyQualified(driver)||!File.Exists(driver))throw new FileNotFoundException("The test OpenGL driver must be an existing absolute path.",driver);
+        // This is the explicit software-test path. Mesa's default Windows driver may
+        // otherwise select D3D12 on a headless runner before managed errors can surface.
+        Environment.SetEnvironmentVariable("GALLIUM_DRIVER", "llvmpipe");
+        Environment.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1");
         handle=LoadLibraryEx(driver,0,0x00000100|0x00001000);
         if(handle==0)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Cannot load the test OpenGL driver.");
         NativeLibrary.SetDllImportResolver(typeof(OffscreenGl).Assembly,(name,_,_)=>name=="opengl32.dll"?handle:0);

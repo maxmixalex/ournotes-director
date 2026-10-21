@@ -239,25 +239,30 @@ internal sealed partial class ScenePage : UserControl
         var hint = Ui.Text(SceneTemplates.Get("transparent-actor").Description, 12, true);
         template.SelectionChanged += (_, _) => hint.Text = SceneTemplates.Get(Ui.Selected(template)).Description;
         var dialog = new ContentDialog { XamlRoot = _window.RootXaml, Title = "新建场景", PrimaryButtonText = "选择素材", CloseButtonText = "返回",
-            Content = Ui.Stack(14, template, hint, Ui.Text("接下来从归档中选择来源剧情和人物模型。", 12, true)) };
+            Content = Ui.Stack(14, template, hint) };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         if (!await MayReplaceAsync()) return;
-        var inputs = new Dictionary<string, string?>();
-        var adv = await ResourcePicker.PickAsync(_window, CommandCatalog.Get("story.show").Fields.First(f => f.Key == "advId"), inputs);
-        if (adv is null) return;
-        inputs["site"] = adv.RelatedValues.GetValueOrDefault("site") ?? _window.Settings.Site;
+        string key = Ui.Selected(template), site = _window.Settings.Site, advId = "";
+        var inputs = new Dictionary<string, string?> { ["site"] = site };
+        if (key == "story-patch")
+        {
+            var adv = await ResourcePicker.PickAsync(_window, CommandCatalog.Get("story.show").Fields.First(f => f.Key == "advId"), inputs);
+            if (adv is null) return;
+            advId = adv.Value; site = adv.RelatedValues.GetValueOrDefault("site") ?? site;
+            inputs["site"] = site;
+        }
         string? model = null, second = null;
-        if (Ui.Selected(template) != "story-patch")
+        if (key != "story-patch")
         {
             var selected = await ResourcePicker.PickAsync(_window, CommandCatalog.Get("model.show").Fields.First(f => f.Key == "modelId"), inputs);
             if (selected is null) return; model = selected.Value;
         }
-        if (Ui.Selected(template) == "duet-background")
+        if (key == "duet-background")
         {
             var selected = await ResourcePicker.PickAsync(_window, CommandCatalog.Get("model.show").Fields.First(f => f.Key == "modelId") with { Label = "第二个人物模型" }, inputs);
             if (selected is null) return; second = selected.Value;
         }
-        var document = SceneTemplates.Create(Ui.Selected(template), new SceneSource(adv.Value, adv.RelatedValues.GetValueOrDefault("site") ?? _window.Settings.Site, _window.Settings.Language), model, second);
+        var document = SceneTemplates.Create(key, new SceneSource(advId, site, _window.Settings.Language), model, second);
         _savedText = ""; _path = null; SetDocumentText(document); ValidateCurrent(); _tabs.SelectedIndex = 1;
     }
 

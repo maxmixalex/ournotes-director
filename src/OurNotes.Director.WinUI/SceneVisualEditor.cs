@@ -56,7 +56,7 @@ internal sealed partial class ScenePage
         var supersample = Number("supersample", "超采样倍数", output.Supersample, 1, 4);
         var codec = Ui.Choice("视频编码", [("cineform", "CineForm · 透明 MOV"), ("prores", "ProRes 4444 · 透明 MOV"),
             ("ffv1", "FFV1 · 无损 MKV"), ("h264", "H.264 · MP4")], output.Codec);
-        var quality = Ui.Choice("CineForm 质量", [("film1", "film1 · 平衡画质与体积"), ("high", "high · 体积优先"), ("film2", "film2 · 细节优先")], output.CineformQuality);
+        var quality = Ui.Choice("CineForm 质量", ExportQuality.CineFormChoices, VideoEncoding.NormalizeCineFormQuality(output.CineformQuality));
         var clean = new CheckBox { Content = "隐藏对白和游戏界面", IsChecked = output.Clean };
         var letterbox = Ui.Choice("画布边框", [("none", "完整画布"), ("game", "保留原游戏边框")], output.Letterbox);
         codec.SelectionChanged += (_, _) => touched.Add("codec"); quality.SelectionChanged += (_, _) => touched.Add("quality");

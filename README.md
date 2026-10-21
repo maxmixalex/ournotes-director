@@ -1,6 +1,6 @@
 # OurNotes Director / advkit
 
-**用户入口：[Windows 桌面工作台](DESKTOP.md) · [CLI 使用指南](USER_GUIDE.md)**。Windows 包提供完整 WinUI 3 前端，可选择资源、编辑或粘贴场景 JSON、预览、导出并管理任务。统一 `render` 接受原游戏指令及自由编排扩展，旧 Shot 自动适配到同一原生执行器。[主页 Spine 导出](HOME_SPINE.md)支持完整场景及每个角色的动画；[CineForm 透明 MOV](CINEFORM.md)说明质量参数和 Premiere Pro 2015 的支持依据。本文保留较详细的素材与 Shot 格式说明。
+**用户入口：[Windows 桌面工作台](DESKTOP.md) · [CLI 使用指南](USER_GUIDE.md)**。Windows 包提供场景编排、主页动画和独立 Live2D 三个 WinUI 3 工作台：四分区场景编辑、时间轴编排、实时原生画面，以及单模型动作／表情／参数调整与透明输出。普通创作不要求 JSON 或原剧情编号。统一 `render` 接受原游戏指令及自由编排扩展，旧 Shot 自动适配到同一原生执行器。[主页 Spine 导出](HOME_SPINE.md)支持完整场景及每个角色的动画；[CineForm 透明 MOV](CINEFORM.md)说明质量参数和 Premiere Pro 2015 的支持依据。本文保留素材与 Shot 格式说明。
 
 面向素材归档、检索和 MAD 镜头渲染的工具。Windows 和 Linux 的执行器共用 `src/` 下的同一套 C# 源码，由 `win-x64` / `linux-x64` 编译目标决定发布平台。CLI 正式发布使用 **.NET 10 Native AOT**，入口是 `advkit.exe` / `advkit`。Windows 桌面入口是 **`OurNotes.Director.exe`**，WinUI 3 前端自带 .NET 与 Windows App SDK 运行时。两种入口均不需要用户另装 .NET、Node.js 或 Python。
 
@@ -8,11 +8,15 @@
 
 ## 下载和运行
 
-GitHub Actions 的 [**Build native executables** 工作流](https://github.com/maxmixalex/ournotes-director/actions/workflows/build.yml)在 GitHub 托管的 `ubuntu-24.04` 与 `windows-2022` 上分别构建、测试和发布。完成后下载 `ournotes-director-linux-x64` / `ournotes-director-win-x64` artifact，解开其中的平台压缩包；包内包含原生程序、原生运行库、音视频工具、使用指南、许可证和示例剧本。请保留整个解压目录，不能只复制 `advkit` 可执行文件。
+GitHub Actions 的 [**Build Windows editor** 工作流](https://github.com/maxmixalex/ournotes-director/actions/workflows/build.yml)在 `windows-2022` 上构建、测试和打包。完成后下载 `ournotes-director-win-x64` artifact，解开其中的压缩包；包内包含 WinUI 前端、原生程序与运行库、音视频工具、使用指南、许可证和示例剧本。请保留整个解压目录，不能只复制可执行文件。
 
 默认交付位置是 Actions artifacts。若 artifact 存储额度不足，`main` 或 `v*` 标签构建会把各平台测试通过的包分别保存为独立的**草稿 Release**，下载链接见对应 job 的 Summary。草稿只有具有仓库写权限的人能查看；其他情况仍使用 artifacts。
 
-**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 主界面为“场景工作台”和“主页工作台”：在原生窗口实时播放，直接拖动角色，插入或修改原生指令，用时间轴编排位置、动作、相机与后处理，再通过共同的导出面板选择格式和画质。原剧情可编辑并自动解析完整时长；“单人透明”自动读取模型原画布并完成构图。两者均支持粘贴 JSON；原有 CLI 工具从素材库中的高级工具打开。具体步骤见 [桌面使用说明](DESKTOP.md)。Linux 继续使用下面的 CLI。
+**Windows 图形界面：完整解压后双击 `OurNotes.Director.exe`。** 场景与主页采用效果控件／节目监视器／项目素材／时间轴四分区；可调整比例、最大化面板并记住布局。Live2D 使用大画布与侧边控制面板，支持模型、动作、表情、真实参数、呼吸／眨眼／物理及位置／缩放等调整。场景角色右键可带完整演出与区间进入 Live2D；单 Live2D 角色 PNG、透明动画和帧序列统一在这里输出。三个工作台均能保存各自项目，JSON 保留为高级入口。具体步骤见 [桌面使用说明](DESKTOP.md)。下面保留共用执行器的 CLI 说明。
+
+Live2D 的侧栏和导出面板均可选择“仅角色”画布，按完整动作的最小矩形设置 X 倍透明留白，整段使用固定构图。预览随显示尺寸和 DPI 调整清晰度，默认 2 倍抗锯齿；“视图 → 预览抗锯齿”可选择更精细的 4 倍采样。拖动过程中持续显示实际模型位置。新独立角色项目按原画布比例缩小到长边最多 1920 像素，默认导出采用 CineForm `film1`、1 倍采样；原始模型尺寸、4 倍采样和更高质量仍可手动选择，已有项目明确保存的尺寸与质量保留。
+
+右上角“素材库”可登记和切换多个本地素材文件夹，搜索剧情、Live2D 模型和主页，校验资源及模型依赖，并直接在对应工作台打开。展开下载面板可按乐队、区服和语言下载或更新；任务支持停止和重试，已校验的文件会被复用。不同乐队建议使用各自文件夹，在素材库列表中切换。
 
 ```powershell
 # Windows：在解压后的目录中运行

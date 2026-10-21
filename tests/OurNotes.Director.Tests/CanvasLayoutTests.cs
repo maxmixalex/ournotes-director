@@ -7,7 +7,7 @@ static class CanvasLayoutTests
     public static void Run(Action<bool,string> check)
     {
         AdvCanvasNode Node(string name,AdvCanvasNode? parent,params JsonNode[] components)=>new(new JsonObject{
-            ["path"]=name,["active"]=true,["components"]=new JsonArray(components)
+            ["path"]=name,["active"]=true,["rect"]=new JsonObject(),["components"]=new JsonArray(components)
         },parent){AnchorMin=new(0,1),AnchorMax=new(0,1),Pivot=new(0,1)};
         JsonNode Group(string name)=>JsonNode.Parse("""
             {"class":"VerticalLayoutGroup","m_Enabled":1,"m_Padding":{"m_Left":10,"m_Right":10,"m_Top":5,"m_Bottom":5},
@@ -35,5 +35,24 @@ static class CanvasLayoutTests
         var priority=Node("priority",null,Fit(),JsonNode.Parse("""{"class":"LayoutElement","m_Enabled":1,"m_LayoutPriority":2,"m_MinWidth":50,"m_PreferredWidth":80,"m_MinHeight":0,"m_PreferredHeight":-1}""")!);
         new AdvCanvasLayout([priority],_=>new Vector2(100,35)).Layout(1920,1080);
         check(priority.Width==80&&priority.Height==35,"Layout priority overrides valid properties and skips negative values independently");
+
+        // UI particle prefabs can contain a plain Transform between two rects.
+        // It remains at its own local origin, including under rotated/scaled UI.
+        var parent=Node("canvas",null);parent.AnchorMin=parent.AnchorMax=Vector2.Zero;parent.Pivot=new(.5f);
+        parent.AnchoredPosition=new(200,100);parent.SizeDelta=new(300,200);parent.Scale=new(2,3,1);
+        parent.Rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitZ,MathF.PI/2);parent.Layout(960,540);
+        var transform=new AdvCanvasNode(JsonNode.Parse("""{"path":"canvas/transform","active":true,"rect":null,"localPosition":{"x":11,"y":7,"z":5},"localScale":{"x":4,"y":2,"z":1}}""")!,parent);
+        transform.Layout(960,540);
+        check(!transform.IsRectTransform&&transform.Width==0&&transform.Height==0&&transform.LayoutPosition==new Vector3(11,7,5),
+            "Plain canvas Transform keeps its local position and exposes a zero-size parent rect");
+        var expected=AdvMatrix.Transform(parent.Matrix,new Vector4(11,7,5,1));
+        check(Vector3.Distance(new(transform.Matrix[12],transform.Matrix[13],transform.Matrix[14]),new(expected.X,expected.Y,expected.Z))<.0001f,
+            "Plain Transform position follows its parent's rotation and scale without a half-canvas offset");
+        var child=Node("canvas/transform/rect",transform);child.AnchorMin=child.AnchorMax=new(.5f);child.Pivot=new(.5f);
+        child.AnchoredPosition=new(8,-4);child.SizeDelta=new(100,60);child.Layout(960,540);
+        check(child.Width==100&&child.Height==60&&child.LayoutPosition==new Vector3(8,-4,0),
+            "RectTransform below a plain Transform anchors at its origin and keeps sizeDelta");
+        var beforeTransform=(float[])child.Matrix.Clone();transform.Layout(1920,1080);child.Layout(1920,1080);
+        check(child.Matrix.AsSpan().SequenceEqual(beforeTransform),"Plain Transform ancestry does not drift when the external canvas size changes");
     }
 }

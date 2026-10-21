@@ -5,9 +5,28 @@ param(
     [string] $ReportDirectory = 'artifacts/desktop-smoke',
     [string] $FixtureDirectory,
     [string] $RealSceneFixtureDirectory,
+    [string] $RealHomeFixtureDirectory,
+    [string] $RealHotaruFixtureDirectory,
+    [string] $RealMillsageFixtureDirectory,
+    [string] $ResourceDownloadFixtureDirectory,
     [string] $OpenGLDriver,
-    [ValidateRange(10, 300)] [int] $TimeoutSeconds = 120
+    [ValidateRange(10, 900)] [int] $TimeoutSeconds = 120,
+    [ValidateRange(10, 300)] [int] $ProgressTimeoutSeconds = 90
 )
+
+# The GUI atomically replaces this report after every check. A normal
+# Get-Content read handle can deny deletion on Windows and make that rename fail.
+function Open-SmokeReportReader([string] $Path) {
+    $sharing = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, $sharing)
+    try { return [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true) }
+    catch { $stream.Dispose(); throw }
+}
+function Read-SmokeReport([string] $Path) {
+    $reader = Open-SmokeReportReader $Path
+    try { return $reader.ReadToEnd() }
+    finally { $reader.Dispose() }
+}
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -19,7 +38,28 @@ New-Item -ItemType Directory -Path $ReportDirectory -Force | Out-Null
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('ournotes-desktop-smoke-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $process = $null
+$resourceServer = $null
 try {
+    # Exercise the exact reader while a writer replaces the destination. The
+    # held reader sees a complete old report; a new reader sees the new one.
+    $probe = Join-Path $scratch 'atomic-report-probe.json'
+    $replacement = "$probe.next"
+    [IO.File]::WriteAllText($probe, '{"phase":"before"}')
+    [IO.File]::WriteAllText($replacement, '{"phase":"after"}')
+    $heldReader = Open-SmokeReportReader $probe
+    try {
+        # Match DesktopSettings.AtomicWrite: MoveFileEx cannot replace an open
+        # destination on Windows, even with FileShare.Delete. ReplaceFile can.
+        # PowerShell coerces $null to an empty string for .NET string parameters.
+        # NullString preserves the CLR null required for “no backup file”.
+        [IO.File]::Replace($replacement, $probe, [System.Management.Automation.Language.NullString]::Value)
+        if ($heldReader.ReadToEnd() -ne '{"phase":"before"}' -or (Read-SmokeReport $probe) -ne '{"phase":"after"}') {
+            throw 'The progress reader did not preserve complete atomic report snapshots.'
+        }
+    }
+    finally { $heldReader.Dispose() }
+    Remove-Item -LiteralPath $probe
+    Write-Output 'Passed atomic report replacement with a held progress-reader handle.'
     if ($PSCmdlet.ParameterSetName -eq 'Package') {
         $Package = (Resolve-Path -LiteralPath $Package).Path
         $Directory = Join-Path $scratch 'extracted package'
@@ -71,10 +111,37 @@ try {
     if ($RealSceneFixtureDirectory) {
         $startInfo.Environment['OURNOTES_REAL_SCENE_FIXTURE'] = (Resolve-Path -LiteralPath $RealSceneFixtureDirectory).Path
     }
+    if ($RealHomeFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_HOME_FIXTURE'] = (Resolve-Path -LiteralPath $RealHomeFixtureDirectory).Path
+    }
+    if ($RealHotaruFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_HOTARU_FIXTURE'] = (Resolve-Path -LiteralPath $RealHotaruFixtureDirectory).Path
+    }
+    if ($RealMillsageFixtureDirectory) {
+        $startInfo.Environment['OURNOTES_REAL_MILLSAGE_FIXTURE'] = (Resolve-Path -LiteralPath $RealMillsageFixtureDirectory).Path
+    }
     if ($OpenGLDriver) {
         $startInfo.Environment['OURNOTES_TEST_OPENGL'] = (Resolve-Path -LiteralPath $OpenGLDriver).Path
         $startInfo.Environment['GALLIUM_DRIVER'] = 'llvmpipe'
         $startInfo.Environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
+    }
+    if ($ResourceDownloadFixtureDirectory) {
+        $fixtureReady = Join-Path $scratch 'resource-origin.json'
+        $serverInfo = [Diagnostics.ProcessStartInfo]::new((Get-Command python).Source)
+        $serverInfo.UseShellExecute = $false
+        $serverInfo.ArgumentList.Add((Join-Path $PSScriptRoot 'resource-download-fixture.py'))
+        $serverInfo.ArgumentList.Add((Resolve-Path -LiteralPath $ResourceDownloadFixtureDirectory).Path)
+        $serverInfo.ArgumentList.Add($fixtureReady)
+        $resourceServer = [Diagnostics.Process]::Start($serverInfo)
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (-not (Test-Path -LiteralPath $fixtureReady)) {
+            if ($resourceServer.HasExited -or [DateTime]::UtcNow -gt $readyDeadline) { throw 'The bounded resource download fixture failed to start.' }
+            Start-Sleep -Milliseconds 50
+        }
+        $fixtureInfo = Get-Content -LiteralPath $fixtureReady -Raw | ConvertFrom-Json
+        $startInfo.Environment['OURNOTES_RESOURCE_FIXTURE_ORIGIN'] = $fixtureInfo.origin
+        $startInfo.Environment['OURNOTES_METADATA_BASE'] = $fixtureInfo.origin + '/metadata'
+        $startInfo.Environment['OURNOTES_STORY_SITE_INTL'] = $fixtureInfo.origin + '/intl'
     }
     foreach ($name in @('CUBISM_NATIVE_SDK', 'CUBISM_MOTIONSYNC_DLL', 'FFMPEG_PATH', 'FFPROBE_PATH')) {
         [void] $startInfo.Environment.Remove($name)
@@ -83,13 +150,47 @@ try {
     if ($null -eq $process) { throw 'The WinUI process could not be started.' }
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        $process.Kill($true)
-        $process.WaitForExit()
-        throw "The real WinUI smoke test did not complete in $TimeoutSeconds seconds."
+    # The complete suite contains several independent native scene and export
+    # phases. Track actual completed checks as well as its overall ceiling, so a
+    # hung operation is reported promptly and a growing suite retains all gates.
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $lastProgressAt = 0.0
+    $lastProgress = ''
+    $lastPhase = 'startup'
+    try {
+        while (-not $process.WaitForExit(500)) {
+            if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+                try {
+                    $progress = Read-SmokeReport $reportPath | ConvertFrom-Json
+                    if ($null -ne $progress -and $progress.PSObject.Properties.Name -contains 'checks') {
+                        $lastPhase = if ($progress.PSObject.Properties.Name -contains 'phase') { [string]$progress.phase } else { 'unreported' }
+                        $signature = "$lastPhase/$(@($progress.checks).Count)"
+                        if ($signature -ne $lastProgress) {
+                            $lastProgress = $signature
+                            $lastProgressAt = $clock.Elapsed.TotalSeconds
+                            Write-Output ("WinUI progress {0:N1}s: {1}" -f $lastProgressAt, $signature)
+                        }
+                    }
+                }
+                # Only a complete, valid report counts as progress. A diagnostic
+                # writer from an older package may briefly replace its contents.
+                catch { }
+            }
+            if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+                throw "The complete WinUI suite exceeded $TimeoutSeconds seconds at $lastProgress."
+            }
+            if ($clock.Elapsed.TotalSeconds - $lastProgressAt -ge $ProgressTimeoutSeconds) {
+                throw "The WinUI suite made no check or phase progress for $ProgressTimeoutSeconds seconds at $lastProgress."
+            }
+        }
     }
-    $stdout.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stdout.log') -Encoding utf8NoBOM
-    $stderr.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stderr.log') -Encoding utf8NoBOM
+    finally {
+        if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+        # Preserve diagnostics on timeout too; previously the throw above lost
+        # the redirected renderer and export-worker output from a failed run.
+        $stdout.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stdout.log') -Encoding utf8NoBOM
+        $stderr.GetAwaiter().GetResult() | Set-Content -LiteralPath (Join-Path $ReportDirectory 'stderr.log') -Encoding utf8NoBOM
+    }
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
         throw "WinUI exited with code $($process.ExitCode) before writing a Loaded/UI test report. See stderr.log."
     }
@@ -110,8 +211,8 @@ try {
     if ($report.checks -isnot [Array] -or $report.pages -isnot [Array] -or $checkCount -eq 0 -or @($report.pages).Count -eq 0) {
         throw 'No actual page and command checks were reported.'
     }
-    if (@($report.pages).Count -ne 2 -or $report.pages -notcontains 'scenes' -or $report.pages -notcontains 'home') {
-        throw 'The application must expose exactly the scene and home studios as primary pages.'
+    if (@($report.pages).Count -ne 3 -or $report.pages -notcontains 'scenes' -or $report.pages -notcontains 'home' -or $report.pages -notcontains 'live2d') {
+        throw 'The application must expose the scene, Live2D and home studios as three primary pages.'
     }
     if (@($report.captures).Count -lt 2) { throw 'The smoke test did not capture its initial and final WinUI surfaces.' }
     foreach ($capture in $report.captures) {
@@ -131,6 +232,10 @@ finally {
     if ($null -ne $process) {
         if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
         $process.Dispose()
+    }
+    if ($null -ne $resourceServer) {
+        if (-not $resourceServer.HasExited) { $resourceServer.Kill($true); $resourceServer.WaitForExit() }
+        $resourceServer.Dispose()
     }
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }

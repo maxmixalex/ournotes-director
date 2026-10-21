@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using OurNotes.Director.Core;
+using OurNotes.Director.Desktop.Core;
 using Windows.Foundation;
 using Windows.UI;
 
@@ -38,6 +39,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     Stream? pixelStream;
     byte[] bgra=[];
     PreviewFrame? lastFrame,pendingFrame;
+    long pendingFrameReadyStamp;
     bool presentationQueued,disposed;
     bool loading;
     long sourceVersion;
@@ -51,21 +53,26 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     long statusClock;
     bool statusPlaying,diagnosticFailure;
     public double PresentationMilliseconds{get;private set;}
+    public double PresentationQueueMilliseconds { get; private set; }
+    internal long SceneProjectCommitCount { get; private set; }
     public event EventHandler<PreviewFrame>? FramePresented;
     public event EventHandler<Exception>? Failed;
     public event EventHandler<string?>? SelectionChanged;
     public event EventHandler<PreviewDrag>? ObjectDragged;
     public event EventHandler<PreviewScale>? ObjectScaled;
     public PreviewFrame? LastFrame=>Volatile.Read(ref lastFrame);
+    public Func<PreviewTarget,string>? TargetLabel { get; set; }
     public bool IsPlaying=>session.IsPlaying;
+    public double ScenePreviewScale=>session.ScenePreviewScale;
     public bool HasCurrentSource{get;private set;}
     public string? SelectedTargetId
     {
         get=>selected;
         set
         {
+            if(string.IsNullOrWhiteSpace(value))value=null;
             if(selected==value)return;
-            selected=value;DrawSelection();SelectionChanged?.Invoke(this,value);
+            selected=value;DrawSelection();RefreshNavigationHint();SelectionChanged?.Invoke(this,value);
         }
     }
 
@@ -85,7 +92,6 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         var bar=new Border{Background=Brush(27,31,40),Padding=new(12,7,12,7),Child=status};
         Grid.SetRow(bar,1);root.Children.Add(bar);Content=root;
         AutomationProperties.SetName(this,"实时画布");
-        AutomationProperties.SetHelpText(this,"点击选择、拖动角色；滚轮缩放画布，Ctrl+滚轮缩放角色。");
         ToolTipService.SetToolTip(status,diagnostics);
         diagnostics.Opened+=(_,_)=>
         {
@@ -99,35 +105,74 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         surface.PointerCanceled+=OnPointerCanceled;
         surface.PointerCaptureLost+=OnPointerCanceled;
         surface.PointerWheelChanged+=OnPointerWheelChanged;
-        InitializeWorkspaceNavigation();InitializeGpuPresentation();
+        InitializeWorkspaceNavigation();InitializeGpuPresentation();InitializeAudioPresentation();InitializePresentationResolution();
         Unloaded+=(_,_)=>{if(!disposed)session.Pause();};
         session.FrameReady+=OnFrameReady;session.Failed+=OnFailed;
     }
 
     static SolidColorBrush Brush(byte r,byte g,byte b)=>new(Color.FromArgb(255,r,g,b));
 
-    public async Task LoadSceneAsync(ScenePreviewSource source)
+    public Task LoadSceneAsync(ScenePreviewSource source)=>LoadSceneAsync(source,null,CancellationToken.None);
+
+    // The accept callback runs on the caller's XAML continuation only after the
+    // candidate's native frame has actually been presented. Until it accepts,
+    // the monitor cannot expose the candidate as the editor's current source.
+    internal async Task LoadSceneAsync(ScenePreviewSource source,Action? acceptSource,CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        RecordPreviewOperation("load.begin", width: source.Width, height: source.Height, supersample: source.Supersample);
         long version=BeginLoad("正在载入场景…");
         try
         {
-            await session.LoadSceneAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
-            if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
+            // Prepare the frozen soundtrack while models/textures initialize.
+            // BeginLoad already stopped the previous audio; no candidate is
+            // playable until the native frame and owner callback accept it.
+            ConfigureAudio(source,prepareOnly:true);
+            // Native initialization observes the import lifetime between model
+            // and texture operations; its input stays alive until it exits.
+            await session.LoadSceneAsync(source with{GpuPresentation=true},cancellationToken);PreviewSupersample=source.Supersample;
+            cancellationToken.ThrowIfCancellationRequested();
+            if(version!=sourceVersion)
+            {if(acceptSource is not null)throw new OperationCanceledException();return;}
+            await AwaitPresentationAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if(version!=sourceVersion)
+            {if(acceptSource is not null)throw new OperationCanceledException();return;}
+            acceptSource?.Invoke();
+            previewAudio.Activate();
+            // The accepted source owns its initial pane resolution, even when
+            // F1 was pressed during loading and LastFrame still belonged to an old source.
+            RememberWindowedPreviewSize(source.Width,source.Height,source.Supersample);
+            HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();
+            PresentationSizeChanged?.Invoke(this,EventArgs.Empty);
+            RecordPreviewOperation("load.end");
         }
-        catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
+        catch(OperationCanceledException)
+        {
+            // New/Open may already own a different source generation, including
+            // an empty canvas. A rejected candidate must not invalidate that.
+            if(version==sourceVersion)InvalidateSource();
+            throw;
+        }
+        catch(Exception exception){if(version==sourceVersion){previewAudio.Clear();soundtrackKey=null;loading=false;PresentFailure(exception);}throw;}
     }
     public async Task LoadHomeAsync(HomePreviewSource source)
     {
+        SetCanvasDimensions(source.Project.Output.Width,source.Project.Output.Height);
         long version=BeginLoad("正在载入主页…");
         try
         {
             await session.LoadHomeAsync(source with{GpuPresentation=true});await AwaitPresentationAsync();
-            if(version==sourceVersion){HasCurrentSource=true;loading=false;UpdateStatus();DrawSelection();}
+            if(version==sourceVersion)
+            {RememberWindowedPreviewSize(source.Width,source.Height,1);
+                HasCurrentSource=true;loading=false;PreviewSupersample=1;UpdateStatus();DrawSelection();
+                PresentationSizeChanged?.Invoke(this,EventArgs.Empty);}
         }
         catch(Exception exception){if(version==sourceVersion){loading=false;PresentFailure(exception);}throw;}
     }
     long BeginLoad(string message)
     {
+        previewAudio.Clear();
         showingEmptyCanvas=false;HasCurrentSource=false;loading=true;dragTarget=null;dragMoved=false;
         surface.ReleasePointerCaptures();HideSelection();status.Text=message;diagnostics.Content=null;diagnosticFailure=false;
         return ++sourceVersion;
@@ -138,38 +183,72 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     /// </summary>
     public void InvalidateSource()
     {
-        session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
+        previewAudio.Clear();session.Pause();HasCurrentSource=false;loading=false;sourceVersion++;
         dragTarget=null;dragMoved=false;surface.ReleasePointerCaptures();HideSelection();
         status.Text=LastFrame is null?"打开项目，开始预览":"等待载入，保留上一画面";
         diagnostics.Content=null;diagnosticFailure=false;
     }
-    public async Task SeekAsync(double seconds)
+    public async Task SeekAsync(double seconds,CancellationToken cancellationToken=default)
     {
-        await session.SeekAsync(seconds);
+        RecordPreviewOperation("seek.begin");
+        await session.SeekAsync(seconds,cancellationToken);
+        await AwaitPresentationAsync(cancellationToken);
+        RecordPreviewOperation("seek.end");
+    }
+    public async Task ScrubAsync(double seconds,CancellationToken cancellationToken=default,bool allowReducedQuality=true)
+    {
+        RecordPreviewOperation("scrub.begin");
+        await session.ScrubAsync(seconds,cancellationToken,allowReducedQuality);
+        await AwaitPresentationAsync(cancellationToken);
+        RecordPreviewOperation("scrub.end");
+    }
+    public async Task PauseForEditingAsync()
+    { session.Pause(); await session.SynchronizeAsync(); await AwaitPresentationAsync(); }
+    public async Task PreviewStagePositionAsync(string actor,int slot,System.Numerics.Vector3 position,long expectedSession,int expectedFrame)
+    {
+        await session.PreviewStagePositionAsync(actor,slot,position,expectedSession,expectedFrame);
         await AwaitPresentationAsync();
     }
     public async Task ApplySceneEditsAsync(IReadOnlyList<JsonObject> rows)
     {
+        RecordPreviewOperation("edits.begin", rows.Count);
         await session.ApplySceneEditsAsync(rows);
         await AwaitPresentationAsync();
+        RecordPreviewOperation("edits.end", rows.Count);
     }
     public async Task SetHomeEditStateAsync(HomeEditState state)
     {
         await session.SetHomeEditStateAsync(state);
         await AwaitPresentationAsync();
     }
-    public Task CommitSceneProjectAsync(ScenePreviewSource source)=>session.CommitSceneProjectAsync(source with{GpuPresentation=true});
-    public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
-    async Task AwaitPresentationAsync()
+    public async Task CommitSceneProjectAsync(ScenePreviewSource source)
     {
-        if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1);
+        RecordPreviewOperation("commit.begin");
+        await session.CommitSceneProjectAsync(source with{GpuPresentation=true});SceneProjectCommitCount++;ConfigureAudio(source);
+        RecordPreviewOperation("commit.end");
     }
-    public void Play()=>session.Play();
-    public void Pause()=>session.Pause();
+    public Task<NativePlaybackTiming> ResolveSceneTimingAsync(CancellationToken cancellationToken=default)=>session.ResolveSceneTimingAsync(cancellationToken);
+    public Task<IReadOnlyList<PreviewParameter>> ReadActorParametersAsync(string actorId,CancellationToken cancellationToken=default)=>session.ReadActorParametersAsync(actorId,cancellationToken);
+    public async Task SetIsolatedTransformAsync(IsolatedActorTransform transform)
+    {
+        RecordPreviewOperation("transform.begin", hasTransform: true);
+        await session.SetIsolatedTransformAsync(transform);
+        await AwaitPresentationAsync();
+        RecordPreviewOperation("transform.end", hasTransform: true);
+    }
+    async Task AwaitPresentationAsync(CancellationToken cancellationToken=default)
+    {
+        // A project change can discard this native frame before XAML presents it.
+        cancellationToken.ThrowIfCancellationRequested();
+        if(session.LastFrame is {} rendered)await WaitForFrameAsync(rendered.Sequence-1,cancellationToken:cancellationToken);
+    }
+    public void Play(double? exclusiveEndSeconds=null){RecordPreviewOperation("play");session.Play(exclusiveEndSeconds);}
+    public void Pause(){RecordPreviewOperation("pause");session.Pause();}
 
     /// <summary>Completes only after the raw native pixels have been copied into the XAML image.</summary>
-    public async Task<PreviewFrame> WaitForFrameAsync(long afterSequence=0,TimeSpan? timeout=null)
+    public async Task<PreviewFrame> WaitForFrameAsync(long afterSequence=0,TimeSpan? timeout=null,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var completion=new TaskCompletionSource<PreviewFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock(frameGate)
         {
@@ -177,7 +256,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             if(lastFrame is {} current&&current.Sequence>afterSequence)return current;
             waiters.Add((afterSequence,completion));
         }
-        try{return await completion.Task.WaitAsync(timeout??TimeSpan.FromSeconds(30));}
+        try{return await completion.Task.WaitAsync(timeout??TimeSpan.FromSeconds(30),cancellationToken);}
         finally{lock(frameGate)waiters.RemoveAll(waiter=>ReferenceEquals(waiter.Completion,completion));}
     }
 
@@ -186,7 +265,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         lock(frameGate)
         {
             if(disposed||showingEmptyCanvas)return;
-            pendingFrame=frame;
+            pendingFrame=frame;pendingFrameReadyStamp=Stopwatch.GetTimestamp();
             if(presentationQueued)return;
             presentationQueued=true;
         }
@@ -197,14 +276,16 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     void PresentLatest()
     {
         PreviewFrame? frame;
+        long readyStamp;
         lock(frameGate)
         {
-            frame=pendingFrame;pendingFrame=null;presentationQueued=false;
+            frame=pendingFrame;readyStamp=pendingFrameReadyStamp;pendingFrame=null;presentationQueued=false;
             if(disposed||frame is null)return;
         }
         try
         {
             long stamp=Stopwatch.GetTimestamp();
+            PresentationQueueMilliseconds=Stopwatch.GetElapsedTime(readyStamp,stamp).TotalMilliseconds;
             var pixels=frame.Pixels;
             if(frame.GpuSurface is not null)
             {
@@ -213,18 +294,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             else
             {
             DetachGpu();
-            if(pixels.Rgba.Length!=checked(pixels.Width*pixels.Height*4))throw new InvalidDataException("Incomplete CPU preview frame");
+            if(pixels.ByteLength!=checked(pixels.Width*pixels.Height*4))throw new InvalidDataException("Incomplete CPU preview frame");
             if(bitmap is null||bitmap.PixelWidth!=pixels.Width||bitmap.PixelHeight!=pixels.Height)
             {
                 pixelStream?.Dispose();bitmap=new(pixels.Width,pixels.Height);
-                pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.Rgba.Length];
+                pixelStream=bitmap.PixelBuffer.AsStream();bgra=new byte[pixels.ByteLength];
             }
             if(!ReferenceEquals(image.Source,bitmap))image.Source=bitmap;
             // Metadata-only progress/pause events retain the same pixel object.
             // Copy only a newly rendered image, using the vectorized display converter.
             if(!ReferenceEquals(LastFrame?.Pixels,pixels))
             {
-                PreviewPixelConverter.CopyBgraPremultiplied(pixels.Rgba,bgra);
+                PreviewPixelConverter.CopyBgraPremultiplied(pixels,bgra);
                 pixelStream!.Position=0;pixelStream.Write(bgra);bitmap.Invalidate();
             }
             }
@@ -265,6 +346,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(frame.IsPlaying==statusPlaying&&Stopwatch.GetElapsedTime(statusClock).TotalMilliseconds<100)return;
         statusClock=Stopwatch.GetTimestamp();statusPlaying=frame.IsPlaying;diagnosticFailure=false;
         string mode=frame.IsGpuPresented?"GPU 直连":frame.PresentationFallback is not null?"兼容显示":"像素显示";
+        if (frame.ScenePreviewScale < 1) mode += $" · 交互预览 {frame.ScenePreviewScale:0%}";
         string text=$"{mode}  ·  {(frame.IsPlaying?"播放中":"已暂停")}  ·  {TimeSpan.FromSeconds(frame.Time):mm\\:ss\\.ff}";
         if(status.Text!=text)status.Text=text;
     }
@@ -272,11 +354,11 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     void LayoutCanvas()
     {
         if(surface.ActualWidth<=0||surface.ActualHeight<=0)return;
-        int width=showingEmptyCanvas?emptyWidth:LastFrame?.Pixels.Width??emptyWidth;
-        int height=showingEmptyCanvas?emptyHeight:LastFrame?.Pixels.Height??emptyHeight;
-        double scale=Math.Min(surface.ActualWidth/width,surface.ActualHeight/height)*viewZoom;
-        var rect=new Rect((surface.ActualWidth-width*scale)/2+viewPan.X,(surface.ActualHeight-height*scale)/2+viewPan.Y,
-            width*scale,height*scale);
+        int width=showingEmptyCanvas?emptyWidth:logicalCanvasWidth>0?logicalCanvasWidth:LastFrame?.Pixels.Width??emptyWidth;
+        int height=showingEmptyCanvas?emptyHeight:logicalCanvasHeight>0?logicalCanvasHeight:LastFrame?.Pixels.Height??emptyHeight;
+        navigation.Resize(surface.ActualWidth,surface.ActualHeight,width,height);
+        var bounds=navigation.Bounds;
+        var rect=new Rect(bounds.X,bounds.Y,bounds.Width,bounds.Height);
         LayoutGpu(rect);
         if(imageRect!=rect)
         {
@@ -292,6 +374,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
                 var tile=new Rectangle{Width=Math.Min(cell,rect.Width-x*cell),Height=Math.Min(cell,rect.Height-y*cell),Fill=(x+y)%2==0?light:dark};
                 Canvas.SetLeft(tile,rect.X+x*cell);Canvas.SetTop(tile,rect.Y+y*cell);checker.Children.Add(tile);
             }
+            PresentationSizeChanged?.Invoke(this,EventArgs.Empty);
         }
         var clip=new Rect(0,0,surface.ActualWidth,surface.ActualHeight);
         if(selectionClip.Rect!=clip)selectionClip.Rect=clip;
@@ -304,13 +387,14 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         if(!HasCurrentSource){HideSelection();return;}
         var target=LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
         if(target is null||imageRect.Width<=0){HideSelection();return;}
-        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible)return;
+        string label=TargetLabel?.Invoke(target)??target.Label;
+        if(displayedTarget==target&&selectionRect==imageRect&&overlay.Visibility==Visibility.Visible&&selectionText.Text==label)return;
         displayedTarget=target;selectionRect=imageRect;overlay.Visibility=Visibility.Visible;
         double x=imageRect.X+target.X*imageRect.Width,y=imageRect.Y+target.Y*imageRect.Height;
         double width=target.Width*imageRect.Width,height=target.Height*imageRect.Height;
         outline.Width=width;outline.Height=height;
         Canvas.SetLeft(outline,x);Canvas.SetTop(outline,y);
-        if(selectionText.Text!=target.Label)selectionText.Text=target.Label;
+        if(selectionText.Text!=label)selectionText.Text=label;
         Canvas.SetLeft(selectionLabel,Math.Clamp(x,0,Math.Max(0,surface.ActualWidth-80)));
         Canvas.SetTop(selectionLabel,Math.Max(0,y-26));
         for(int i=0;i<handles.Length;i++)
@@ -328,15 +412,17 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
 
     void OnPointerPressed(object sender,PointerRoutedEventArgs args)
     {
-        if(!HasCurrentSource)return;
         var point=args.GetCurrentPoint(surface);
         if(args.Pointer.PointerDeviceType==Microsoft.UI.Input.PointerDeviceType.Mouse&&!point.Properties.IsLeftButtonPressed)return;
-        if(!InCanvas(point.Position))return;
+        Focus(FocusState.Pointer);
+        if(!HasCurrentSource||!InCanvas(point.Position)){SelectedTargetId=null;args.Handled=true;return;}
         var normalized=Normalize(point.Position);var target=HitTest(normalized.X,normalized.Y);
-        SelectedTargetId=target?.Id;
-        if(target is null)return;
+        TracePointer($"pressed id={args.Pointer.PointerId} point={point.Position} normalized={normalized} target={target?.Id} source={args.OriginalSource?.GetType().Name}");
+        if(target is null){SelectedTargetId=null;args.Handled=true;return;}
+        // Keep pointer ownership before selection rebuilds inspectors and scrolls tracks.
         Pause();dragTarget=target.Id;dragPointer=args.Pointer.PointerId;dragStart=dragLast=normalized;dragMoved=false;
-        surface.CapturePointer(args.Pointer);args.Handled=true;
+        if(!surface.CapturePointer(args.Pointer)){dragTarget=null;TracePointer("capture failed");return;}
+        args.Handled=true;SelectedTargetId=target.Id;
     }
     void OnPointerMoved(object sender,PointerRoutedEventArgs args)
     {
@@ -344,15 +430,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
         dragLast=Normalize(args.GetCurrentPoint(surface).Position);
         if(Math.Abs(dragLast.X-dragStart.X)+Math.Abs(dragLast.Y-dragStart.Y)<.001&&!dragMoved)return;
         dragMoved=true;
+        TracePointer($"move id={args.Pointer.PointerId} actor={dragTarget} delta=({dragLast.X-dragStart.X},{dragLast.Y-dragStart.Y})");
         ObjectDragged?.Invoke(this,new(dragTarget,dragLast.X-dragStart.X,dragLast.Y-dragStart.Y,false));args.Handled=true;
     }
     void OnPointerReleased(object sender,PointerRoutedEventArgs args)
     {
+        TracePointer($"released id={args.Pointer.PointerId} actor={dragTarget} moved={dragMoved}");
         if(dragTarget is null||args.Pointer.PointerId!=dragPointer)return;
         dragLast=Normalize(args.GetCurrentPoint(surface).Position);FinishDrag();surface.ReleasePointerCapture(args.Pointer);args.Handled=true;
     }
     void OnPointerCanceled(object sender,PointerRoutedEventArgs args)
     {
+        TracePointer($"capture-ended id={args.Pointer.PointerId} actor={dragTarget} moved={dragMoved}");
         if(dragTarget is not null&&args.Pointer.PointerId==dragPointer)FinishDrag();
     }
     void FinishDrag()
@@ -364,14 +453,18 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
     void OnPointerWheelChanged(object sender,PointerRoutedEventArgs args)
     {
         var point=args.GetCurrentPoint(surface);
+        int delta=point.Properties.MouseWheelDelta;
+        if(delta==0||point.Properties.IsHorizontalMouseWheel)return;
+        if(dragTarget is not null||panning){args.Handled=true;return;}
         bool control=(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
-        if(!control){ZoomCanvas(point.Position,point.Properties.MouseWheelDelta);args.Handled=true;return;}
-        if(!HasCurrentSource||!InCanvas(point.Position))return;
-        var normalized=Normalize(point.Position);
-        var target=HitTest(normalized.X,normalized.Y)??LastFrame?.Targets.LastOrDefault(target=>target.Id==selected);
-        if(target is null||point.Properties.MouseWheelDelta==0)return;
-        SelectedTargetId=target.Id;Pause();
-        ObjectScaled?.Invoke(this,new(target.Id,Math.Pow(1.1,point.Properties.MouseWheelDelta/120d),true));args.Handled=true;
+        var target=HasCurrentSource?LastFrame?.Targets.LastOrDefault(target=>target.Id==selected):null;
+        switch(ViewportNavigation.WheelAction(control,selected is not null,target is not null))
+        {
+            case ViewportWheelAction.Canvas: ZoomCanvas(point.Position,delta);break;
+            case ViewportWheelAction.SelectedObject:
+                Pause();ObjectScaled?.Invoke(this,new(target!.Id,Math.Pow(1.1,delta/120d),true));break;
+        }
+        args.Handled=true;
     }
 
     public async ValueTask DisposeAsync()
@@ -384,7 +477,7 @@ public sealed partial class NativeViewport : UserControl, IAsyncDisposable
             waiters.Clear();
         }
         session.FrameReady-=OnFrameReady;session.Failed-=OnFailed;
-        DetachGpu();await session.DisposeAsync();
+        DetachGpu();await session.DisposeAsync();await previewAudio.DisposeAsync();
         pixelStream?.Dispose();pixelStream=null;
     }
 }

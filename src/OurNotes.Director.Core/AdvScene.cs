@@ -38,6 +38,10 @@ public sealed partial class AdvScene : IDisposable
     public IReadOnlyDictionary<int,Actor> Shown=>shown;
     public string StageName{get;private set;}="";
     internal bool TimingOnly{get;init;}
+    internal int PreloadedActorCount=>actors.Count;
+    internal int PreloadedModelTextureCount=>actors.Values.Sum(actor=>actor.LoadedTextureCount);
+    internal int CaptureWaitCount{get;private set;}
+    internal int CaptureDrawCount{get;private set;}
     public AdvScene(Archive archive,string site,string dll,JsonNode manifest,JsonNode definition,JsonNode scene,string language,OffscreenGl gl,AdvLoop loop,AdvTweens tweens)
     {
         this.archive=archive;this.site=site;this.dll=dll;this.manifest=manifest;this.definition=definition;this.language=language;this.gl=gl;this.loop=loop;this.tweens=tweens;
@@ -64,25 +68,30 @@ public sealed partial class AdvScene : IDisposable
         loop.On(AdvPhase.PreLateEnd,()=>{if(!TimingOnly)foreach(var actor in shown.Values.Concat(directorActors.Keys).Distinct())actor.Step(shot,loop.Time,(float)loop.DeltaTime);});
         loop.On(AdvPhase.Animation,AnimateEffects);
     }
-    public void Preload(IEnumerable<AdvRow> rows)
+    public void Preload(IEnumerable<AdvRow> rows,CancellationToken cancellationToken=default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         PreloadEffects(rows);
         foreach(var row in rows.Where(r=>!r.Ignored&&r.Command=="Character")){
+            cancellationToken.ThrowIfCancellationRequested();
             var key=(row.Text("TargetName"),(int)row.Number("TargetAssetIndex"));if(actors.ContainsKey(key))continue;
             var address="Character/Live2D/"+row.Text("TargetAssetName");
             string id=row.Text("Model") is {Length:>0} explicitModel?explicitModel:definition["models"]?[address]?.GetValue<string>()??throw new InvalidDataException("Model address absent from story: "+address);
             bool customSeed=row.Data["Seed"] is not null;
-            var actor=new Actor(archive,site,dll,new(){Name=key.Item1,Model=id},gl,customSeed?uint.Parse(row.Text("Seed"),CultureInfo.InvariantCulture):722,customSeed?null:shakeRandom);
-            actor.EnableGameDrawing(archive,site,gl);
+            var actor=new Actor(archive,site,dll,new(){Name=key.Item1,Model=id},TimingOnly?null:gl,customSeed?uint.Parse(row.Text("Seed"),CultureInfo.InvariantCulture):722,customSeed?null:shakeRandom);
+            // Timing uses the same native model, motion metadata and four warmup
+            // steps, but does not decode textures or allocate drawing/mask meshes.
+            if(TimingOnly)actor.EnableGameTiming();else actor.EnableGameDrawing(archive,site,gl);
             var ch=actor.Prefab.Find("Live2DCharacter").Component;
             actor.Prefab.Root.Position=AdvPrefab.Vector(ch["BasePosition"]);actor.Prefab.Root.Scale=new(Actor.N(ch["BaseScale"],1));actor.Prefab.Root.Rotation=Quaternion.Identity;
             actors.Add(key,actor);
         }
         foreach(var actor in actors.Values)actor.BeginGameWarmup();
-        for(int frame=0;frame<4;frame++)foreach(var actor in actors.Values)actor.Step(shot,frame/30d,1f/30);
+        for(int frame=0;frame<4;frame++)foreach(var actor in actors.Values){cancellationToken.ThrowIfCancellationRequested();actor.Step(shot,frame/30d,1f/30);}
     }
     public Actor? Character(string name)=>actors.GetValueOrDefault((name,costumes.GetValueOrDefault(name)));
     public AdvTransform Slot(int pos)=>pos is 1 or 3 or 5 or 7 or 9?slots[(pos-1)/2]:throw new ArgumentException("PositionType has no character slot: "+pos);
+    bool HasStageActor(int pos)=>(pos is 1 or 3 or 5 or 7 or 9)&&actors.Values.Any(actor=>ReferenceEquals(actor.Prefab.Root.Parent,Slot(pos)));
     public Vector3 FocusPoint(int pos)=>pos>=1&&pos<=9?anchors[pos-1].WorldPosition:Vector3.Zero;
     static float Param(AdvRow r,int index)=>float.TryParse(r.Text("Parameter"+index),NumberStyles.Float,CultureInfo.InvariantCulture,out float v)&&float.IsFinite(v)?v:0;
     static AdvEase Ease(AdvRow r,AdvEase fallback=AdvEase.OutQuad)=>Enum.TryParse<AdvEase>(r.Text("Parameter2"),false,out var e)&&Enum.IsDefined(e)?e:fallback;
@@ -104,7 +113,13 @@ public sealed partial class AdvScene : IDisposable
     }
     public void Show(string name,int pos,string motion="",string expression="",float fade=0)
     {
-        if(shown.ContainsKey(pos))return;var actor=Character(name);positions[name]=pos;if(actor is null)return;
+        // AdvCharacterField.ExistsCharacter tests the slot's actual children. An
+        // In can move an already visible character without an intervening Out.
+        if(HasStageActor(pos))return;var actor=Character(name);positions[name]=pos;if(actor is null)return;
+        // Keep one renderer entry for that model after reparenting. Otherwise the
+        // old slot both draws the moved actor again and blocks the next In there
+        // (10060: hotaru 5 -> 1 -> 9, then kanata enters the now-empty slot 5).
+        RemoveStageActor(actor);
         if(directorActors.Remove(actor)){
             var character=actor.Prefab.Find("Live2DCharacter").Component;
             actor.Prefab.Root.Position=AdvPrefab.Vector(character["BasePosition"]);
@@ -178,8 +193,8 @@ public sealed partial class AdvScene : IDisposable
                 if(duration>0){pendingCapture=new(loop);yield return pendingCapture;captureActive=true;captureAlpha=1;}
                 SetStage(row.Text("TargetAssetName"));
                 if(duration>0){yield return Tween("capture",()=>1,0,duration,AdvEase.OutQuad,v=>captureAlpha=v);captureActive=false;}yield break;
-            case "In":if(name==""||shown.ContainsKey(pos))yield break;Show(name,pos,row.Text("MotionName"),row.Text("ExpressionName"),row.Number("MotionFadeIn"));if(Character(name) is Actor inActor)inActor.GameLighting=!row.Text("Parameter1").Equals("unlit",StringComparison.OrdinalIgnoreCase);foreach(var w in FadeSlot(pos,0,1,duration))yield return w;yield break;
-            case "Out":if(pos==0)pos=positions.GetValueOrDefault(name);foreach(var w in FadeSlot(pos,1,0,duration>0?duration:.05f))yield return w;if(!p.Cancelled){var actor=Character(name);foreach(var pair in shown.Where(x=>x.Value==actor).ToArray())shown.Remove(pair.Key);if(actor is not null)actor.Prefab.Root.Parent=null;}yield break;
+            case "In":if(name==""||HasStageActor(pos))yield break;Show(name,pos,row.Text("MotionName"),row.Text("ExpressionName"),row.Number("MotionFadeIn"));if(Character(name) is Actor inActor)inActor.GameLighting=!row.Text("Parameter1").Equals("unlit",StringComparison.OrdinalIgnoreCase);foreach(var w in FadeSlot(pos,0,1,duration))yield return w;yield break;
+            case "Out":if(pos==0)pos=positions.GetValueOrDefault(name);foreach(var w in FadeSlot(pos,1,0,duration>0?duration:.05f))yield return w;if(!p.Cancelled){var actor=Character(name);if(actor is not null){RemoveStageActor(actor);actor.Prefab.Root.Parent=null;}}yield break;
             case "MoveToDirection":yield return MoveSlot(pos,new(Param(row,1),Param(row,2),Param(row,3)),duration);yield break;
             case "MoveToRight":case "MoveToLeft":case "MoveToUp":case "MoveToDown":case "MoveToForward":case "MoveToBack":
                 float offset=Param(row,1);var dir=row.Command switch{"MoveToRight"=>Vector3.UnitX,"MoveToLeft"=>-Vector3.UnitX,"MoveToUp"=>Vector3.UnitY,"MoveToDown"=>-Vector3.UnitY,"MoveToForward"=>-Vector3.UnitZ,_=>Vector3.UnitZ};yield return MoveSlot(pos,dir*offset,duration);yield break;
@@ -212,7 +227,7 @@ public sealed partial class AdvScene : IDisposable
                 var fds=FocusSettings();
                 var fd=fds["_focusData"]!.AsArray().First(v=>Actor.N(v!["_cameraDistance"])==row.Number("CameraDistance"))!;ease=Ease(row,(AdvEase)(int)Actor.N(fds["_focusEase"]));
                 var pt=FocusPoint(pos);float y=Actor.N(fd["_fieldZoomOffsetY"]);var ch=Character(name);
-                if(ch is not null&&positions.ContainsKey(name))y=ch.HeadPosition.Y-Actor.N(fd["_characterHeadFocusOffsetY"]);
+                if(ch is not null&&positions.TryGetValue(name,out int targetPosition)){pos=targetPosition;y=ch.HeadPosition.Y-Actor.N(fd["_characterHeadFocusOffsetY"]);}
                 focusPosition=panBase=new(pt.X,y,0);focusZoom=Actor.N(fd["_fieldZoomRatio"]);
                 focusDistance=(int)row.Number("CameraDistance");bool sharp=row.Text("Parameter1").Equals("sharp",StringComparison.OrdinalIgnoreCase);
                 var tasks=new List<AdvWait>{Camera.MoveX(pt.X,duration,ease),Camera.MoveY(y,duration,ease),Camera.MoveZ(0,duration,ease),Camera.RotateY(0,duration,ease),Camera.Zoom(focusZoom,duration,ease),RotateSlots(0,duration,ease),Tween("blurRadius",()=>blurRadius,BlurRadii[Math.Clamp(focusDistance,0,6)],duration,ease,v=>blurRadius=v)};
@@ -229,7 +244,17 @@ public sealed partial class AdvScene : IDisposable
         yield return Tween(key,()=>from,to,seconds,AdvEase.OutQuad,v=>slotAlpha[i]=v);if(fadeSerial[i]==serial)slotAlpha[i]=to;
     }
     readonly int[] fadeSerial=new int[5];
-    public void AdvanceRenderState(){post.AdvanceCamera(Camera,loop.Frame);if(pendingCapture is not null)Draw();}
+    public void AdvanceRenderState()
+    {
+        post.AdvanceCamera(Camera,loop.Frame);
+        if(pendingCapture is null)return;
+        if(!TimingOnly){Draw();return;}
+        // A native Stage fade waits for capture, then the next Update. Timing
+        // needs that exact wait boundary, not the captured GPU pixels. Resolve
+        // the same waiter at the same phase without drawing invisible models.
+        var wait=pendingCapture;pendingCapture=null;CaptureWaitCount++;
+        loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));
+    }
     public Action? DrawForeground{get;set;}
     public Func<AdvRenderItem?>? ForegroundItem{get;set;}
     public void Draw()
@@ -244,7 +269,7 @@ public sealed partial class AdvScene : IDisposable
             if(index<0)effect.RestoreOrder();else effect.SetRelativeOrder(index*1000,index*1000+ordered[index].Value.Core.DrawableCount,index*1000+999);
         }
         var backgroundItems=BackgroundItems(globals).Concat(EffectItems(globals,(e,r)=>r.Layer==12)).ToArray();
-        if(pendingCapture is not null){AdvRenderItem.DrawAll(backgroundItems);captureTexture=gl.Capture(captureTexture);var wait=pendingCapture;pendingCapture=null;loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));gl.Begin(clearColor);}
+        if(pendingCapture is not null){AdvRenderItem.DrawAll(backgroundItems);captureTexture=gl.Capture(captureTexture);var wait=pendingCapture;pendingCapture=null;CaptureWaitCount++;CaptureDrawCount++;loop.YieldUpdate().OnCompleted(()=>wait.Resolve(true));gl.Begin(clearColor);}
         var foreground=ForegroundItem?.Invoke();IEnumerable<AdvRenderItem> foregroundItems=foreground is null?[]:[foreground];
         if(!offscreen){
             var items=backgroundItems.Concat(ordered.SelectMany((p,i)=>p.Value.GameDrawItems(globals,i*1000))).Concat(EffectItems(globals,(e,r)=>r.Layer is >=6 and <=11)).Concat(foregroundItems);AdvRenderItem.DrawAll(items);

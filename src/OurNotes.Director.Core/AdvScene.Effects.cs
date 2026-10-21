@@ -14,6 +14,7 @@ public sealed partial class AdvScene
     IEnumerable<AdvEffectInstance> AllEffects()=>effects.Values.Concat(stageEffects.Values.SelectMany(g=>g.Instances));
     void PreloadEffects(IEnumerable<AdvRow> rows)
     {
+        PrepareFocusMaterials(rows);
         var names=rows.Where(r=>!r.Ignored&&r.Command=="Effect").Select(r=>r.Text("TargetName")).Where(n=>n!="").Distinct().ToArray();if(names.Length==0)return;
         string file=Archive.S(definition,"effects");if(file=="")throw new InvalidDataException("Story has no effects.json");
         var document=JsonNode.Parse(archive.Logical(site,manifest,file))!;var records=new AdvAnimRecords(document);

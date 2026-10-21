@@ -430,14 +430,20 @@ public sealed partial class SceneDocument
             Error("output.object", "$.output", "output 必须是对象。");
         else if (root["output"] is JsonObject output)
         {
-            Keys(output, ["width", "height", "supersample", "codec", "cineformQuality", "clean", "letterbox", "isolateActor", "playbackViewport"], "$.output");
+            Keys(output, ["width", "height", "supersample", "codec", "cineformQuality", "clean", "letterbox", "isolateActor", "isolateTransform", "isolateCanvas", "playbackViewport", "content"], "$.output");
             foreach (string key in new[] { "width", "height", "supersample" })
                 if (output[key] is { } value && (!TryInteger(value, out int n) || n < (key == "supersample" ? 1 : 16) || n > (key == "supersample" ? 4 : RenderDimensions.MaxSide)))
                     Error("output.integer", "$.output." + key, key + " 超出范围或不是整数。");
             if (output["isolateActor"] is {} isolated && (isolated is not JsonValue iv || !iv.TryGetValue<string>(out var target) || string.IsNullOrWhiteSpace(target)))
                 Error("output.actor", "$.output.isolateActor", "独立素材必须指定角色标识。");
+            try { _=SceneContent.Read(output["content"]); }
+            catch (ArgumentException error) { Error("output.content", "$.output.content", error.Message); }
             try { ActorIsolation.ValidateViewport(output["playbackViewport"]); }
             catch (ArgumentException error) { Error("output.playbackViewport", "$.output.playbackViewport", error.Message); }
+            try { _ = ActorIsolation.ReadTransform(output["isolateTransform"], output["isolateActor"]?.ToString()); }
+            catch (ArgumentException error) { Error("output.isolateTransform", "$.output.isolateTransform", error.Message); }
+            try { _ = ActorIsolation.ReadCanvas(output["isolateCanvas"], output["isolateActor"]?.ToString()); }
+            catch (ArgumentException error) { Error("output.isolateCanvas", "$.output.isolateCanvas", error.Message); }
             if (output["clean"] is { } clean && (clean is not JsonValue boolean || !boolean.TryGetValue<bool>(out _)))
                 Error("output.boolean", "$.output.clean", "clean 必须为布尔值。");
             try { if (output["codec"] is not null) _ = VideoEncoding.NormalizeCodec(Scalar(output["codec"])); }

@@ -4,7 +4,7 @@ using OurNotes.Director.Desktop.Core;
 
 namespace OurNotes.Director.WinUI;
 
-internal sealed class SettingsPage : UserControl
+internal sealed partial class SettingsPage : UserControl
 {
     private readonly MainWindow _window;
     private readonly TextBox _archive = Ui.Input("素材归档目录", placeholder: "包含 index 子目录的归档根目录");
@@ -31,6 +31,7 @@ internal sealed class SettingsPage : UserControl
         Content = Ui.Scroll(Ui.Stack(22,
             Ui.Heading("设置", "保存常用目录和浏览偏好。场景项目中明确指定的站点、语言和导出参数会继续生效。"),
             Ui.Card(Ui.Stack(16, PathField(_archive, true), PathField(_output, true), Ui.Columns(_site, _language), _theme)),
+            CreateGraphicsSettings(),
             new Expander { Header = "运行组件与自定义路径", Content = advanced, HorizontalAlignment = HorizontalAlignment.Stretch },
             Ui.Row(10, Ui.AsyncButton("保存设置", SaveAsync, "\uE74E", true),
                 Ui.Button("检查运行组件", () => window.OpenCommand("probe.runtime"), "\uE9D9")), _notice));
@@ -54,6 +55,7 @@ internal sealed class SettingsPage : UserControl
         var settings = _window.Settings;
         _archive.Text = settings.ArchivePath; _output.Text = settings.OutputDirectory;
         Select(_site, settings.Site); Select(_language, settings.Language); Select(_theme, settings.Theme);
+        RefreshGraphicsSettings();
         _tools["engine"].Text = settings.EnginePath; _tools["ffmpeg"].Text = settings.FFmpegPath;
         _tools["ffprobe"].Text = settings.FFprobePath; _tools["cubism"].Text = settings.CubismSdkPath; _tools["native"].Text = settings.NativeLibraryPath;
     }
@@ -64,7 +66,7 @@ internal sealed class SettingsPage : UserControl
     private async Task SaveAsync()
     {
         string archive = _archive.Text.Trim(), output = _output.Text.Trim();
-        if (archive.Length > 0 && !Directory.Exists(archive)) throw new ArgumentException("素材归档目录不存在。请重新选择，或先到“下载与归档”创建归档。");
+        if (archive.Length > 0 && !Directory.Exists(archive)) throw new ArgumentException("素材归档目录不存在。请重新选择，或先到右上角“素材库”下载资源。");
         if (output.Length == 0) throw new ArgumentException("请选择默认导出目录。");
         output = Path.GetFullPath(output);
         foreach (var (key, box) in _tools)
@@ -77,12 +79,22 @@ internal sealed class SettingsPage : UserControl
         bool reconnect = !string.Equals(settings.EnginePath, engine, StringComparison.OrdinalIgnoreCase);
         if (reconnect && _window.Jobs.IsBusy) throw new InvalidOperationException("当前还有任务在处理。请等任务结束后再更换引擎。");
         Directory.CreateDirectory(output);
+        int gpuPreference = int.Parse(Ui.Selected(gpuChoice), System.Globalization.CultureInfo.InvariantCulture);
+        string gpuEngine = engine.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "advkit.exe") : engine;
+        bool gpuChanged = !WindowsGpuPreference.MatchesTargets(gpuPreference, gpuEngine);
+        if (gpuChanged) WindowsGpuPreference.Apply(gpuPreference, gpuEngine);
+        GpuPreferencePolicy.Store(settings, gpuPreference);
         settings.ArchivePath = archive.Length == 0 ? "" : Path.GetFullPath(archive); settings.OutputDirectory = output;
+        if (settings.ArchivePath.Length > 0) settings.RememberResourceLibrary(settings.ArchivePath);
         settings.Site = Ui.Selected(_site); settings.Language = Ui.Selected(_language); settings.Theme = Ui.Selected(_theme);
         settings.EnginePath = engine; settings.FFmpegPath = _tools["ffmpeg"].Text.Trim(); settings.FFprobePath = _tools["ffprobe"].Text.Trim();
         settings.CubismSdkPath = _tools["cubism"].Text.Trim(); settings.NativeLibraryPath = _tools["native"].Text.Trim();
         settings.Save(); _window.ApplySettings();
         if (reconnect) await _window.ReconnectEngineAsync();
-        _notice.Severity = InfoBarSeverity.Success; _notice.Title = "设置已保存"; _notice.Message = "新的操作会使用这些设置。"; _notice.IsOpen = true;
+        RefreshGraphicsSettings();
+        _notice.Severity = InfoBarSeverity.Success; _notice.Title = "设置已保存";
+        _notice.Message = gpuPreference != WindowsGpuPreference.StartupPreference
+            ? "显卡偏好已保存。重新启动应用后生效。" : gpuChanged ? "编辑器和导出引擎的显卡偏好已保存。" : "新的操作会使用这些设置。";
+        _notice.IsOpen = true;
     }
 }

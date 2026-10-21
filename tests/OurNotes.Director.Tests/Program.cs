@@ -64,6 +64,8 @@ JsonObject Put(string text, string encoding)
 try
 {
     JsonOutputTests.Run(Assert);
+    SegmentedPixelsTests.Run(Assert);
+    ParticleEvaluationTests.Run(Assert);
     ShotTemplateTests.Run(Assert);
     NativeDependencyTests.Run(Assert);
     VideoEncodingTests.Run(Assert);
@@ -130,6 +132,7 @@ try
     var pixels=new Pixels(2,2,[255,0,0,255,0,255,0,128,0,0,255,0,1,2,3,255]);
     var decoded=Png.Decode(Png.Encode(pixels));
     Assert(decoded.Width==2&&decoded.Height==2&&decoded.Rgba.SequenceEqual(pixels.Rgba),"PNG RGBA/alpha round trip");
+    PngDecodeTests.Run(Assert);
     var shot=new Shot{Actors=[new(){Model="test"}],Tracks=[new(){Target="camera",Property="zoom",Interpolation="linear",Keys=[new(){T=0,Value=1},new(){T=2,Value=3}]}]};
     shot.Validate();Assert(shot.Value("camera","zoom",1,0)==2,"Linear camera interpolation");
     shot.Tracks[0].Interpolation="step";Assert(shot.Value("camera","zoom",1,0)==1,"Step camera interpolation");

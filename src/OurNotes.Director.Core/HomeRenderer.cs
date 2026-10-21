@@ -12,7 +12,10 @@ public sealed class HomeRenderer : IDisposable
     HomeRoom? room;
     HomePostFx? post;
     readonly HomeAnimation animation;
-    readonly int width, height, supersample, fps;
+    int width, height, supersample;
+    readonly int fps;
+    readonly float renderAspect;
+    OffscreenGl.DrawingCanvas? previewCanvas;
     float[] projection;
     readonly HomeTiming timing;
     readonly bool fitEditedBounds;
@@ -40,16 +43,17 @@ public sealed class HomeRenderer : IDisposable
         ValidateDimensions(width, height, supersample);
         if (framing is not ("scene" or "fit")) throw new ArgumentException("Home --framing must be scene or fit.");
         this.animation = animation; this.width = width; this.height = height; this.supersample = supersample; fps = timing.Fps;
+        renderAspect = width / (float)height;
         this.timing = timing; this.framing = editState?.Framing ?? framing; this.background = editState?.Background ?? background;
         this.fitEditedBounds = fitEditedBounds && animation.Character is not null;
-        this.sourceAspect = sourceAspect ?? width / (float)height;
+        this.sourceAspect = sourceAspect ?? renderAspect;
         if (!float.IsFinite(this.sourceAspect) || this.sourceAspect <= 0) throw new ArgumentOutOfRangeException(nameof(sourceAspect));
         sourceProjection = animation.Camera.ViewProjection(this.sourceAspect);
         // Fitting establishes one source crop. Subsequent edits remain deliberate screen-space moves
         // and do not make the viewport chase a dragged character or change the zoom while playing.
         framing = this.framing;
         Crop = ComputeCrop(editState);
-        projection = AdvMatrix.Multiply(Crop, this.fitEditedBounds && framing == "fit" ? sourceProjection : animation.Camera.ViewProjection(width / (float)height));
+        projection = AdvMatrix.Multiply(Crop, this.fitEditedBounds && framing == "fit" ? sourceProjection : animation.Camera.ViewProjection(renderAspect));
         this.editState = editState;
         gl = new(width * supersample, height * supersample);
         try
@@ -68,10 +72,10 @@ public sealed class HomeRenderer : IDisposable
         {
             animation.SetEditState(state);
             return animation.MeasureBounds(sourceAspect, timing.FirstFrame, timing.FrameCount, fps)
-                .Crop(sourceAspect: sourceAspect, outputAspect: width / (float)height);
+                .Crop(sourceAspect: sourceAspect, outputAspect: renderAspect);
         }
         animation.SetEditState(null);
-        return animation.Fit(width / (float)height, timing.FirstFrame, timing.FrameCount, fps);
+        return animation.Fit(renderAspect, timing.FirstFrame, timing.FrameCount, fps);
     }
 
     void EnsureRoom()
@@ -90,12 +94,27 @@ public sealed class HomeRenderer : IDisposable
         {
             framing = state.Framing;
             Crop = ComputeCrop(state);
-            projection = AdvMatrix.Multiply(Crop, fitEditedBounds && framing == "fit" ? sourceProjection : animation.Camera.ViewProjection(width / (float)height));
+            projection = AdvMatrix.Multiply(Crop, fitEditedBounds && framing == "fit" ? sourceProjection : animation.Camera.ViewProjection(renderAspect));
         }
         animation.SetEditState(state); editState = state; background = state.Background; EnsureRoom();
     }
 
     public IReadOnlyList<PreviewTarget> PreviewTargets() => targets;
+
+    /// <summary>Redraws the same home composition into a new presentation target.
+    /// Spine state, room textures, shaders and the source camera remain alive.</summary>
+    public void ResizePreview(int width, int height, int supersample = 1)
+    {
+        ValidateDimensions(width, height, supersample);
+        if (PendingFrames > 0) throw new InvalidOperationException("Read queued home frames before resizing a preview.");
+        if (this.width == width && this.height == height && this.supersample == supersample) return;
+        int sampledWidth = checked(width * supersample), sampledHeight = checked(height * supersample);
+        var next = sampledWidth == gl.Width && sampledHeight == gl.Height ? null
+            : gl.CreateDrawingCanvas(sampledWidth, sampledHeight);
+        post?.ReleasePresentationTargets();
+        previewCanvas?.Dispose(); previewCanvas = next;
+        this.width = width; this.height = height; this.supersample = supersample;
+    }
 
     public static void ValidateDimensions(int width, int height, int supersample)
     {
@@ -120,7 +139,7 @@ public sealed class HomeRenderer : IDisposable
                 if (!animation.TransformFor(part, time).Visible) continue;
                 var matrix = fitEditedBounds && framing == "fit"
                     ? AdvMatrix.Multiply(Crop, animation.EditedMatrix(part, sourceProjection, sourceAspect, time))
-                    : animation.EditedMatrix(part, projection, width / (float)height, time);
+                    : animation.EditedMatrix(part, projection, renderAspect, time);
                 foreach (var batch in part.Actor.Mesh.Batches)
                 {
                     batches.Add((part, batch, matrix));
@@ -145,14 +164,19 @@ public sealed class HomeRenderer : IDisposable
         targets = targetBounds.Select(pair => new PreviewTarget(pair.Key, animation.Scene.Characters.First(c => c.Key == pair.Key).Name,
             pair.Value.Min.X, pair.Value.Min.Y, pair.Value.Max.X - pair.Value.Min.X, pair.Value.Max.Y - pair.Value.Min.Y)).ToArray();
     }
-    public Pixels Frame(int frame) { Draw(frame); return gl.Present(width, height, supersample, 0, static (_, _, _) => { }, Transparent); }
+    public Pixels Frame(int frame)
+    {
+        using var canvas = gl.UseDrawingCanvas(previewCanvas);
+        Draw(frame); return gl.Present(width, height, supersample, 0, static (_, _, _) => { }, Transparent);
+    }
     public void QueueFrame(int frame)
     {
         if (PendingFrames >= 3) throw new InvalidOperationException("Read a queued home frame before advancing.");
+        using var canvas = gl.UseDrawingCanvas(previewCanvas);
         Draw(frame); gl.QueuePresent(width, height, supersample, 0, static (_, _, _) => { }, Transparent);
     }
     public Pixels ReadQueuedFrame() => gl.ReadQueued();
-    public void Dispose() { post?.Dispose(); room?.Dispose(); drawing.Dispose(); gl.Dispose(); }
+    public void Dispose() { post?.Dispose(); room?.Dispose(); drawing.Dispose(); previewCanvas?.Dispose(); gl.Dispose(); }
 }
 
 public static class HomeExport
@@ -263,7 +287,7 @@ public static class HomeExport
         { throw VideoEncoding.EncoderFailure(encoder.ExitCode, errors!.GetAwaiter().GetResult(), ex); }
         finally
         {
-            if (encoder is not null) { if (!encoder.HasExited) encoder.Kill(true); encoder.Dispose(); }
+            VideoEncoding.StopEncoder(encoder, errors);
             if (File.Exists(temp)) File.Delete(temp);
             if (Directory.Exists(temp)) Directory.Delete(temp, true);
         }

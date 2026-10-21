@@ -1,0 +1,58 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Controls;
+using OurNotes.Director.Desktop.Core;
+
+namespace OurNotes.Director.WinUI;
+
+internal sealed partial class ClipTimeline
+{
+    internal async Task VerifyGroupAndHeightSmokeAsync(Action<bool, string> check)
+    {
+        FilterActor(null); SetAllGroupsCollapsed(false); scroll.ChangeView(null, 0, null, true); Draw(); UpdateLayout();
+        int expandedCount = lanes.Count, itemCount = items.Length;
+        string? selection = selected; TimelineRange? range = WorkRange;
+        double oldHeight = RowHeight, oldScale = scale;
+        var group = lanes.First(lane => lane.IsGroup && lane.Actor.Length > 0);
+        Button Header() => labels.Children.OfType<Button>().First(button => button.Tag?.ToString() == group.GroupKey);
+        new ButtonAutomationPeer(Header()).Invoke(); await Task.Delay(60); UpdateLayout();
+        check(collapsedGroups.Contains(group.GroupKey!) && lanes.Count < expandedCount && items.Length == itemCount
+            && selected == selection && WorkRange == range,
+            "实际分组标题收起同一角色的子轨道，片段、选择和入出点保持不变");
+        await App.CaptureCheckpointAsync("timeline-collapsed");
+        new ButtonAutomationPeer(Header()).Invoke(); await Task.Delay(60); UpdateLayout();
+        check(!collapsedGroups.Contains(group.GroupKey!) && lanes.Count == expandedCount,
+            "再次点击实际标题展开相同的角色子轨道");
+        heightSlider.Value = 72; UpdateLayout();
+        check(RowHeight == 72 && scale == oldScale && labels.Children.OfType<Button>().All(button => Math.Abs(button.ActualHeight - 71) < 1)
+            && WorkRange == range && items.Length == itemCount,
+            "真实轨道高度滑块调整纵向高度，不改变横向比例或项目数据");
+        await App.CaptureCheckpointAsync("timeline-tall-tracks");
+        heightSlider.Value = oldHeight; UpdateLayout();
+
+        var hidden = group.Items.First();
+        FilterActor(""); Select(hidden.Id); collapsedGroups.Add(group.GroupKey!);
+        UpdateLanes(); Draw(); FitSelection();
+        await Task.Delay(60); UpdateLayout();
+        check(filteredActor is null && !collapsedGroups.Contains(group.GroupKey!)
+            && IsSelectedLaneVisible && IsSelectionVisible && WorkRange == range && items.Length == itemCount,
+            "显示所选片段解除排除它的角色筛选并展开父组，横向与纵向都能看到所选片段，入出点保持不变");
+        Select(selection); Fit(); scroll.ChangeView(null, 0, null, true); Draw();
+    }
+    internal (FrameworkElement Element, double StartX, double EndX, double EndTime) ScrubCoordinates(double start, double end)
+    {
+        Fit(); UpdateLayout(); scroll.ChangeView(0, null, null, true); Draw();
+        double maximum = Math.Max(24, ruler.ActualWidth - 20);
+        double a = Math.Clamp(start * scale, 2, maximum - 2), b = Math.Clamp(end * scale, a + 1, maximum);
+        return (ruler, a, b, At(b));
+    }
+    internal (FrameworkElement Element,double StartX,double EndX,double EndTime) ReverseScrubCoordinates(double start,double end)
+    {
+        if(end<0||end>=start)throw new ArgumentOutOfRangeException(nameof(end));
+        fitPending=false;scale=Math.Clamp((Math.Max(100,ruler.ActualWidth)-80)/(start-end),zoom.Minimum,zoom.Maximum);
+        zoom.Value=scale;Draw();UpdateLayout();scroll.UpdateLayout();
+        scroll.ChangeView(Math.Max(0,end*scale-40),null,null,true);Draw();UpdateLayout();
+        double a=start*scale-scroll.HorizontalOffset,b=end*scale-scroll.HorizontalOffset;
+        return(ruler,a,b,At(b+scroll.HorizontalOffset));
+    }
+}

@@ -5,7 +5,8 @@
 #define NOMINMAX
 #include <windows.h>
 #include <d3d11.h>
-#include <dxgi1_3.h>
+#include <dxgi1_6.h>
+#include <cwchar>
 #include <wrl/client.h>
 #include <GL/gl.h>
 #include <memory>
@@ -78,9 +79,10 @@ struct Surface {
     ComPtr<IDXGISwapChain1> swap;
     ComPtr<ID3D11Texture2D> shared, back;
     UINT width{}, height{};
-    bool testOnly = false;
+    bool testOnly = false, locked = false;
     ~Surface() {
         // Managed owner always destroys on the render thread, before deleting its WGL context.
+        if (locked && object && f.unlock) f.unlock(interopDevice, 1, &object);
         if (object && f.unregisterObject) f.unregisterObject(interopDevice, object);
         if (framebuffer && f.deleteFrames) f.deleteFrames(1, &framebuffer);
         if (renderbuffer && f.deleteBuffers) f.deleteBuffers(1, &renderbuffer);
@@ -116,45 +118,66 @@ HRESULT BindShared(Surface& s) {
     s.object = s.f.registerObject(s.interopDevice, s.shared.Get(), s.renderbuffer, Renderbuffer, 1 /* WGL_ACCESS_READ_WRITE_NV */);
     if (!s.object) { const DWORD error = GetLastError(); return HRESULT_FROM_WIN32(error ? error : ERROR_NOT_SUPPORTED); }
     if (!s.f.lock(s.interopDevice, 1, &s.object)) return E_FAIL;
+    s.locked = true;
     GLint read{}, draw{}; glGetIntegerv(0x8CAA, &read); glGetIntegerv(0x8CA6, &draw);
     s.f.genFrames(1, &s.framebuffer); s.f.bind(Framebuffer, s.framebuffer);
     s.f.attach(Framebuffer, ColorAttachment0, Renderbuffer, s.renderbuffer);
     bool complete = s.f.check(Framebuffer) == FramebufferComplete;
     s.f.bind(ReadFramebuffer, static_cast<GLuint>(read)); s.f.bind(DrawFramebuffer, static_cast<GLuint>(draw));
     bool unlocked = s.f.unlock(s.interopDevice, 1, &s.object) != FALSE;
+    if (unlocked) s.locked = false;
     return complete && unlocked ? S_OK : E_FAIL;
 }
-}
-#define API extern "C" __declspec(dllexport)
-API unsigned __cdecl OurNotesGpuAbi() noexcept { return 1; }
-API HRESULT __cdecl OurNotesGpuCreate(UINT width, UINT height, Surface** result) noexcept {
+HRESULT CreateSurface(UINT width, UINT height, UINT preference, Surface** result) noexcept {
     if (!result) return E_POINTER; *result = nullptr;
-    if (width < 16 || height < 16 || width > 16384 || height > 16384) return E_INVALIDARG;
+    if (width < 16 || height < 16 || width > 16384 || height > 16384 || preference > 2) return E_INVALIDARG;
     try {
-        auto s = std::make_unique<Surface>(); s->width = width; s->height = height;
-        HRESULT hr = LoadFunctions(s->f); if (FAILED(hr)) return hr;
+        Functions functions{};
+        HRESULT hr = LoadFunctions(functions); if (FAILED(hr)) return hr;
         ComPtr<IDXGIFactory1> factory; hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory)); if (FAILED(hr)) return hr;
+        ComPtr<IDXGIFactory6> preferredFactory; factory.As(&preferredFactory);
+        HRESULT lastFailure = DXGI_ERROR_UNSUPPORTED;
         for (UINT index = 0; ; ++index) {
             ComPtr<IDXGIAdapter1> adapter;
-            hr = factory->EnumAdapters1(index, &adapter); if (hr == DXGI_ERROR_NOT_FOUND) break;
+            // D3D device creation does not select or replace the current WGL
+            // driver. Prefer the process-start policy among compatible devices.
+            hr = preferredFactory
+                ? preferredFactory->EnumAdapterByGpuPreference(index, static_cast<DXGI_GPU_PREFERENCE>(preference), IID_PPV_ARGS(&adapter))
+                : factory->EnumAdapters1(index, &adapter);
+            if (hr == DXGI_ERROR_NOT_FOUND) break;
             if (FAILED(hr)) return hr;
             DXGI_ADAPTER_DESC1 description{}; hr = adapter->GetDesc1(&description); if (FAILED(hr)) return hr;
             if (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-            s->context.Reset(); s->device.Reset();
+            // A candidate is usable only after the shared texture is registered,
+            // locked, attached to a complete FBO and unlocked. Some hybrid
+            // drivers open a D3D device but reject its texture later. Release
+            // every candidate fully before trying the next adapter.
+            auto s = std::make_unique<Surface>(); s->width = width; s->height = height; s->f = functions;
             hr = D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 nullptr, 0, D3D11_SDK_VERSION, &s->device, nullptr, &s->context);
-            if (FAILED(hr)) continue;
-            s->interopDevice = s->f.open(s->device.Get()); if (s->interopDevice) break;
+            if (FAILED(hr)) { lastFailure = hr; continue; }
+            s->interopDevice = s->f.open(s->device.Get());
+            if (!s->interopDevice) { lastFailure = DXGI_ERROR_UNSUPPORTED; continue; }
+            hr = CreateSwap(*s); if (FAILED(hr)) { lastFailure = hr; continue; }
+            hr = BindShared(*s); if (FAILED(hr)) { lastFailure = hr; continue; }
+            *result = s.release(); return S_OK;
         }
-        if (!s->interopDevice) return DXGI_ERROR_UNSUPPORTED;
-        hr = CreateSwap(*s); if (FAILED(hr)) return hr;
-        hr = BindShared(*s); if (FAILED(hr)) return hr;
-        *result = s.release(); return S_OK;
+        return lastFailure;
     } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; } catch (...) { return E_FAIL; }
+}
+}
+#define API extern "C" __declspec(dllexport)
+API unsigned __cdecl OurNotesGpuAbi() noexcept { return 3; }
+API HRESULT __cdecl OurNotesGpuCreate(UINT width, UINT height, Surface** result) noexcept {
+    return CreateSurface(width, height, 0, result);
+}
+API HRESULT __cdecl OurNotesGpuCreatePreferred(UINT width, UINT height, UINT preference, Surface** result) noexcept {
+    return CreateSurface(width, height, preference, result);
 }
 API HRESULT __cdecl OurNotesGpuPresent(Surface* s, GLuint sourceFramebuffer, UINT sourceWidth, UINT sourceHeight) noexcept {
     if (!s || !s->IsOwner() || !s->object) return E_INVALIDARG;
     if (!s->f.lock(s->interopDevice, 1, &s->object)) return DXGI_ERROR_DEVICE_REMOVED;
+    s->locked = true;
     GLint read{}, draw{}; glGetIntegerv(0x8CAA, &read); glGetIntegerv(0x8CA6, &draw);
     const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
     glDisable(GL_SCISSOR_TEST);
@@ -165,6 +188,7 @@ API HRESULT __cdecl OurNotesGpuPresent(Surface* s, GLuint sourceFramebuffer, UIN
     s->f.bind(ReadFramebuffer, static_cast<GLuint>(read)); s->f.bind(DrawFramebuffer, static_cast<GLuint>(draw));
     if (scissor) glEnable(GL_SCISSOR_TEST);
     if (!s->f.unlock(s->interopDevice, 1, &s->object)) return DXGI_ERROR_DEVICE_REMOVED;
+    s->locked = false;
     s->context->CopyResource(s->back.Get(), s->shared.Get());
     HRESULT hr = s->swap->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
     return hr == DXGI_ERROR_WAS_STILL_DRAWING ? S_FALSE : hr;
@@ -180,6 +204,22 @@ API HRESULT __cdecl OurNotesGpuScaleSwapChain(IDXGISwapChain* swap, float x, flo
     HRESULT hr = swap->QueryInterface(IID_PPV_ARGS(&composition)); if (FAILED(hr)) return hr;
     DXGI_MATRIX_3X2_F matrix{}; matrix._11 = x; matrix._22 = y;
     return composition->SetMatrixTransform(&matrix);
+}
+// Keep immediate-context work and DXGI presentation on their owning render
+// thread. XAML layout must enqueue this call without blocking the message pump.
+API HRESULT __cdecl OurNotesGpuSetDisplaySize(Surface* s, float x, float y) noexcept {
+    if (!s || !s->IsOwner() || !s->swap || !s->shared || !s->back) return E_INVALIDARG;
+    HRESULT hr = OurNotesGpuScaleSwapChain(s->swap.Get(), x, y);
+    if (FAILED(hr)) return hr;
+    // SetMatrixTransform is latched by the NEXT Present. Re-copy the retained
+    // texture because flip-sequential Present rotates buffers; presenting an old
+    // back buffer without copying it may show blank/stale content while paused.
+    s->context->CopyResource(s->back.Get(), s->shared.Get());
+    return s->swap->Present(0, 0);
+}
+API HRESULT __cdecl OurNotesGpuTestPresentCount(Surface* s, UINT* count) noexcept {
+    if (!s || !s->testOnly || !s->IsOwner() || !count) return E_INVALIDARG;
+    return s->swap->GetLastPresentCount(count);
 }
 API HRESULT __cdecl OurNotesGpuAttachPanel(IUnknown* panel, IDXGISwapChain* swap) noexcept {
     if (!panel) return E_POINTER;
@@ -211,4 +251,58 @@ API HRESULT __cdecl OurNotesGpuTestPixel(Surface* s, uint32_t* rgba) noexcept {
     s->context->CopyResource(staging.Get(), s->shared.Get()); D3D11_MAPPED_SUBRESOURCE mapped{};
     hr = s->context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped); if (FAILED(hr)) return hr;
     std::memcpy(rgba, mapped.pData, 4); s->context->Unmap(staging.Get(), 0); return S_OK;
+}
+API HRESULT __cdecl OurNotesGpuPresentTestColor(Surface* s, uint32_t rgba) noexcept {
+    if (!s || !s->testOnly || !s->IsOwner()) return E_INVALIDARG;
+    ComPtr<ID3D11RenderTargetView> target;
+    HRESULT hr = s->device->CreateRenderTargetView(s->shared.Get(), nullptr, &target); if (FAILED(hr)) return hr;
+    const float color[] = { static_cast<float>(rgba & 255) / 255.f, static_cast<float>((rgba >> 8) & 255) / 255.f,
+        static_cast<float>((rgba >> 16) & 255) / 255.f, static_cast<float>((rgba >> 24) & 255) / 255.f };
+    s->context->ClearRenderTargetView(target.Get(), color);
+    // A uniform fill cannot detect content that was enlarged and cropped. Four
+    // distinct corner markers verify the complete texture's on-screen mapping.
+    const uint32_t colors[] = { 0xFFFFFFFF, 0xFF2020EF, 0xFFEDBC29, 0xFF1A1A1A };
+    for (UINT corner = 0; corner < 4; ++corner) {
+        uint32_t pixels[16]; for (auto& pixel : pixels) pixel = colors[corner];
+        UINT x = (corner & 1) ? s->width - 4 : 0, y = (corner & 2) ? s->height - 4 : 0;
+        D3D11_BOX box{ x, y, 0, x + 4, y + 4, 1 };
+        s->context->UpdateSubresource(s->shared.Get(), 0, &box, pixels, 16, 0);
+    }
+    s->context->CopyResource(s->back.Get(), s->shared.Get());
+    return s->swap->Present(0, 0);
+}
+
+// Query without opening a GL context. This is the OS preference order, not a
+// fabricated report of the active rendering device.
+API HRESULT __cdecl OurNotesGpuPreferredAdapter(UINT preference, wchar_t* name, UINT capacity) noexcept {
+    if (!name || capacity < 128 || preference > 2) return E_INVALIDARG;
+    name[0] = 0;
+    ComPtr<IDXGIFactory6> factory;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory)); if (FAILED(hr)) return hr;
+    for (UINT index = 0; ; ++index) {
+        ComPtr<IDXGIAdapter1> adapter;
+        hr = factory->EnumAdapterByGpuPreference(index, static_cast<DXGI_GPU_PREFERENCE>(preference), IID_PPV_ARGS(&adapter));
+        if (FAILED(hr)) return hr;
+        DXGI_ADAPTER_DESC1 description{}; hr = adapter->GetDesc1(&description); if (FAILED(hr)) return hr;
+        if (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+        std::wmemcpy(name, description.Description, 128); name[127] = 0; return S_OK;
+    }
+}
+API HRESULT __cdecl OurNotesGpuAdapterName(Surface* s, wchar_t* name, UINT capacity) noexcept {
+    if (!s || !name || capacity < 128) return E_INVALIDARG;
+    name[0] = 0;
+    ComPtr<IDXGIDevice> dxgi; ComPtr<IDXGIAdapter> adapter;
+    HRESULT hr = s->device.As(&dxgi); if (FAILED(hr)) return hr;
+    hr = dxgi->GetAdapter(&adapter); if (FAILED(hr)) return hr;
+    DXGI_ADAPTER_DESC description{}; hr = adapter->GetDesc(&description); if (FAILED(hr)) return hr;
+    std::wmemcpy(name, description.Description, 128); name[127] = 0; return S_OK;
+}
+API HRESULT __cdecl OurNotesGpuAdapterSoftware(Surface* s, BOOL* software) noexcept {
+    if (!s || !software) return E_INVALIDARG;
+    ComPtr<IDXGIDevice> dxgi; ComPtr<IDXGIAdapter> adapter; ComPtr<IDXGIAdapter1> adapter1;
+    HRESULT hr = s->swap->GetDevice(IID_PPV_ARGS(&dxgi)); if (FAILED(hr)) return hr;
+    hr = dxgi->GetAdapter(&adapter); if (FAILED(hr)) return hr;
+    hr = adapter.As(&adapter1); if (FAILED(hr)) return hr;
+    DXGI_ADAPTER_DESC1 description{}; hr = adapter1->GetDesc1(&description); if (FAILED(hr)) return hr;
+    *software = (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) ? TRUE : FALSE; return S_OK;
 }

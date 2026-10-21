@@ -28,6 +28,7 @@ public partial class App : Application
     public App()
     {
         instance = this;
+        WindowsGpuPreference.Initialize();
         smokeReportPath = ReadSmokeReportPath();
         if (smokeReportPath is not null)
             AppDomain.CurrentDomain.FirstChanceException += (_, args) =>
@@ -135,7 +136,7 @@ public partial class App : Application
             report["startup"] = startupEvidence.DeepClone();
             report["captures"] = captures.DeepClone();
             report["startupTrace"] = startupTrace.DeepClone();
-            await File.WriteAllTextAsync(smokeReportPath, report.ToJsonString(ReportOptions), new UTF8Encoding(false));
+            OurNotes.Director.Desktop.Core.DesktopSettings.AtomicWrite(smokeReportPath, report.ToJsonString(ReportOptions));
             Environment.Exit(0);
         }
         catch (Exception exception)
@@ -161,6 +162,12 @@ public partial class App : Application
         NativeLibrary.SetDllImportResolver(typeof(OurNotes.Director.Core.OffscreenGl).Assembly,
             (name, _, _) => name == "opengl32.dll" ? smokeGraphicsDriver : 0);
         TraceStartup("Test graphics driver loaded");
+    }
+
+    internal static async Task CaptureCheckpointAsync(string name)
+    {
+        if(instance is not {smokeReportPath:not null,window:not null} app||app.window.Content is not FrameworkElement root)return;
+        app.captures.Add(await CaptureAsync(root,Path.Combine(Path.GetDirectoryName(app.smokeReportPath)!,name+".png")));
     }
 
     private static async Task<JsonObject> CaptureAsync(FrameworkElement root, string path)
@@ -229,7 +236,7 @@ public partial class App : Application
                 report["startup"] = startupEvidence?.DeepClone();
                 report["captures"] = captures.DeepClone();
                 Directory.CreateDirectory(Path.GetDirectoryName(smokeReportPath)!);
-                File.WriteAllText(smokeReportPath, report.ToJsonString(ReportOptions), new UTF8Encoding(false));
+                OurNotes.Director.Desktop.Core.DesktopSettings.AtomicWrite(smokeReportPath, report.ToJsonString(ReportOptions));
             }
             else
             {

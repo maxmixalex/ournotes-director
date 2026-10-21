@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace OurNotes.Director.Core;
 
@@ -13,10 +14,21 @@ public sealed class AdvCueCache
     readonly LinkedList<long> order=[];
     readonly Dictionary<long,LinkedListNode<long>> nodes=[];
     long bytes;
+    long decodeAttempts,decodedPcmBytes,decodeTicks;
+    internal long DecodeAttempts=>Interlocked.Read(ref decodeAttempts);
+    internal long DecodedPcmBytes=>Interlocked.Read(ref decodedPcmBytes);
+    internal double DecodeMilliseconds=>Stopwatch.GetElapsedTime(0,Interlocked.Read(ref decodeTicks)).TotalMilliseconds;
+    internal long RetainedPcmBytes{get{lock(gate)return bytes;}}
     public long LimitBytes{get;init;}=128L*1024*1024;
     public AdvCue Get(long id,Func<AdvCue> decode)
     {
-        var lazy=entries.GetOrAdd(id,_=>new(decode,LazyThreadSafetyMode.ExecutionAndPublication));
+        AdvCue Decode()
+        {
+            Interlocked.Increment(ref decodeAttempts);long started=Stopwatch.GetTimestamp();
+            try{var cue=decode();Interlocked.Add(ref decodedPcmBytes,(long)cue.Pcm.Length*sizeof(float));return cue;}
+            finally{Interlocked.Add(ref decodeTicks,Stopwatch.GetTimestamp()-started);}
+        }
+        var lazy=entries.GetOrAdd(id,_=>new(Decode,LazyThreadSafetyMode.ExecutionAndPublication));
         AdvCue cue;
         try{cue=lazy.Value;}
         catch{entries.TryRemove(new KeyValuePair<long,Lazy<AdvCue>>(id,lazy));throw;}

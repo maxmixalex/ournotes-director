@@ -1,6 +1,7 @@
 // Compile the game's exported shader arithmetic directly on desktop OpenGL.
 // No JavaScript, browser, WebGL context, or translation runtime is involved.
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
@@ -61,11 +62,14 @@ public sealed unsafe class UnityShader : IDisposable
     }
     public UnityShader(string label,string packed)
     {
+        long compileStarted=Stopwatch.GetTimestamp();
         Label=label;var stages=DesktopSources(packed);
         uint Compile(uint type,string text){uint s=Fn<Create>("glCreateShader")(type);nint pointer=Marshal.StringToHGlobalAnsi(text);try{Fn<Source>("glShaderSource")(s,1,(nint)(&pointer),0);}finally{Marshal.FreeHGlobal(pointer);}Fn<One>("glCompileShader")(s);Fn<Get>("glGetShaderiv")(s,0x8B81,out int ok);if(ok==0){var log=new StringBuilder(16000);Fn<Log>("glGetShaderInfoLog")(s,16000,out _,log);Fn<One>("glDeleteShader")(s);throw new InvalidDataException(label+": "+log);}return s;}
         uint vertex=Compile(0x8B31,stages.Vertex),fragment=0;
         try{fragment=Compile(0x8B30,stages.Fragment);program=Fn<CreateProgram>("glCreateProgram")();Fn<Two>("glAttachShader")(program,vertex);Fn<Two>("glAttachShader")(program,fragment);Fn<One>("glLinkProgram")(program);Fn<Get>("glGetProgramiv")(program,0x8B82,out int ok);if(ok==0){var log=new StringBuilder(16000);Fn<Log>("glGetProgramInfoLog")(program,16000,out _,log);throw new InvalidDataException(label+": "+log);}}
         finally{Fn<One>("glDeleteShader")(vertex);if(fragment!=0)Fn<One>("glDeleteShader")(fragment);}
+        PreviewNativeWork.CompiledPrograms++;
+        PreviewNativeWork.ShaderCompilationMilliseconds+=Stopwatch.GetElapsedTime(compileStarted).TotalMilliseconds;
         Fn<Get>("glGetProgramiv")(program,0x8B86,out int count);
         for(uint i=0;i<count;i++){var name=new StringBuilder(1024);Fn<Active>("glGetActiveUniform")(program,i,1024,out _,out int size,out uint type,name);string raw=name.ToString(),property=Regex.Replace(raw,@"\[0\]$","");if(property.StartsWith("Xhlslcc_UnusedX",StringComparison.Ordinal))continue;if(property.StartsWith("hlslcc_mtx4x4",StringComparison.Ordinal))property=property[13..];uniforms.Add((property,Fn<Location>("glGetUniformLocation")(program,raw),type,size));}
         Fn<Gen>("glGenVertexArrays")(1,out vao);Fn<One>("glBindVertexArray")(vao);
@@ -102,8 +106,9 @@ public sealed unsafe class UnityShader : IDisposable
         try{foreach(var attribute in mesh.Attributes){if(!vertices.TryGetValue(attribute.Name,out var source))throw new InvalidDataException(Label+": missing mesh attribute "+attribute.Name);
                 if(attribute.Previous.AsSpan().SequenceEqual(source))continue;
                 Fn<Two>("glBindBuffer")(0x8892,attribute.Buffer);fixed(float* p=source)Fn<Data>("glBufferData")(0x8892,source.Length*4,(nint)p,0x88E8);
+                PreviewNativeWork.MeshUploads++;PreviewNativeWork.MeshUploadBytes+=(long)source.Length*4;
                 if(attribute.Previous.Length==source.Length)source.CopyTo(attribute.Previous,0);else attribute.Previous=(float[])source.Clone();}
-            if(mesh.PreviousIndices is not T[] previousIndices||!previousIndices.AsSpan().SequenceEqual(indices)){fixed(T* p=indices)Fn<Data>("glBufferData")(0x8893,indices.Length*sizeof(T),(nint)p,0x88E4);mesh.PreviousIndices=(T[])indices.Clone();}glDrawElements(4,indices.Length,indexType,0);
+            if(mesh.PreviousIndices is not T[] previousIndices||!previousIndices.AsSpan().SequenceEqual(indices)){fixed(T* p=indices)Fn<Data>("glBufferData")(0x8893,indices.Length*sizeof(T),(nint)p,0x88E4);PreviewNativeWork.MeshUploads++;PreviewNativeWork.MeshUploadBytes+=(long)indices.Length*sizeof(T);mesh.PreviousIndices=(T[])indices.Clone();}glDrawElements(4,indices.Length,indexType,0);
         }finally{Fn<One>("glBindVertexArray")(0);Fn<Two>("glBindBuffer")(0x8892,0);}
     }
     void Apply(IReadOnlyDictionary<string,float[]> values,IReadOnlyDictionary<string,uint> textures)

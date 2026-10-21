@@ -8,23 +8,61 @@
             </ResourceDictionary.MergedDictionaries>
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="StudioRootBrush" Color="#191B20" />
-                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#23262D" />
-                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#353A44" />
+                    <SolidColorBrush x:Key="StudioRootBrush" Color="#161616" />
+                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#252525" />
+                    <SolidColorBrush x:Key="StudioHeaderBrush" Color="#2D2D2D" />
+                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#111111" />
+                    <SolidColorBrush x:Key="StudioTextBrush" Color="#D0D0D0" />
+                    <SolidColorBrush x:Key="StudioMutedBrush" Color="#AAAAAA" />
+                    <SolidColorBrush x:Key="StudioAccentBrush" Color="#49A6E9" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="StudioRootBrush" Color="#E8EBF0" />
-                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#F5F6F8" />
-                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#D8DCE3" />
+                    <SolidColorBrush x:Key="StudioRootBrush" Color="#BFC1C3" />
+                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#F0F0F0" />
+                    <SolidColorBrush x:Key="StudioHeaderBrush" Color="#E0E0E0" />
+                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#B7B7B7" />
+                    <SolidColorBrush x:Key="StudioTextBrush" Color="#232323" />
+                    <SolidColorBrush x:Key="StudioMutedBrush" Color="#595959" />
+                    <SolidColorBrush x:Key="StudioAccentBrush" Color="#006BAF" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Default">
-                    <SolidColorBrush x:Key="StudioRootBrush" Color="#E8EBF0" />
-                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#F5F6F8" />
-                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#D8DCE3" />
+                    <SolidColorBrush x:Key="StudioRootBrush" Color="#BFC1C3" />
+                    <SolidColorBrush x:Key="StudioPanelBrush" Color="#F0F0F0" />
+                    <SolidColorBrush x:Key="StudioHeaderBrush" Color="#E0E0E0" />
+                    <SolidColorBrush x:Key="StudioDividerBrush" Color="#B7B7B7" />
+                    <SolidColorBrush x:Key="StudioTextBrush" Color="#232323" />
+                    <SolidColorBrush x:Key="StudioMutedBrush" Color="#595959" />
+                    <SolidColorBrush x:Key="StudioAccentBrush" Color="#006BAF" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
-            <CornerRadius x:Key="ControlCornerRadius">3</CornerRadius>
-            <CornerRadius x:Key="TextControlCornerRadius">3</CornerRadius>
+            <CornerRadius x:Key="ControlCornerRadius">0</CornerRadius>
+            <CornerRadius x:Key="TextControlCornerRadius">0</CornerRadius>
+            <x:Double x:Key="TextControlThemeMinHeight">28</x:Double>
+            <Thickness x:Key="TextControlThemePadding">6,3,6,3</Thickness>
+            <Style TargetType="TextBox">
+                <Setter Property="MinHeight" Value="28" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Padding" Value="6,3" />
+            </Style>
+            <Style TargetType="NumberBox">
+                <Setter Property="MinHeight" Value="28" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Padding" Value="6,3" />
+            </Style>
+            <Style TargetType="ComboBox">
+                <Setter Property="MinHeight" Value="28" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Padding" Value="6,3" />
+            </Style>
+            <Style TargetType="Button">
+                <Setter Property="MinHeight" Value="26" />
+                <Setter Property="FontSize" Value="12" />
+            </Style>
+            <Style TargetType="ToggleButton">
+                <Setter Property="MinHeight" Value="26" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Padding" Value="8,3" />
+            </Style>
             <Style x:Key="WorkspaceRootStyle" TargetType="Grid">
                 <Setter Property="Background" Value="{ThemeResource StudioRootBrush}" />
             </Style>
@@ -33,6 +71,31 @@
                 <Setter Property="BorderBrush" Value="{ThemeResource StudioDividerBrush}" />
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="CornerRadius" Value="0" />
+            </Style>
+            <Style x:Key="WorkspacePanelFrameStyle" TargetType="Border" BasedOn="{StaticResource StudioPanelStyle}">
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+            <Style x:Key="WorkspacePanelActiveStyle" TargetType="Border" BasedOn="{StaticResource WorkspacePanelFrameStyle}">
+                <Setter Property="BorderBrush" Value="{ThemeResource StudioAccentBrush}" />
+            </Style>
+            <Style x:Key="WorkspaceHeaderStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource StudioHeaderBrush}" />
+            </Style>
+            <Style x:Key="WorkspaceTabStyle" TargetType="Button">
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="MinHeight" Value="26" />
+                <Setter Property="Padding" Value="10,2" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="BorderThickness" Value="0,0,0,2" />
+                <Setter Property="BorderBrush" Value="Transparent" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{ThemeResource StudioMutedBrush}" />
+                <Setter Property="CornerRadius" Value="0" />
+            </Style>
+            <Style x:Key="WorkspaceSelectedTabStyle" TargetType="Button" BasedOn="{StaticResource WorkspaceTabStyle}">
+                <Setter Property="BorderBrush" Value="{ThemeResource StudioAccentBrush}" />
+                <Setter Property="Foreground" Value="{ThemeResource StudioTextBrush}" />
+                <Setter Property="Background" Value="{ThemeResource StudioPanelBrush}" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

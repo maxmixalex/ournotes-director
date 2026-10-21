@@ -2,7 +2,9 @@
 
 `--codec cineform` 使用 GoPro CineForm 的 RGB + alpha 编码，将画面和透明通道一起写入 `.mov`。发布包自带所需 FFmpeg 编码器，导出时不需要另装 Adobe 软件或系统视频编码器。统一项目、剧情、主页渲染及 `media clip` 共用这一编码配置。
 
-默认质量为 `film1`，用于兼顾后期画质与文件体积；更重视体积可选 `high`。输出是有损中间文件，颜色和 alpha 都可能有小幅量化误差。需要精确保存每个 RGBA8 像素时，可使用 PNG 序列或 FFV1。
+命令行、工作台新建的独立 Live2D 项目，以及场景中没有明确质量字段的透明角色导出，默认质量均为 `film1`，用于兼顾后期画质与文件体积；更重视体积可选 `high`，优先保留细发和服装边缘的弱透明像素可手动选择 `film3+`。已有项目明确保存的质量值继续生效；工作台的输出设置与导出窗口均提供全部 13 个档位。
+
+输出是有损中间文件，颜色和 alpha 都可能有小幅量化误差，`film3+` 也不例外。需要精确保存每个 RGBA8 像素时，可使用 PNG 序列或 FFV1。
 
 ## 导出示例
 
@@ -14,6 +16,9 @@
 
 # 同一项目使用体积更小的 high 档位
 ./advkit.exe render clip samples/unified/free-character.json --duration 5 --codec cineform --cineform-quality high -o output/character-small.mov
+
+# 优先保留细发、服装等弱透明边缘，体积相应增加
+./advkit.exe render clip samples/unified/free-character.json --duration 5 --codec cineform --cineform-quality film3+ -o output/character-detail.mov
 
 # 剧情画面也可以输出 CineForm MOV
 ./advkit.exe story clip 10060 --duration 10 --codec cineform -o output/story.mov
@@ -50,13 +55,24 @@
 
 | 设置 | 用途 |
 |---|---|
-| `film1` | 默认；后期剪辑、透明人物边缘和一般动画素材 |
+| `film3+` | 可手动选择的最高质量；优先保留弱透明边缘，文件较大 |
+| `film1` | 工作台新独立 Live2D 项目和命令行的均衡默认；兼顾文件体积与一般动画素材画质 |
 | `high` | 更重视体积；正式使用前检查发丝、线条、柔和阴影和半透明边缘 |
 | `film2` | 更重视细节；文件通常更大 |
 
 完整可用名称为 `film3+`、`film3`、`film2+`、`film2`、`film1.5`、`film1+`、`film1`、`high+`、`high`、`medium+`、`medium`、`low+`、`low`，按质量从高到低排列。FFmpeg 的 cfhd 专用 `-quality` 数字值由 0 到 12，数字越大质量越低；Adobe 的质量滑块采用不同的刻度。命令使用名称，避免把它当作 CRF、通用 `-q:v` 或 Adobe 滑块数值。[FFmpeg 编码器源码](https://ffmpeg.org/doxygen/8.0/cfhdenc_8c_source.html)给出了这些名称和像素格式。
 
 CineForm 按质量压缩，不承诺固定码率。片长、尺寸、帧率、画面纹理和透明边缘都会影响体积。12-bit RGB + alpha 是编码格式；当前 RGBA8 渲染源不会因此增加原本没有的颜色细节。
+
+### 四倍采样与边缘质量
+
+`supersample: 4` 表示宽、高各以四倍尺寸绘制，再在预乘 alpha 空间作面积平均，得到项目设定的最终尺寸；并不是导出尺寸扩大四倍。这个过程发生在视频编码之前，PNG、CineForm 和其他编码共用它。CineForm 的 RGB + alpha 路径使用 `gbrap12le`，没有把颜色降为常见的 4:2:0 色度采样；但它仍是有损压缩，透明边缘可能有量化误差。[FFmpeg 8.0 的 CineForm 编码器](https://ffmpeg.org/doxygen/8.0/cfhdenc_8c_source.html)包含此像素格式和质量档位。
+
+排查残余锯齿时，应比较同一帧的原始四倍采样 PNG 与 CineForm 完整解码帧，并以相同最终尺寸、相同背景检查透明合成。原始 PNG 中已有的边缘缺陷不能通过提高 CineForm 质量恢复；模型贴图、遮罩采样、最终分辨率以及查看器的缩放都会影响显示。`film3+` 可用于判断压缩误差是否占主要部分，但不能作为所有锯齿的通用修复。
+
+Windows 验收新增 `cineform-quality-report.json`：用真实 Live2D 帧和原生 GL 斜边分别对照 1 倍／4 倍采样、`film1`／`film3+` 编解码，记录所有 RGBA 像素、半透明边缘和预乘颜色误差，并保留输入与解码 PNG。下方历史样本的质量数字仍只适用于所注明的素材和编码条件。
+
+`specific-antialiasing-report.json` 进一步使用萤的演出服 `adv_live2d_hotaru_016_live_01`，比较 1／2／4 倍原生采样与 8 倍参考帧，再检查 `film1`／`film3+` 完整解码后的细发、裙边和弱 alpha。它还用主页 `40001`「一如既往的光景」右侧栏杆验证全屏预览的 2 倍采样。工作台不会将项目中已保存的 `film3+` 等选项回退成 `film1`。
 
 ### 本次完整动画的体积与误差
 
@@ -70,7 +86,7 @@ CineForm 按质量压缩，不承诺固定码率。片长、尺寸、帧率、�
 | CineForm `high` | 67.66 MiB | 0.195 | 0.540 |
 | ProRes 4444 | 69.39 MiB | 0.170 | 0.122 |
 
-本样本中，`high` 比 `film1` 小 **7.33%**，代价是更高的颜色和 alpha 误差。`film1` 的预乘 RGB 平均误差低于半个 8-bit 级，因此保留为默认平衡档位。CineForm 的体积不一定小于 ProRes：本例 film1 稍大，high 稍小；其他角色、背景和动画的结果会不同。
+本样本中，`high` 比 `film1` 小 **7.33%**，代价是更高的颜色和 alpha 误差。`film1` 的预乘 RGB 平均误差低于半个 8-bit 级，因此保留为命令行通用默认平衡档位。CineForm 的体积不一定小于 ProRes：本例 film1 稍大，high 稍小；其他角色、背景和动画的结果会不同。
 
 半透明区域（源 alpha 为 1–254）的 alpha 平均误差分别为 film1 **0.475**、high **0.567**、ProRes **0.495**；最大 alpha 误差分别为 **6、8、1**。另外单独检查了全片 **216,127,003 个源 alpha=0 像素**，两档 CineForm 解码后均保持为 0；其余 alpha 值仍可能有量化误差。
 
@@ -87,7 +103,7 @@ CineForm 按质量压缩，不承诺固定码率。片长、尺寸、帧率、�
 
 为遵守旧版 Adobe 的 CineForm 尺寸要求，输出宽度必须是 **16 的倍数**，高度必须是 **8 的倍数且至少为 32**。显式输入的不支持尺寸会在导出前报错，并给出就近尺寸建议。工作台的「单人透明镜头／模型原始尺寸」会提前计算符合所选格式的画布，只增加必要的透明边距，保留模型原有像素尺寸。
 
-原始模型画布可能达到 6000×9000。此类大画布按原始分辨率渲染，默认采用 1 倍采样；编码器会按画布像素数限制并发，降低同时处理多个巨大帧的内存占用。分辨率与质量档位不因此降低，导出速度会受可用内存和机器性能影响。
+原始模型画布可能达到 6000×9000。新建独立 Live2D 项目默认按比例缩小到长边最多 1920 像素（该例为 1280×1920）、1 倍导出采样和 `film1`。选择“角色原始尺寸”才使用完整原始画布；已有项目明确保存的输出设置继续保留。编码器仍会按画布像素数限制并发，降低同时处理多个巨大帧的内存占用。原始尺寸和较高采样的导出速度、文件体积会受素材及机器性能影响。
 
 | 尺寸 | 是否可用 |
 |---|---|

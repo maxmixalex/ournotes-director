@@ -3,11 +3,13 @@ using System.Text.Json.Nodes;
 
 namespace OurNotes.Director.Core;
 
-// Unity RectTransform hierarchy for exported frame prefabs.
+// Unity Transform/RectTransform hierarchy for exported frame prefabs.
 public sealed class AdvCanvasNode
 {
     public JsonNode Record{get;}public string Path{get;}public AdvCanvasNode? Parent{get;private set;}
     public Vector2 AnchorMin,AnchorMax,AnchoredPosition,SizeDelta,Pivot;
+    public bool IsRectTransform{get;}
+    public Vector2 LocalPosition;
     public Vector3 Scale,Euler;public Quaternion Rotation;public float LocalZ,Alpha=1;
     public bool Active{get;set;}
     public JsonNode? Image{get;}
@@ -21,9 +23,10 @@ public sealed class AdvCanvasNode
     public float InheritedAlpha=>Alpha*(Parent?.InheritedAlpha??1);
     public AdvCanvasNode(JsonNode node,AdvCanvasNode? parent)
     {
-        Record=node;Path=Archive.S(node,"path");Parent=parent;Active=Actor.B(node["active"]);var rect=node["rect"];
+        Record=node;Path=Archive.S(node,"path");Parent=parent;Active=Actor.B(node["active"]);var rect=node["rect"];IsRectTransform=rect is not null;
         static Vector2 Read(JsonNode? v)=>new(Actor.N(v?["x"]),Actor.N(v?["y"]));
         AnchorMin=Read(rect?["m_AnchorMin"]);AnchorMax=Read(rect?["m_AnchorMax"]);AnchoredPosition=Read(rect?["m_AnchoredPosition"]);SizeDelta=Read(rect?["m_SizeDelta"]);Pivot=rect is null?new(.5f):Read(rect["m_Pivot"]);
+        LocalPosition=Read(node["localPosition"]);
         Scale=AdvPrefab.Vector(node["localScale"],Vector3.One);var q=node["localRotation"];Rotation=q is null?Quaternion.Identity:new(Actor.N(q["x"]),Actor.N(q["y"]),Actor.N(q["z"]),Actor.N(q["w"],1));LocalZ=Actor.N(node["localPosition"]?["z"]);
         Image=Component("Image")?.DeepClone();Alpha=Actor.N(Component("CanvasGroup")?["m_Alpha"],1);
     }
@@ -36,6 +39,14 @@ public sealed class AdvCanvasNode
     public void Layout(float canvasWidth,float canvasHeight)
     {
         BeforeLayout?.Invoke(this);
+        if(!IsRectTransform){
+            // A plain Transform is positioned at its serialized local origin.
+            // Its RectTransform children anchor against a zero-size parent rect.
+            // Treating it as anchor (0,0) shifts underwater/EfSplash by half a canvas.
+            Width=Height=0;LayoutPosition=new(LocalPosition,LocalZ);HasLayout=true;
+            var transform=new AdvTransform{Position=LayoutPosition,Rotation=Rotation,Scale=Scale}.LocalMatrix();
+            Matrix=Parent is null?transform:AdvMatrix.Multiply(Parent.Matrix,transform);return;
+        }
         float pw=Parent?.Width??canvasWidth,ph=Parent?.Height??canvasHeight,px=Parent?.Pivot.X??0,py=Parent?.Pivot.Y??0;
         Width=pw*(AnchorMax.X-AnchorMin.X)+SizeDelta.X;Height=ph*(AnchorMax.Y-AnchorMin.Y)+SizeDelta.Y;
         if(Component("AspectRatioFitter") is JsonNode fitter&&Actor.B(fitter["m_Enabled"])){

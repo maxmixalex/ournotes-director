@@ -1,6 +1,7 @@
 // Animation sampling and controller behavior adapted from ournotes-player 0.1.6.
 // See THIRD-PARTY.md and LICENSE (AGPL-3.0-only).
 using System.Globalization;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
@@ -40,29 +41,43 @@ public sealed unsafe partial class Actor : IDisposable
     float renderOpacity=1;float elapsed;
     public string GeometryHash{get;private set;}="";
     static readonly float[] White=[1,1,1,1],Black=[0,0,0,0];
-    public static float N(JsonNode? n,float fallback=0)=>n is null?fallback:float.Parse(n.ToString(),CultureInfo.InvariantCulture);
-    public static bool B(JsonNode? n)=>n is not null && n.ToString() is "true" or "1";
+    public static float N(JsonNode? n,float fallback=0)=>n is null?fallback:
+        n is JsonValue value&&value.TryGetValue<float>(out float number)?number:float.Parse(n.ToString(),CultureInfo.InvariantCulture);
+    public static bool B(JsonNode? n)=>n is JsonValue value&&value.TryGetValue<bool>(out bool flag)?flag:
+        n is not null&&n.ToString() is "true" or "1";
     public Actor(Archive archive,string site,string dll,ActorSpec spec,OffscreenGl? gl,uint seed,AdvRandom? randomStream=null)
     {
-        Spec=spec;Manifest=archive.Manifest(site,"models",spec.Model);var model=JsonNode.Parse(archive.Logical(site,Manifest,"model.json"))!;var prefab=JsonNode.Parse(archive.Logical(site,Manifest,Archive.S(model,"prefab")))!;
-        gameModel=model;gamePrefab=prefab;Prefab=new(prefab);Core=new(dll,archive.Logical(site,Manifest,Archive.S(model,"moc3")));
+        long phase=Stopwatch.GetTimestamp();
+        void Mark(string name){archive.RecordModelInitialization(name,phase);phase=Stopwatch.GetTimestamp();}
+        Spec=spec;Manifest=archive.Manifest(site,"models",spec.Model);var model=JsonNode.Parse(archive.ModelResource(site,Manifest,"model.json"))!;
+        byte[] prefabBytes=archive.ModelResource(site,Manifest,Archive.S(model,"prefab"));var prefab=JsonNode.Parse(prefabBytes)!;
+        byte[] moc=archive.ModelResource(site,Manifest,Archive.S(model,"moc3"));Mark("modelSourceMs");
+        gameModel=model;gamePrefab=prefab;Prefab=new(prefab);Mark("modelTransformsMs");
+        Core=new(dll,moc);Mark("modelNativeMs");
         try{
         ids=Core.ParameterIds.Select((id,i)=>(id,i)).ToDictionary(p=>p.id,p=>p.i);Values=(float[])Core.Defaults.Clone();
         InitializeLipSync(dll);
         var components=prefab["nodes"]![0]!["components"]!.AsArray();JsonNode? Comp(string name)=>components.FirstOrDefault(c=>Archive.S(c!,"class")==name);
         var ch=Comp("Live2DCharacter")!;DefaultMotion=Archive.S(ch,"DefaultMotionName");DefaultExpression=Archive.S(ch,"DefaultExpressionName");
         ParameterLoop=new(Comp("CubismFadeController")?["CubismFadeMotionList"]?["CubismFadeMotionObjects"],Core);
-        foreach(var c in ch["_motionList"]!.AsArray().OfType<JsonNode>()){var clip=new Clip(c,ids);clips.Add(clip.Name,clip);}
+        Mark("modelControllersMs");
+        Clip[] CompileClips()=>ch["_motionList"]!.AsArray().OfType<JsonNode>().Select(c=>new Clip(c,ids,archive.LoadCancellation)).ToArray();
+        foreach(var clip in archive.PreviewModels?.Clips(prefabBytes,Core.ParameterIds,CompileClips,archive.LoadCancellation)??CompileClips())clips.Add(clip.Name,clip);
+        Mark("modelClipsMs");
         foreach(var e in Comp("CubismExpressionController")?["ExpressionsList"]?["CubismExpressionObjects"]?.AsArray().OfType<JsonNode>()??[])expressions.Add(Archive.S(e,"name").Replace(".exp3",""),e);
         foreach(var node in prefab["nodes"]!.AsArray().OfType<JsonNode>())if(ids.TryGetValue(Archive.S(node,"name"),out var i))foreach(var c in node["components"]!.AsArray().OfType<JsonNode>()){if(Archive.S(c,"class")=="CubismEyeBlinkParameter")eyes.Add(i);if(Archive.S(c,"class")=="CubismHarmonicMotionParameter")harmonics.Add((i,c));}
         blink=Comp("CubismAutoEyeBlinkInput");random=randomStream??new(seed);nextBlink=Interval();
         if(Comp("CubismPhysicsController")?["_rig"] is JsonNode rig)physics=new(rig,Core,ids);
         canvasHeight=N(model["canvas"]!["height"])/N(model["canvas"]!["pixelsPerUnit"]);
-        textures=gl is null?[]:model["textures"]!.AsArray().Select(t=>gl.Upload(Png.Decode(archive.Logical(site,Manifest,t!.ToString())))).ToArray();
+        Mark("modelPhysicsAndMetadataMs");
+        textures=gl is null?[]:model["textures"]!.AsArray().Select(t=>gl.Upload(archive.ModelTexture(site,Manifest,t!.ToString()))).ToArray();
+        Mark("modelTexturesMs");
         Motion(spec.Motion??DefaultMotion,0);Expression(spec.Expression??DefaultExpression,0);
         foreach(var id in spec.Parameters.Keys)if(!ids.ContainsKey(id))throw new ArgumentException($"Unknown parameter {spec.Name}:{id}");
+        Mark("modelInitialPoseMs");
         }catch{Core.Dispose();throw;}
     }
+    internal int LoadedTextureCount=>textures.Length;
     string ParameterLabel(string id)
     {
         var node=gamePrefab["nodes"]!.AsArray().FirstOrDefault(n=>Archive.S(n!,"name")==id);
@@ -97,7 +112,7 @@ public sealed unsafe partial class Actor : IDisposable
         if(AnimationPaused&&!gameAnimation)return;
         if(motionQueue.Count>0){queueWait-=dt*Spec.Speed; if(queueWait<=0){var next=motionQueue.Dequeue();Motion(next.Motion,next.Fade);Expression(next.Expression==""?DefaultExpression:next.Expression,next.Fade);if(motionQueue.TryPeek(out var queued))queueWait=queued.Wait;}}
         if(AnimationPaused)return;
-        if(gameAnimation&&current?.Name==DefaultMotion&&gameMotions.Count>0&&gameMotions.All(m=>elapsed>m.End))GameStartMotion(current,0);
+        if(gameAnimation&&current is not null&&(AuthoredMotionLoop??current.Name==DefaultMotion)&&gameMotions.Count>0&&gameMotions.All(m=>elapsed>m.End))GameStartMotion(current,0);
         Values=(float[])(gameAnimation?gameStore:Core.Defaults).Clone();float eye=gameAnimation?eyeOpening:AutoBlink(dt);renderOpacity=1;
         if(gameAnimation&&current is not null)motionTime=Math.Min(motionTime+dt*Spec.Speed,Math.Max(0,current.Length-.0001f));
         current?.Sample(motionTime,!gameAnimation&&Spec.Loop,Values,ref eye,ref renderOpacity);
@@ -118,9 +133,20 @@ public sealed unsafe partial class Actor : IDisposable
         ApplyPseudoLipSync(dt);
         if(OverrideAngle){if(ids.TryGetValue("ParamAngleX",out int ax))Values[ax]+=AngleX;if(ids.TryGetValue("ParamBodyAngleXAdd",out int add))Values[add]=BodyAngleX;else if(ids.TryGetValue("ParamBodyAngleX",out int bx))Values[bx]+=BodyAngleX;}
         if(LookEnabled){if(ids.TryGetValue("ParamEyeBallX",out int x))Values[x]=LookX;if(ids.TryGetValue("ParamEyeBallY",out int y))Values[y]=LookY;}
+        var automatic=DirectorParameters.Count>0?(float[])Values.Clone():null;
         foreach(var (id,value) in DirectorParameters)Values[ids[id]]=value;
         for(int i=0;i<Values.Length;i++)Values[i]=Math.Clamp(Values[i],Core.Min[i],Core.Max[i]);
-        if(gameAnimation){gameDisplay.Enqueue((float[])Values.Clone());Core.Update(gameDisplay.Count>2?gameDisplay.Dequeue():gameDisplay.Peek());eyeOpening=AutoBlink(dt);}else Core.Update(Values);
+        if(automatic is not null)for(int i=0;i<automatic.Length;i++)automatic[i]=Math.Clamp(automatic[i],Core.Min[i],Core.Max[i]);
+        if(gameAnimation)
+        {
+            // Keep the native two-frame animation buffer. Authored parameter pins sit
+            // over that displayed pose, so paused set/release and replay agree exactly.
+            gameDisplay.Enqueue(automatic??(float[])Values.Clone());
+            previewAutomaticValues=gameDisplay.Count>2?gameDisplay.Dequeue():gameDisplay.Peek();
+            if(DirectorParameters.Count>0)RefreshPreviewParameters();else Core.Update(previewAutomaticValues);
+            eyeOpening=AutoBlink(dt);
+        }
+        else{previewAutomaticValues=automatic??Values;Core.Update(Values);}
         if(!gameAnimation)motionTime+=dt*Spec.Speed;fadeTime+=dt;expressionTime+=dt;elapsed+=dt;
     }
     public void Draw(OffscreenGl gl,Shot shot,double time,float[]? worldToClip=null)
@@ -147,20 +173,35 @@ public sealed unsafe partial class Actor : IDisposable
         }
     }
     public void Dispose(){mouthAnalysis?.Dispose();gameDrawing?.Dispose();Core.Dispose();}
-    sealed class Clip
+    internal sealed class Clip
     {
-        public string Name{get;}public float Length{get;}public int InstanceId{get;}readonly List<(float t,float[] k)>[] curves;readonly int[] destinations;readonly string[] fields;readonly float[] constants;
-        public Clip(JsonNode node,Dictionary<string,int> ids)
+        readonly record struct CurveKey(float Time,float A,float B,float C,float D);
+        public string Name{get;}public float Length{get;}public int InstanceId{get;}readonly CurveKey[][] curves;readonly int[] destinations;readonly string[] fields;readonly float[] constants;
+        internal long RetainedBytes{get;}
+        public Clip(JsonNode node,Dictionary<string,int> ids,CancellationToken cancellationToken=default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Name=Archive.S(node,"clip");Length=N(node["stopTime"]);if(N(node["dense"]?["curveCount"])!=0||N(node["startTime"])!=0||N(node["cycleOffset"])!=0)throw new NotSupportedException($"Unsupported clip layout {Name}");
             InstanceId=node["events"]?.AsArray().LastOrDefault(e=>Archive.S(e!,"functionName")=="InstanceId")?["intParameter"]?.GetValue<int>()??-1;
             var bindings=node["bindings"]!.AsArray();destinations=new int[bindings.Count];fields=new string[bindings.Count];for(int i=0;i<bindings.Count;i++){var b=bindings[i]!;var path=Archive.S(b,"path");destinations[i]=path.StartsWith("Parameters/")&&ids.TryGetValue(path[11..],out var dest)?dest:-1;fields[i]=path==""?Archive.S(b,"attribute"):"";}
-            curves=Enumerable.Range(0,(int)N(node["streamed"]!["curveCount"])).Select(_=>new List<(float,float[])>()).ToArray();foreach(var f in node["streamed"]!["frames"]!.AsArray())foreach(var key in f![1]!.AsArray()){var k=key!.AsArray();curves[(int)N(k[0])].Add((N(f[0]),[N(k[1]),N(k[2]),N(k[3]),N(k[4])]));}constants=node["constant"]!.AsArray().Select(v=>N(v)).ToArray();
+            var lists=Enumerable.Range(0,(int)N(node["streamed"]!["curveCount"])).Select(_=>new List<CurveKey>()).ToArray();
+            foreach(var f in node["streamed"]!["frames"]!.AsArray())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach(var key in f![1]!.AsArray())
+                {
+                    var k=key!.AsArray();lists[(int)N(k[0])].Add(new(N(f[0]),N(k[1]),N(k[2]),N(k[3]),N(k[4])));
+                }
+            }
+            curves=lists.Select(list=>list.ToArray()).ToArray();constants=node["constant"]!.AsArray().Select(v=>N(v)).ToArray();
+            RetainedBytes=512+Name.Length*2L+destinations.LongLength*4+fields.LongLength*IntPtr.Size
+                +fields.Sum(field=>64+field.Length*2L)+constants.LongLength*4+curves.LongLength*IntPtr.Size
+                +curves.Sum(curve=>96+curve.LongLength*20);
         }
         public void Sample(float time,bool loop,float[] values,ref float eye,ref float opacity)
         {
             float t=loop&&Length>0?time%Length:Math.Min(time,Length);
-            for(int c=0;c<destinations.Length;c++){float v;if(c<curves.Length){var keys=curves[c];int lo=0,hi=keys.Count-1;while(lo<hi){int mid=(lo+hi+1)/2;if(keys[mid].t<=t)lo=mid;else hi=mid-1;}var key=keys[lo];float x=t-key.t;var k=key.k;v=((k[0]*x+k[1])*x+k[2])*x+k[3];}else v=constants[c-curves.Length];if(destinations[c]>=0)values[destinations[c]]=v;else if(fields[c]=="EyeOpening")eye=v;else if(fields[c]=="Opacity")opacity=v;}
+            for(int c=0;c<destinations.Length;c++){float v;if(c<curves.Length){var keys=curves[c];int lo=0,hi=keys.Length-1;while(lo<hi){int mid=(lo+hi+1)/2;if(keys[mid].Time<=t)lo=mid;else hi=mid-1;}var key=keys[lo];float x=t-key.Time;v=((key.A*x+key.B)*x+key.C)*x+key.D;}else v=constants[c-curves.Length];if(destinations[c]>=0)values[destinations[c]]=v;else if(fields[c]=="EyeOpening")eye=v;else if(fields[c]=="Opacity")opacity=v;}
         }
     }
 }

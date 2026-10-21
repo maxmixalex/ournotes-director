@@ -9,6 +9,7 @@ public sealed partial class AdvUi
     readonly Dictionary<string,(AdvTmpText Text,AdvCanvasNode Node)> textLayouts=[];
     readonly Dictionary<string,JsonNode> fontLines=[];
     Dictionary<string,float[]>? textGlobals;
+    int textPixelWidth,textPixelHeight;
     void DrawText(JsonNode node,string value,int maximum)
     {
         string path=Archive.S(node,"path");
@@ -16,7 +17,7 @@ public sealed partial class AdvUi
             var binding=fonts["texts"]![path]!;var style=node["textStyle"]!;
             var role=doc["textStyle"]?["roles"]?[Archive.S(style,"fontRole")];
             if(role is not null)fontLines.TryAdd(Archive.S(binding["localized"]??binding,"fontAsset"),role);
-            var record=new JsonObject{["path"]=path,["active"]=true};
+            var record=new JsonObject{["path"]=path,["active"]=true,["rect"]=new JsonObject()};
             entry=(new AdvTmpText(fonts,binding,fontLines),new AdvCanvasNode(record,null){AnchorMin=Vector2.Zero,AnchorMax=Vector2.Zero,Pivot=Vector2.Zero});textLayouts.Add(path,entry);
             if(language=="en"&&!Archive.S(node,"name").Contains("nowrap",StringComparison.OrdinalIgnoreCase))entry.Text.Wrapping=1;
         }
@@ -35,7 +36,12 @@ public sealed partial class AdvUi
             int align=(int)Actor.N(group["m_ChildAlignment"]);bounds=new(area.X+left+(area.W-left-right-childW)*(align%3)*.5f,area.Y+bottom+(area.H-top-bottom-childH)*(1-align/3*.5f),childW,childH);
         }
         canvas.AnchoredPosition=new(bounds.X+drawOffset.X,bounds.Y+drawOffset.Y);canvas.SizeDelta=new(bounds.W,bounds.H);canvas.Alpha=drawAlpha;canvas.Layout(canvasWidth,canvasHeight);
-        textRenderer??=new(archive,site,manifest,language,gl);textGlobals??=AdvCanvasTexts.OrthographicGlobals(canvasWidth,canvasHeight,gl.Width,gl.Height);
+        textRenderer??=new(archive,site,manifest,language,gl);
+        if(textGlobals is null||textPixelWidth!=gl.Width||textPixelHeight!=gl.Height)
+        {
+            textGlobals=AdvCanvasTexts.OrthographicGlobals(canvasWidth,canvasHeight,gl.Width,gl.Height);
+            textPixelWidth=gl.Width;textPixelHeight=gl.Height;
+        }
         bool backdrop=Archive.S(node,"name")=="TalkText"&&Actor.B(TalkWindow["_useBackdropFilter"]);
         static Vector4 Color(JsonNode c)=>new(Actor.N(c["r"]),Actor.N(c["g"]),Actor.N(c["b"]),Actor.N(c["a"]));
         textRenderer.Draw(canvas,text,textGlobals,1,backdrop?Color(TalkWindow["_talkTextColor"]!):null,backdrop?Color(TalkWindow["_talkTextOutlineColor"]!):null);

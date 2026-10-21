@@ -107,6 +107,27 @@ public static class VideoEncoding
         return Math.Max(1, (int)(32_000_000L / pixels));
     }
 
+    /// <summary>Release an owned encoder's handles before removing its temporary output.</summary>
+    public static void StopEncoder(Process? encoder, Task<string>? errorOutput = null)
+    {
+        if (encoder is null) return;
+        try
+        {
+            if (!encoder.HasExited)
+            {
+                try { encoder.Kill(entireProcessTree: true); }
+                catch (Exception error) when ((error is InvalidOperationException or System.ComponentModel.Win32Exception) && encoder.HasExited) { }
+            }
+            // Kill only requests termination. Disposing Process does not wait for
+            // FFmpeg to close its output, and Windows rejects a concurrent delete.
+            encoder.WaitForExit();
+            // A caller may still be draining diagnostics when the process exits.
+            // Finish that reader before Dispose closes the redirected pipe.
+            errorOutput?.GetAwaiter().GetResult();
+        }
+        finally { encoder.Dispose(); }
+    }
+
     public static IOException EncoderFailure(int exitCode, string details, Exception? innerException = null)
         => new($"FFmpeg video encoder exited with code {exitCode}. "
             + (string.IsNullOrWhiteSpace(details) ? "The video was not completed; the encoder supplied no error details." : details), innerException);

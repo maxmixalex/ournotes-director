@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using OurNotes.Director.Core;
 using OurNotes.Director.Desktop.Core;
 
 namespace OurNotes.Director.Desktop.Tests;
@@ -30,6 +31,13 @@ public static class EngineRunnerTests
         string? Opt(string key) => Option(args, key);
         if (mode == "child")
         {
+            Signal(Opt("--ready"), ProcessIdentity());
+            await Task.Delay(System.Threading.Timeout.Infinite); return 0;
+        }
+        if (mode == "encoder-lock")
+        {
+            using var output = new FileStream(Opt("--out")!, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            output.WriteByte(1); output.Flush();
             Signal(Opt("--ready"), ProcessIdentity());
             await Task.Delay(System.Threading.Timeout.Infinite); return 0;
         }
@@ -144,6 +152,7 @@ public static class EngineRunnerTests
                 Environment.SetEnvironmentVariable("DOTNET_ROOT_X64", runtimeDirectory);
             }
             check(File.Exists(executable), "desktop integration fixture can launch its own executable");
+            await EncoderCleanupCasesAsync(executable, folder, check);
             var runner = new EngineRunner(executable);
             await ProcessCasesAsync(runner, folder, check);
             await OutputCasesAsync(runner, folder, check);
@@ -157,6 +166,49 @@ public static class EngineRunnerTests
             Environment.SetEnvironmentVariable("DOTNET_ROOT", previousDotnet);
             Environment.SetEnvironmentVariable("DOTNET_ROOT_X64", previousDotnetX64);
             Directory.Delete(folder, true);
+        }
+    }
+
+    static async Task EncoderCleanupCasesAsync(string executable, string folder, Action<bool, string> check)
+    {
+        string file = Path.Combine(folder, "encoder-locked.tmp"), ready = Path.Combine(folder, "encoder-ready.json");
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
+        foreach (string arg in new[] { WorkerFlag, "encoder-lock", "--out", file, "--ready", ready }) start.ArgumentList.Add(arg);
+        using var worker = Process.Start(start) ?? throw new IOException("Cannot start encoder-lifetime fixture");
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        worker.EnableRaisingEvents = true;
+        worker.Exited += (_, _) => exited.TrySetResult();
+        bool stopped = false;
+        void Stop() { stopped = true; VideoEncoding.StopEncoder(worker); }
+        try
+        {
+            await UntilAsync(() => File.Exists(ready));
+            bool locked = false;
+            try { using var exclusive = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) { locked = true; }
+            check(locked && !worker.HasExited, "encoder cleanup fixture really holds an exclusive output handle in a live child process");
+            if (OperatingSystem.IsWindows())
+            {
+                bool deleteRejected = false;
+                try { File.Delete(file); }
+                catch (IOException error) { deleteRejected = (error.HResult & 0xffff) == 32; }
+                check(deleteRejected && File.Exists(file), "Windows reproduces the sharing violation while the encoder still owns its output");
+            }
+            var original = new InvalidDataException("fixture frame rendering failed before the encoder finished");
+            Exception? reported = null;
+            try
+            {
+                try { throw original; }
+                finally { Stop(); File.Delete(file); }
+            }
+            catch (Exception error) { reported = error; }
+            await exited.Task.WaitAsync(Timeout);
+            check(exited.Task.IsCompletedSuccessfully && !File.Exists(file), "encoder cleanup waits for actual process exit before immediately deleting the output");
+            check(ReferenceEquals(reported, original), "cleanup preserves the original mid-render failure instead of replacing it with a sharing violation");
+        }
+        finally
+        {
+            if (!stopped) Stop();
         }
     }
 

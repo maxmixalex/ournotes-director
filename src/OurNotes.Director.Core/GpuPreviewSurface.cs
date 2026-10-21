@@ -4,9 +4,10 @@ namespace OurNotes.Director.Core;
 
 /// <summary>Owns the WGL/D3D interop registration on its creating render thread. A UI consumer
 /// acquires an independent COM reference, so a late frame cannot access a destroyed GL surface.</summary>
-public sealed class GpuPreviewSurface : IDisposable
+public sealed partial class GpuPreviewSurface : IDisposable
 {
     const string Library = "OurNotes.GpuPreview.dll";
+    const uint AbiVersion = 3;
     readonly object gate = new();
     readonly int owner = Environment.CurrentManagedThreadId;
     nint handle;
@@ -20,8 +21,8 @@ public sealed class GpuPreviewSurface : IDisposable
         if (!OperatingSystem.IsWindows()) { reason = "当前平台使用 OpenGL 像素显示"; return false; }
         try
         {
-            if (OurNotesGpuAbi() != 1) { reason = "GPU 显示组件版本不匹配"; return false; }
-            int hr = OurNotesGpuCreate((uint)width, (uint)height, out nint native);
+            if (OurNotesGpuAbi() != AbiVersion) { reason = "GPU 显示组件版本不匹配"; return false; }
+            int hr = OurNotesGpuCreatePreferred((uint)width, (uint)height, (uint)Volatile.Read(ref adapterPreference), out nint native);
             if (hr < 0)
             { reason = hr == unchecked((int)0x887A0004) ? "显卡驱动未提供 OpenGL / D3D11 共享纹理" : $"共享纹理初始化失败（0x{hr:X8}）"; return false; }
             surface = new(native, width, height); return true;
@@ -45,9 +46,17 @@ public sealed class GpuPreviewSurface : IDisposable
     public static void ReleaseSwapChain(nint swapChain) { if (swapChain != 0) OurNotesGpuReleaseSwapChain(swapChain); }
     public void SetDisplaySize(double width, double height)
     {
-        nint swap = AcquireSwapChain(); if (swap == 0) return;
-        try { Marshal.ThrowExceptionForHR(OurNotesGpuScaleSwapChain(swap, (float)(width / Width), (float)(height / Height))); }
-        finally { ReleaseSwapChain(swap); }
+        VerifyThread();
+        if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(width));
+        // Immediate-context operations and DXGI Present share the render owner.
+        // The UI only enqueues layout; it never waits on this gate during resize.
+        lock (gate)
+        {
+            if (handle == 0) return;
+            Marshal.ThrowExceptionForHR(OurNotesGpuSetDisplaySize(handle,
+                (float)(width / Width), (float)(height / Height)));
+        }
     }
     public static int AttachPanel(nint panel, nint swapChain) => OurNotesGpuAttachPanel(panel, swapChain);
     public void Dispose()
@@ -59,19 +68,25 @@ public sealed class GpuPreviewSurface : IDisposable
     // It deliberately does NOT report hardware or WGL interop coverage.
     public static GpuPreviewSurface CreateCompositionTest(int width, int height)
     {
+        if (OurNotesGpuAbi() != AbiVersion) throw new InvalidDataException("GPU 显示组件版本不匹配");
         Marshal.ThrowExceptionForHR(OurNotesGpuCreateTest((uint)width, (uint)height, out nint native));
         return new(native, width, height);
     }
+    public uint ReadCompositionTestPresentCount()
+    { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPresentCount(handle, out uint count)); return count; }
     public uint ReadCompositionTestPixel()
     { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuTestPixel(handle, out uint pixel)); return pixel; }
+    public void PresentCompositionTestColor(uint rgba)
+    { VerifyThread(); Marshal.ThrowExceptionForHR(OurNotesGpuPresentTestColor(handle, rgba)); }
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern uint OurNotesGpuAbi();
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuCreate(uint width, uint height, out nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuPresent(nint surface, uint framebuffer, uint width, uint height);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuDestroy(nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern nint OurNotesGpuAcquireSwapChain(nint surface);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern void OurNotesGpuReleaseSwapChain(nint swapChain);
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuScaleSwapChain(nint swapChain, float x, float y);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuSetDisplaySize(nint surface, float x, float y);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuAttachPanel(nint panel, nint swapChain);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuCreateTest(uint width, uint height, out nint surface);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPresentCount(nint surface, out uint count);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuTestPixel(nint surface, out uint rgba);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] static extern int OurNotesGpuPresentTestColor(nint surface, uint rgba);
 }

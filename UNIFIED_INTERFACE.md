@@ -28,7 +28,7 @@ validate 检查项目结构并执行资源初始化／首帧，不是全时间�
 
 `format: "ournotes-director/project"` 与 `version: 1` 明确区分旧 Shot。
 
-- `source.adv`：基础场景／资源来源，不表示只能回放这集剧情。统一项目目前必填；旧 Shot 适配默认以归档 10060 提供基础场景。Character 可用 Model 直接引用归档模型 ID，解除原剧情角色列表限制。
+- `source.adv`：可选的原剧情来源；省略时使用素材库，不绑定任何原剧情。自由项目需要显式提供 `initialize`、`commands`、`finalize` 三个数组，空数组表示该段没有指令；只有指定真实原剧情时，省略段落才表示继承。编辑、预览和导出共用这条规则。旧 Shot 兼容格式省略来源时仍默认归档 10060，新建的自由 Shot 模板显式使用 `library`。Character 可用 Model 直接引用归档模型 ID。
 - `source.site` 默认 intl，`source.language` 默认 zh-Hans。归档根目录沿用 CLI/environment 解析，不写死在项目内。
 - `initialize`、`commands`、`finalize`：省略时使用原剧情相应段；明确 `[]` 清空。原有游戏行的 cmd 和参数字段不改名。
 - `text`：合并原文本表，沿用现有多语言格式。
@@ -36,6 +36,10 @@ validate 检查项目结构并执行资源初始化／首帧，不是全时间�
 - `output.codec`：`h264`、`cineform`（别名 `cfhd`）、`prores` 或 `ffv1`。CineForm 输出为 RGB + alpha MOV；对应命令行 `--codec cineform`。
 - `output.cineformQuality`：CineForm 的命名质量档位，默认 `film1`，更重视体积可用 `high`；对应命令行 `--cineform-quality`，完整档位见 [CINEFORM.md](CINEFORM.md)。
 - `output.letterbox`：`game` 保留原比例；`none` 使用整个输出画布，透明角色项目不强制加黑边。
+- `output.isolateActor`：要提取的角色标识。整个原生演出仍从开头执行，仅绘制此刻该角色的原始模型画布，输出透明背景。原剧情的动作历史、表情、语音口型、物理、淡入淡出与换装仍由同一执行器求值。
+- `output.playbackViewport`：`{width,height,letterbox}` 保留源播放器的开场等待条件。隔离输出可更换画布与黑边显示，但不能因此提前原演出。由场景或 Live2D 工作台导出时自动写入。
+- `output.isolateTransform`：仅与 `isolateActor` 一起使用，形如 `{x:0.5,y:0.5,scale:1,rotation:0,opacity:1}`。x/y 是模型画布中心相对于输出宽高的位置，y 向下；scale 为相对于原始模型画布适配尺寸的倍率，rotation 为绕画布中心的角度，opacity 为 0–1。默认值保留原来的独立角色画面；这些字段直接影响原生几何、合成透明度与预览命中范围。它们不修改源舞台位置、摄影机或动作时间。
+- `output.isolateCanvas`：仅与 `isolateActor` 一起使用，固定画布形如 `{referenceWidth:2048,referenceHeight:3072,x:0.1,y:0.05,width:0.8,height:0.9}`。referenceWidth/referenceHeight 保存应用画布前的原输出尺寸；x/y/width/height 是该原画布的归一化取景矩形，可以延伸到 0–1 以外。先在原画布求值 isolateTransform，再使用这一个固定矩形绘制所有帧，输出尺寸变化时保持人物比例。工作台逐帧合并完整演出中可见角色的真实几何范围，增加边缘采样余量，再按倍率扩展宽高；倍率 1 为完整动作最小范围，倍率大于 1 只增加透明留白。视频尺寸对齐只向外增加透明边缘。再次分析仍使用 referenceWidth/referenceHeight，不在已有裁剪上继续累积变换。PNG、帧序列与 MOV 直接共用相同字段；源指令、声音、开场等待及导出时间不改变。
 - 项目文件中的本地素材路径相对项目目录解析，输出命令路径相对当前工作目录解析。
 
 未来版本字段不静默接受；扩展行严格校验。原游戏行保留原数据字段，不将原始引擎未消费的字段误报为新接口错误。
@@ -123,6 +127,14 @@ Actor.Values 使用 position、rotation、scale、opacity、visible、order 等�
 
 `Director.Actor` 的 `animation:"game"` 为默认游戏动作时序；`animation:"director"` 使用简单动作循环／末帧保持，`loop` 仅在此模式生效。`speed` 控制动作播放倍率；`physics`、`breath`、`blink` 控制自动行为。原游戏参数循环仍用 `MotionLoop`。布尔不写则保留当前设置。角色从自由摆放重新 `In` 时恢复游戏基础变换和游戏动画时序，显式参数覆盖持续到 release。
 
+要在原剧情角色上调整自动控制器而保留其舞台槽位、当前动作和原生混合历史，使用独立的 `controls` 对象：
+
+```json
+{"cmd":"Director.Actor","TargetName":"hotaru","Values":{"controls":{"physics":true,"breath":false,"blink":true,"loop":false}},"Duration":0}
+```
+
+`controls` 仅允许 physics、breath、blink、loop 四个布尔；省略项保留当前值。不能与其他 `Values` 字段或 `Space` 混用，`Duration` 必须为 0。显式 `controls.loop` 在游戏动画模式中通过原生动作混合器开启或停止当前动作的自动重启；未使用此扩展时，仍保持原作仅自动重启默认动作的行为。它不会切换动画采样器，`MotionLoop` 的原游戏参数循环仍独立存在。
+
 ```json
 {"cmd":"Director.Parameter","TargetName":"hotaru","Parameter":"ParamEyeaHL","Value":0}
 ```
@@ -141,3 +153,7 @@ Actor.Values 使用 position、rotation、scale、opacity、visible、order 等�
 ```
 
 返回原始参数名、数值范围及表情的 add/multiply/overwrite 操作。名称保留素材原文，不自动猜测情绪。需要预览可用 `model gallery`，最终效果以统一项目抽帧为准。
+
+Windows Live2D 工作台保存 `ournotes-director/live2d` 文档，原演出与编辑指令保持独立，并在预览及加入普通导出队列前编译成上述统一项目。动作、表情和参数编辑写入当前 30 fps 帧号；参数“恢复自动”生成 `Operation:release` 并保留之前的编辑历史。播放头保存在文档中，但仅移动播放头不将项目标记为已修改。原场景的本地图片与音频在送入独立文档时解析为完整路径，保存到其他目录或排队执行仍使用同一资源。
+
+预览参数读数来自已显示模型的 Cubism Core 参数缓冲及真实最小值、最大值、默认值。暂停时的参数设置／释放与隔离变换使用现有原生渲染线程重绘，保持当前时间与模型实例；保存后的统一项目重新播放同一原生命令。读数本身不会自动变成参数覆盖或关键帧。

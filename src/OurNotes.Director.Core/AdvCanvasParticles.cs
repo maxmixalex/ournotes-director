@@ -12,11 +12,13 @@ public sealed class AdvCanvasParticles
     readonly float width,height,canvasScale;int lastFrame=-1;
     readonly Dictionary<AdvCanvasNode,AdvTransform> transforms=[];
     public AdvCanvasParticles(IReadOnlyDictionary<string,AdvCanvasNode> nodes,AdvRandom random,float width,float height,float cameraSize,OffscreenGl gl,UnityShaderLibrary shaders,Func<JsonNode,uint> texture,float planeDistance=100)
+        :this(nodes,random,width,height,cameraSize,gl,shaders,texture,false,planeDistance){}
+    internal AdvCanvasParticles(IReadOnlyDictionary<string,AdvCanvasNode> nodes,AdvRandom random,float width,float height,float cameraSize,OffscreenGl gl,UnityShaderLibrary shaders,Func<JsonNode,uint> texture,bool cacheStepCurves,float planeDistance=100)
     {
         this.nodes=nodes;this.width=width;this.height=height;canvasScale=2*cameraSize/height;this.gl=gl;this.shaders=shaders;this.texture=texture;
         var canvasTransform=new AdvTransform{Position=new(-width*canvasScale/2,-height*canvasScale/2,planeDistance),Scale=new(canvasScale)};
         foreach(var node in nodes.Values)transforms[node]=new(){Parent=node.Parent is null?canvasTransform:transforms[node.Parent]};
-        foreach(var node in nodes.Values)if(node.Component("ParticleSystem") is JsonNode component){if(Actor.N(component["moveWithTransform"]) is not (0 or 1))throw new NotSupportedException("UI particle custom simulation space");node.Particles=new(component,random);}
+        foreach(var node in nodes.Values)if(node.Component("ParticleSystem") is JsonNode component){if(Actor.N(component["moveWithTransform"]) is not (0 or 1))throw new NotSupportedException("UI particle custom simulation space");node.Particles=new(component,random,cacheStepCurves);}
         foreach(var node in nodes.Values)if(node.Particles is not null){node.Particles.ActiveInHierarchy=()=>node.ActiveInHierarchy;node.Particles.LinkSubEmitters(reference=>nodes.GetValueOrDefault(Archive.S(reference,"gameObject"))?.Particles);}
         foreach(var node in nodes.Values)if(node.Component("UIParticle") is JsonNode ui){
             if(Actor.N(ui["m_MeshSharing"])!=0||Actor.B(ui["m_UseCustomView"]))throw new NotSupportedException("Unsupported UIParticle sharing/view configuration");var group=new Group(node,ui);
@@ -27,7 +29,7 @@ public sealed class AdvCanvasParticles
     void SyncTransforms(){foreach(var node in nodes.Values){var t=transforms[node];t.Position=node.LayoutPosition;t.Scale=node.Scale;t.Rotation=node.Rotation;}}
     Vector3 WorldScale(Group group,AdvCanvasNode node){var ui=group.Data;int auto=(int)Actor.N(ui["m_AutoScalingMode"]);var parent=group.Node.Parent is null?new Vector3(canvasScale):ScaleOf(group.Node.Parent.Matrix)*canvasScale;var s=AdvPrefab.Vector(ui["m_Scale3D"],Vector3.One);var scale=(auto==2?s:s/canvasScale*group.Node.Scale)*parent;return auto==1&&Actor.N(node.Particles!.Data["scalingMode"])==1?scale*canvasScale:scale;}
     bool CanRender(Group group,AdvCanvasNode node){var scale=ScaleOf(node.Matrix)*WorldScale(group,node);float volume=scale.X*scale.Y*scale.Z;return node.ActiveInHierarchy&&node.InheritedAlpha>=.01f&&volume!=0&&!float.IsNaN(volume);}
-    public object Snapshot()=>JsonOutput.Object(("canvasScale", canvasScale), ("systems", groups.SelectMany(g=>g.Systems).Select(n=>JsonOutput.Object(("Path", n.Path), ("count", n.Particles!.Particles.Count), ("time", n.Particles.Time), ("scale", new[]{n.Scale.X,n.Scale.Y,n.Scale.Z}), ("first", n.Particles.Particles.Take(1).Select(p=>JsonOutput.Object(("position", new[]{p.Position.X,p.Position.Y,p.Position.Z}), ("velocity", new[]{p.Velocity.X,p.Velocity.Y,p.Velocity.Z}), ("size", new[]{n.Particles.Size(p).X,n.Particles.Size(p).Y}), ("tile", new[]{n.Particles.Tile(p).X,n.Particles.Tile(p).Y,n.Particles.Tile(p).Z,n.Particles.Tile(p).W}))))))));
+    public object Snapshot()=>JsonOutput.Object(("canvasScale", canvasScale), ("systems", groups.SelectMany(g=>g.Systems).Select(n=>JsonOutput.Object(("Path", n.Path), ("count", n.Particles!.Particles.Count), ("time", n.Particles.Time), ("scale", new[]{n.Scale.X,n.Scale.Y,n.Scale.Z}), ("canvasOrigin", new[]{n.Matrix[12],n.Matrix[13],n.Matrix[14]}), ("first", n.Particles.Particles.Take(1).Select(p=>JsonOutput.Object(("position", new[]{p.Position.X,p.Position.Y,p.Position.Z}), ("velocity", new[]{p.Velocity.X,p.Velocity.Y,p.Velocity.Z}), ("size", new[]{n.Particles.Size(p).X,n.Particles.Size(p).Y}), ("tile", new[]{n.Particles.Tile(p).X,n.Particles.Tile(p).Y,n.Particles.Tile(p).Z,n.Particles.Tile(p).W}))))))));
     public void Update(bool active,int frame,float dt)
     {
         if(frame==lastFrame)return;lastFrame=frame;
